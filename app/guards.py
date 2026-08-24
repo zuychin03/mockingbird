@@ -279,8 +279,16 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
     if act in ("advance", "end"):
         qs = [s for s in _sentences(say) if _is_question(s)]
         if qs:
-            if not ok:
-                # The model agrees it is not finished, so the question is the honest part.
+            # `ok` decides this for `advance` only. On `advance` a false `ok` is the model
+            # contradicting itself -- it says move on and writes a follow-up -- so the
+            # question is the honest part.
+            #
+            # On `end` it means nothing: `ok` asks whether the reply answered the QUESTION,
+            # and "I need to stop, sorry" never does. Reading that as self-contradiction
+            # turned a grounded stop request into a probe, which is guard 2's call and not
+            # this one's. Strip the question and let guard 2 decide whether the end stands
+            # -- an ungrounded one still becomes `probe` two lines below (9.19).
+            if not ok and act == "advance":
                 act, say, applied = "probe", say, applied + ["invented-question->probe"]
             else:
                 say = " ".join(s for s in _sentences(say) if not _is_question(s))

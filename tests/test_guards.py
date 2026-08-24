@@ -41,6 +41,26 @@ def test_advance_with_question_but_ok_keeps_advance_and_drops_question():
     assert "?" not in r.say
 
 
+def test_a_grounded_end_with_a_stray_question_keeps_its_end():
+    """`ok` decides guard 1 for `advance` only. On `end` it means nothing -- it asks whether
+    the reply answered the QUESTION, and "I need to stop, sorry" never does -- so reading it
+    as self-contradiction turned a grounded stop request into a probe. Whether an `end`
+    stands is guard 2's call (9.19)."""
+    r = guards.apply(g("end", "Of course. Shall we rearrange?", ok=False),
+                     "Sorry, I need to stop the interview here.", [])
+    assert r.act == "end"
+    assert "?" not in r.say
+    assert "invented-question->probe" not in r.applied
+
+
+def test_an_ungrounded_end_with_a_question_is_still_downgraded():
+    """The safety property that change must not cost: guard 2 still owns it."""
+    r = guards.apply(g("end", "Right. What next?", ok=False),
+                     "We shipped it behind a flag and it went fine.", [])
+    assert r.act == "probe"
+    assert "end-ungrounded->probe" in r.applied
+
+
 # ------------------------------------------------------------------ 2. end gate
 def test_end_without_the_users_own_words_downgrades():
     r = guards.apply(g("end", "We'll stop there."), "that's all I can remember", [])

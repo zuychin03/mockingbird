@@ -51,6 +51,10 @@ def _preflight(p: prov.LMStudio, skip: bool) -> dict | None:
     if not c["clock_ok"]:
         print("  WARNING: the GPU memory clock has dropped to its idle P-state. Plug the "
               "laptop in -- that is the whole fix.")
+    if not c["decode_ok"]:
+        print("  WARNING: decode is %.1f tok/s, under the %.0f floor. The turn is almost all "
+              "decode (8.8), so every latency below is void. Usually the laptop is on "
+              "battery." % (c["tokens_per_second"], prov.DECODE_FLOOR_TPS))
     if not c["transport_ok"]:
         print("  WARNING: %.0f ms per call is being spent outside the server. Check that "
               "provider.BASE is 127.0.0.1 and not localhost." % c["transport_ms"])

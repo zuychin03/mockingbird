@@ -70,6 +70,11 @@ _PARTICLE_NO = frozenset({"no", "nope", "nah"})
 STOP_EXPLICIT = [
     "stop the interview", "end the interview", "stop this interview", "end this interview",
     "stop the session", "end the session", "not a good time", "rearrange",
+    # Naming the conversation by what it is rather than what it is for. "I'm going to have
+    # to end the call here" is unambiguous and matched nothing: the object sits between the
+    # verb and the endpoint, so neither the explicit list nor the request frame caught it.
+    # A gold=end fixture that both the old vocabulary and the new one missed (9.19).
+    "end the call", "stop the call", "end this call", "end the meeting", "stop the meeting",
 ]
 STOP_REQUEST = [
     "need to stop", "have to stop", "want to stop", "like to stop", "got to stop",

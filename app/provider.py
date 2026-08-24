@@ -32,6 +32,12 @@ BASE = "http://127.0.0.1:1234"
 MODEL = "mockingbird-llm"
 TOP_LOGPROBS = 20          # server rejects anything higher (log 7.2)
 CANARY_WARN_MS = 150.0     # a warm TTFT above this means the GPU clock dropped (log 7.23)
+# `clock_ok` watches TTFT, which is PREFILL, and 8.8 measured the turn as essentially all
+# DECODE -- warm prefill is ~0 ms while decode runs at 8-16 tok/s throttled. So the check was
+# looking at the half that does not matter: running on battery, TTFT stayed at 13 ms and
+# reported healthy while throughput fell from 85.6 tok/s to 9.2 (log 9.19). Well under any
+# healthy reading on this hardware (granite 114, Yi 86) and well over any throttled one.
+DECODE_FLOOR_TPS = 25.0
 TRANSPORT_WARN_MS = 250.0  # wall clock minus what the server says it spent. A healthy
                            # loopback runs 20-40 ms; the IPv6 stall was 2,080 (log 8.6)
 CANARY_TOKENS = 8          # not 1: at one token `generation_time` rounds to zero and the
@@ -202,6 +208,7 @@ class LMStudio:
                 "wall_ms": round(wall, 1),
                 "transport_ms": round(transport, 1),
                 "clock_ok": ttft <= CANARY_WARN_MS,
+                "decode_ok": (stats.get("tokens_per_second") or 0) >= DECODE_FLOOR_TPS,
                 "transport_ok": transport <= TRANSPORT_WARN_MS}
 
 
