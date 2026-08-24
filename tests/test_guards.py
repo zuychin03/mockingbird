@@ -301,8 +301,13 @@ def test_a_model_authored_ask_does_not_satisfy_the_clarify_gate():
                              "system'? Are you referring to modifying database tables?"},
                      "I haven't done a schema change on a live system. That's not been my "
                      "work.", [])
-    assert r.act == "probe"
+    # The gate did its job: the forged `ask` is discarded and clarify does not survive.
     assert "ask-not-theirs-dropped" in r.applied
+    assert "clarify-ungrounded->probe" in r.applied
+    # It settles on `reask`, not `probe`, because "I haven't done that" is a cannot-answer
+    # and section 6.3 says that is a reask. This line used to assert `probe`, which was what
+    # happened rather than what the contract asks for (9.20).
+    assert r.act == "reask"
 
 
 def test_the_candidates_own_question_still_counts():

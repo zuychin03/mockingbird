@@ -245,15 +245,30 @@ CANNOT = ["haven t done", "havent done", "have not done", "never done", "not don
           "dont have one", "never really"]
 
 
+# A regex rather than the plain list, because an adverb slips into the middle and a substring
+# list cannot see it: "I can't REALLY think of one" read as an answer and got probed (9.20).
+_ADV = r"(?:really |honestly |quite |actually )?"
+_CANNOT = re.compile(
+    r"\b(?:"
+    r"(?:cant|cannot|couldnt|dont|didnt) " + _ADV + r"think of|"
+    r"(?:havent|hadnt|have not) " + _ADV + r"(?:done|had)|"
+    r"never (?:really )?(?:done|had to)|not done that|no experience|"
+    r"nothing comes to mind|not really had|(?:dont|do not) have one|never really"
+    r")", re.I)
+
+
 def cannot_answer(utterance: str) -> bool:
     """No experience to draw on, as opposed to declining to share it."""
-    return any(p in _norm(utterance) for p in CANNOT)
+    # `_norm` strips the apostrophe and leaves "haven t"; rejoin so one spelling covers both.
+    return bool(_CANNOT.search(re.sub(r"(\w)n t\b", r"\1nt", _norm(utterance))))
 
 
 def refuses(utterance: str) -> bool:
     """Guard 2c's evidence test: the REFUSAL has to be in the candidate's own words."""
     low = _norm(utterance)
-    if any(p in low for p in CANNOT):
+    # CANNOT beats REFUSES, so both tests have to read the same vocabulary or a phrasing one
+    # of them recognises quietly changes what the other returns (section 6.3).
+    if cannot_answer(utterance):
         return False
     return any(p in low for p in REFUSES)
 
@@ -318,6 +333,23 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
     # interview moves on regardless. The gate cannot trap anyone.
     if act == "skip" and not refuses(utterance):
         act, applied = "reask", applied + ["skip-ungrounded->reask"]
+
+    # 2d/2e. The other half of 2b and 2c, and the reason it exists is that every gate above
+    # only ever DOWNGRADES. Rec 2 built the upgrade for `stop` and 9.17 built it for
+    # `clarify`; `skip` and `reask` had an evidence test and no upgrade, so a candidate whose
+    # words plainly said one of them got whatever the model had picked instead. Both cost a
+    # real turn live on Yi (9.20):
+    #
+    #   "I'd rather not go into that one"  -> "Could you say a bit more about that?"
+    #   "I can't really think of one"      -> "What did you measure?"
+    #
+    # Order matters and follows 6.3: CANNOT beats REFUSES, which `refuses()` already encodes
+    # by returning False on the cannot-answer vocabulary. `end` is never touched -- a
+    # grounded stop outranks both, and an ungrounded one guard 2 has already downgraded.
+    if act in ("advance", "probe", "reask", "clarify") and refuses(utterance):
+        act, applied = "skip", applied + ["refusal->skip"]
+    elif act in ("advance", "probe", "clarify") and cannot_answer(utterance):
+        act, applied = "reask", applied + ["cannot->reask"]
 
     # 3. Repetition guard. Both sides go through `direct()` first: `previous_says` holds
     # lines that were already rewritten, so comparing raw text against them measured the
