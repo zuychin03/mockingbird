@@ -13,9 +13,7 @@ data/sessions/
 data/calibration/
 data/live_session.json
 data/live_*.json
-data/report.html
-data/transcripts.html
-data/live_pair.html
+data/*.html
 
 # ---------------------------------------------------------------- not published
 # Private working documents. They stay on disk and out of the repository: the plan

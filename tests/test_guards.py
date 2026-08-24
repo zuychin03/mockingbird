@@ -324,3 +324,40 @@ def test_a_lightly_tidied_quote_still_counts():
                       "ask": "did you mean the database schema or the API schema"},
                      "sorry, did you mean the database schema or the API schema?", [])
     assert r.act == "clarify"
+
+
+# ------------------------------------- cannot-answer is the FIRST sentence (log 9.23)
+def test_a_gap_named_after_a_real_answer_is_not_a_cannot_answer():
+    """Found live: this reply was upgraded to `reask` and the candidate got their own good
+    answer put to them again. Naming what you have not done is part of answering."""
+    for said in ("Honestly the scale. My current pipeline is big but it's all fire-and-forget "
+                 "- I've never had to think hard about delivery guarantees.",
+                 "Multi-region under audit constraints. I've made deploys fast; I've never "
+                 "had to make them fast and provable at the same time.",
+                 "If I had to, I'd write tests against the current output first so I'd know "
+                 "when I'd changed something. I just haven't had a real one.",
+                 "Mostly I picked up bug tickets and followed the code. I never really sat "
+                 "down and learned it properly."):
+        assert not guards.cannot_answer(said), said
+
+
+def test_the_inability_still_counts_when_it_opens_the_reply():
+    for said in ("I haven't done a schema change on a live system. That's not been my work.",
+                 "I can't really think of one. I'm quite junior so I go along with the seniors.",
+                 "There isn't anything to measure, I just haven't had that come up. Sorry.",
+                 "Nothing comes to mind, honestly. We don't have much scale."):
+        assert guards.cannot_answer(said), said
+
+
+def test_a_filler_sentence_does_not_hide_the_reply():
+    """"Hmm." punctuates as a sentence of its own and would otherwise BE the first one."""
+    assert guards.cannot_answer("Hmm. I can't really think of one, to be honest.")
+    assert guards.cannot_answer("Well. I haven't done that.")
+
+
+def test_the_upgrade_leaves_a_substantive_answer_alone():
+    """The end-to-end shape of the live failure: guards must not rewrite the model here."""
+    r = guards.apply(
+        g("advance", "", ok=True),
+        "Honestly the scale. I've never had to think hard about delivery guarantees.", [])
+    assert r.act == "advance", r.guards

@@ -212,11 +212,42 @@ class LMStudio:
                 "transport_ok": transport <= TRANSPORT_WARN_MS}
 
 
-def loaded_models() -> list[dict]:
+def all_models() -> list[dict]:
     """Every failure in this module surfaces as ProviderError, including this one."""
     try:
         with urllib.request.urlopen(BASE + "/api/v0/models", timeout=20) as r:
-            return [m for m in json.loads(r.read())["data"] if m.get("state") == "loaded"]
+            return json.loads(r.read())["data"]
     except urllib.error.URLError as e:
         raise ProviderError("cannot reach LM Studio at %s (%s). Is `lms server start` running?"
                             % (BASE, getattr(e, "reason", e)))
+
+
+def loaded_models() -> list[dict]:
+    return [m for m in all_models() if m.get("state") == "loaded"]
+
+
+# Publisher, arch and quantization alone tie Yi to mistral-7b-instruct-v0.3 on this disk.
+# `max_context_length` is the model's ceiling and not the loaded window -- verified by loading
+# Yi at 2048 and reading 4096 back -- so it discriminates without tracking how it was loaded.
+_KEY_FIELDS = ("publisher", "arch", "quantization", "max_context_length")
+
+
+def model_key(loaded: dict, catalogue: list[dict] | None = None) -> str:
+    """The real model key behind a loaded instance's `id`.
+
+    LM Studio reports a loaded model under its INSTANCE identifier, and that is an alias
+    whenever `--identifier` was passed -- which every harness here does. So `id` read back as
+    "live-llm", `Speech.for_model` matched nothing, and a Yi session ran a whole interview on
+    granite's profile without a word of complaint (9.24). Provenance recorded the alias too,
+    which makes a stored session unreproducible.
+
+    The catalogue lists the same file again, unloaded, under its true key, so the key is
+    recoverable by matching metadata -- see `_KEY_FIELDS` for which, and why three of them
+    were not enough. Anything ambiguous or absent returns the identifier unchanged, and the
+    caller PRINTS what it resolved, because failing silently to a default is the whole defect.
+    """
+    ident = loaded.get("id") or ""
+    want = tuple(loaded.get(f) for f in _KEY_FIELDS)
+    hits = [m["id"] for m in (catalogue if catalogue is not None else all_models())
+            if m.get("id") != ident and tuple(m.get(f) for f in _KEY_FIELDS) == want]
+    return hits[0] if len(hits) == 1 else ident

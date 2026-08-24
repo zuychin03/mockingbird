@@ -257,10 +257,33 @@ _CANNOT = re.compile(
     r")", re.I)
 
 
+# "Hmm." punctuates as a sentence of its own, which would hide the sentence that carries the
+# reply. Same job as intent._split_particle: a particle is not the content.
+_FILLER = frozenset({"hmm", "um", "uh", "oh", "well", "right", "ok", "okay", "so", "sure",
+                     "sorry", "yeah", "yes", "no", "honestly", "hm", "erm"})
+
+
+def _lead(utterance: str) -> str:
+    """The first sentence that says something, fillers skipped."""
+    for part in re.split(r"[.!?]", utterance or ""):
+        words = _norm(part).split()
+        if words and not set(words) <= _FILLER:
+            return part
+    return ""
+
+
 def cannot_answer(utterance: str) -> bool:
-    """No experience to draw on, as opposed to declining to share it."""
+    """No experience to draw on, as opposed to declining to share it.
+
+    FIRST SENTENCE only. A cannot-answer OPENS with the inability; an answer that happens to
+    name a gap reaches it after answering, and "I've made deploys fast; I've never had to
+    make them provable" is one of the strongest replies in the corpus. Swept over 874 stored
+    utterances this is the line that separates them: all 15 true positives put the phrase in
+    sentence one and all 6 false positives put it later (9.23). The 3 it fires on in the
+    60-fixture set are all sentence-one, so guarded accuracy cannot move.
+    """
     # `_norm` strips the apostrophe and leaves "haven t"; rejoin so one spelling covers both.
-    return bool(_CANNOT.search(re.sub(r"(\w)n t\b", r"\1nt", _norm(utterance))))
+    return bool(_CANNOT.search(re.sub(r"(\w)n t\b", r"\1nt", _norm(_lead(utterance)))))
 
 
 def refuses(utterance: str) -> bool:

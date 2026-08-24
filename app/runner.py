@@ -122,6 +122,12 @@ class Speech:
     def for_model(cls, model_id: str) -> "Speech":
         return YI if "yi" in (model_id or "").lower() else cls()
 
+    @property
+    def system(self) -> str:
+        """The one place the variant is chosen. Warmup primes this, not contract.SYSTEM:
+        the two diverge mid-prompt, so priming the wrong one re-prefills turn 0's tail."""
+        return contract.SYSTEM if self.exemplars else contract.SYSTEM_NO_EXEMPLARS
+
 
 # `exemplars=False` from 9.21: Yi emits the first exemplar verbatim on a third of its probes
 # and, without them, scores variety 1.00 at the same length and the same guarded accuracy.
@@ -289,7 +295,7 @@ class Runner:
     async def _decide(self, utterance: str, retry_of: list[str],
                       want: str | None = None) -> tuple[Completion, dict | None]:
         q = self.current
-        system = contract.SYSTEM if self.speech.exemplars else contract.SYSTEM_NO_EXEMPLARS
+        system = self.speech.system
         if want:
             system += focus.instruction(want)
         if retry_of:
@@ -513,8 +519,16 @@ class Runner:
             # `_on_clarify`'s fallback only answers the second. The example is theirs to pick
             # either way, so the honest reply is to say so rather than explain the question.
             g.act = "clarify"
-            g.say = CLARIFY_EITHER if guards.offers_a_choice(utterance) else ""
+            g.say = ""
             g.applied.append("clarify-detected->clarify")
+
+        # The either/or answer is owed whenever the turn IS a clarify, not only when the
+        # harness was the one that routed it there. Yi reached clarify on its own, so the
+        # block above never ran, its line survived untouched, and "work or open source?" was
+        # answered with "tell me more about the context" (9.25).
+        if g.act == "clarify" and guards.offers_a_choice(utterance):
+            g.say = CLARIFY_EITHER
+            g.applied.append("clarify-either")
 
         # Clarify past its limit offers an exit rather than repeating the question. The
         # offer costs no model call, exactly like rec 2's confirmation turn.

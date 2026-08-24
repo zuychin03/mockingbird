@@ -41,7 +41,8 @@ def _preflight(p: prov.LMStudio, skip: bool) -> dict | None:
         print("no model loaded. run: lms load granite-4.1-3b@q4_k_m "
               "--context-length 8192 --identifier mockingbird-llm -y")
         return None
-    m = loaded[0]
+    # `id` is the instance alias when the model was loaded with --identifier (9.24).
+    m = dict(loaded[0], id=prov.model_key(loaded[0]))
     print("model: %s (%s, ctx %s)" % (m["id"], m.get("quantization"), m.get("loaded_context_length")))
     if skip:
         return m
@@ -68,19 +69,19 @@ async def run(plan_path: Path, skip_canary: bool) -> int:
         return 1
 
     plan = session.load_plan(plan_path)
+    # The speech profile follows the loaded model. Policy rules do not vary (9.22).
+    speech = Speech.for_model(model.get("id", ""))
     # Before the first question, not after: this is what keeps turn 0 off the cold path.
-    ms = await p.warmup(contract.SYSTEM, contract.render(
+    ms = await p.warmup(speech.system, contract.render(
         next(session.iter_questions(plan))["question"], "", ""))
-    print("warmed prompt cache in %.0f ms" % ms)
+    print("warmed prompt cache in %.0f ms   exemplars %s" % (ms, speech.exemplars))
     state = session.new_session(plan, provenance.snapshot(model))
 
     async def observe_answer(question_id, question, utterance):
         """Plan 1c.5's per-answer extraction. Runs between turns, never inside one."""
         return await observe.observe(p, question_id, question, [utterance])
 
-    # The speech profile follows the loaded model. Policy rules do not vary (9.22).
-    r = Runner(p, plan, state, observe_fn=observe_answer,
-               speech=Speech.for_model(model.get("id", "")))
+    r = Runner(p, plan, state, observe_fn=observe_answer, speech=speech)
 
     print("\nplan: %s   %d questions" % (plan.get("label", plan.get("id")), len(r.questions)))
     print("session: %s" % state.dir)

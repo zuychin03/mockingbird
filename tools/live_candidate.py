@@ -90,7 +90,7 @@ def restore(p, plan) -> Runner:
     except Exception:
         live = []
     r = Runner(p, plan, state, pool=d["pool"], observe_fn=extractor(p),
-               speech=Speech.for_model(live[0]["id"] if live else ""))
+               speech=Speech.for_model(prov.model_key(live[0]) if live else ""))
     r.index = d["index"]
     r.follow_ups_used = d["follow_ups_used"]
     r.clarifies_used = d["clarifies_used"]
@@ -142,11 +142,15 @@ async def main() -> int:
             loaded = prov.loaded_models()
         except Exception:
             loaded = []
-        state = sess.new_session(plan, provenance.snapshot(loaded[0] if loaded else None))
-        r = Runner(p, plan, state, observe_fn=extractor(p),
-                   speech=Speech.for_model(loaded[0]["id"] if loaded else ""))
-        await p.warmup(contract.SYSTEM,
-                       contract.render(r.current["question"], "", ""))
+        # The resolved key, not the instance alias: it selects the profile AND is what a
+        # stored session needs to be reproducible (9.24).
+        key = prov.model_key(loaded[0]) if loaded else ""
+        state = sess.new_session(plan, provenance.snapshot(
+            dict(loaded[0], id=key) if loaded else None))
+        speech = Speech.for_model(key)
+        print("model %s   exemplars %s" % (key or "?", speech.exemplars))
+        r = Runner(p, plan, state, observe_fn=extractor(p), speech=speech)
+        await p.warmup(speech.system, contract.render(r.current["question"], "", ""))
         spoken = await r.ask()
         save(r)
         show(r, spoken.text)

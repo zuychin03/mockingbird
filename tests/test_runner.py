@@ -1343,3 +1343,26 @@ def test_speech_rules_never_touch_policy(tmp_path):
     run(r.ask())
     out = run(r.submit("Sorry, I need to stop the interview here."))
     assert r.awaiting_confirm and not out.end_session
+
+
+def test_the_warmup_primes_the_prompt_the_session_will_actually_send():
+    """The two variants diverge mid-prompt, so priming contract.SYSTEM for a model that gets
+    SYSTEM_NO_EXEMPLARS re-prefills turn 0's tail -- the exact cost warmup exists to remove."""
+    from app import contract
+    from app.runner import Speech
+    assert Speech().system == contract.SYSTEM
+    assert Speech(exemplars=False).system == contract.SYSTEM_NO_EXEMPLARS
+
+
+def test_an_either_or_is_answered_even_when_the_model_routed_it_itself(tmp_path):
+    """Found live on Yi. The upgrade sat behind `act not in ("clarify",...)`, so a model that
+    reached clarify on its own kept its own line -- and answered a different question."""
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(PLAN)
+    r = Runner(ScriptedProvider([d("clarify", "Can you tell me more about the context?")]),
+               PLAN, state)
+    run(r.ask())
+    out = run(r.submit("Do you mean a codebase at work, or would an open source one count?"))
+    from app.runner import CLARIFY_EITHER
+    assert out.spoken.text == CLARIFY_EITHER, out.spoken.text
+    assert "clarify-either" in state.turns[-1].guards

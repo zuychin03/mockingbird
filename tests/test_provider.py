@@ -68,3 +68,40 @@ def test_warm_up_call_is_spent_before_measuring(monkeypatch):
     monkeypatch.setattr(provider, "_post", fake_post)
     provider.LMStudio().canary()
     assert calls == [provider.CANARY_TOKENS, provider.CANARY_TOKENS]
+
+
+# ------------------------------------- the instance alias (log 9.24)
+CATALOGUE = [
+    {"id": "live-llm", "publisher": "MaziyarPanahi", "arch": "llama",
+     "quantization": "Q4_K_S", "max_context_length": 4096, "state": "loaded"},
+    {"id": "yi-1.5-6b-chat", "publisher": "MaziyarPanahi", "arch": "llama",
+     "quantization": "Q4_K_S", "max_context_length": 4096, "state": "not-loaded"},
+    # Same publisher, arch and quant as Yi on the real disk. This is why the context ceiling
+    # is part of the key rather than a fourth field that looked nice.
+    {"id": "mistral-7b-instruct-v0.3", "publisher": "MaziyarPanahi", "arch": "llama",
+     "quantization": "Q4_K_S", "max_context_length": 32768, "state": "not-loaded"},
+    {"id": "granite-4.1-3b", "publisher": "ibm-granite", "arch": "granitemoe",
+     "quantization": "Q4_K_M", "max_context_length": 131072, "state": "not-loaded"},
+]
+
+
+def test_the_alias_resolves_to_the_model_that_is_actually_loaded():
+    """`--identifier live-llm` made every model look unknown, so a Yi session silently ran
+    granite's speech profile and provenance stored an id nothing can be reproduced from."""
+    assert provider.model_key(CATALOGUE[0], CATALOGUE) == "yi-1.5-6b-chat"
+
+
+def test_an_unaliased_model_resolves_to_itself():
+    loaded = dict(CATALOGUE[3], state="loaded")
+    assert provider.model_key(loaded, [loaded]) == "granite-4.1-3b"
+
+
+def test_an_ambiguous_match_keeps_the_alias_rather_than_guessing():
+    """Two catalogue entries agreeing on publisher, arch and quant cannot be told apart. The
+    identifier is wrong but visible; a coin-flip between two models is wrong and silent."""
+    twin = dict(CATALOGUE[1], id="yi-1.5-6b-chat-copy")
+    assert provider.model_key(CATALOGUE[0], CATALOGUE + [twin]) == "live-llm"
+
+
+def test_a_model_absent_from_the_catalogue_keeps_the_alias():
+    assert provider.model_key(CATALOGUE[0], [CATALOGUE[0]]) == "live-llm"
