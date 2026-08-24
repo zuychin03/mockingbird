@@ -51,17 +51,42 @@ _NEGATORS = frozenset({"not", "no", "never", "nor", "neither"})
 _PARTICLE_YES = frozenset({"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "correct"})
 _PARTICLE_NO = frozenset({"no", "nope", "nah"})
 
-# Asking to end the whole interview. Strong enough to act on inside an ORDINARY answer,
-# which is what `asked_to_stop` reads and why the bare verbs are not in this list.
-STOP_STRONG = [
-    "stop the interview", "end the interview", "stop the session", "end the session",
-    "stop this interview", "end this interview",
-    "stop here", "end here", "end this", "call it here", "call it a day",
-    "wrap this up", "wrap it up", "finish here", "finish up", "cut this short",
-    "have to go", "need to go", "got to go", "have to stop", "need to stop",
-    "want to stop", "like to stop", "have to leave", "need to leave",
-    "not a good time", "rearrange",
+# Asking to end the whole interview, read inside an ORDINARY answer. Two lists, and the
+# split is the point.
+#
+# The first names the interview itself, so it can fire alone. The second requires a REQUEST
+# FRAME -- a subject and a modal pointing at now -- because the bare location phrases that
+# used to live here are ordinary interview vocabulary and fired on plain answers (9.18):
+#
+#     "I work on the front end here"          matched `end here`
+#     "I needed to finish up the migration"   matched `finish up`
+#     "we had to wrap this up before the      matched `wrap this up`
+#      quarter ended"
+#     "the retry logic would stop here"       matched `stop here`
+#
+# A 719-utterance corpus sweep found only one of these, which is the trap: a corpus of
+# recorded answers holds what candidates have already said, not what they might say. Seven
+# adversarial sentences found seven.
+STOP_EXPLICIT = [
+    "stop the interview", "end the interview", "stop this interview", "end this interview",
+    "stop the session", "end the session", "not a good time", "rearrange",
 ]
+STOP_REQUEST = [
+    "need to stop", "have to stop", "want to stop", "like to stop", "got to stop",
+    "need to end", "have to end", "want to end", "like to end",
+    "need to go", "have to go", "got to go", "need to leave", "have to leave",
+    "can we stop", "can we end", "can we finish", "can we wrap", "could we stop",
+    "shall we stop", "let us stop", "lets stop", "we stop here", "we end here",
+    "call it here", "cut this short", "cut it short", "stop it here", "end it here",
+    "should stop", "should we stop", "wrap this up", "wrap it up", "we stop", "we end",
+]
+STOP_STRONG = STOP_EXPLICIT + STOP_REQUEST
+
+# A request frame is still not enough on its own, because the verb can take an object:
+# "I want to stop being the only front-end person" is an answer, not a request to leave.
+# So a STOP_REQUEST phrase counts only where it ENDS its clause or is followed by a word
+# meaning *this conversation, now*. Found live, one turn after the fix above (9.18).
+_ENDPOINT = frozenset({"here", "now", "there", "today", "early", "soon", "then"})
 # Only meaningful as a reply to a confirmation, where the question licenses the bare word.
 # In an ordinary answer these are ordinary vocabulary: "the retries stopped" is not consent.
 STOP_BARE = ["stop", "end", "quit", "finish", "done", "stopping"]
@@ -116,6 +141,25 @@ def _hits(clause: list[str], phrases: list[str]) -> tuple[bool, bool]:
     return affirmed, negated
 
 
+def _endpoint_hit(clause: list[str], phrases: list[str]) -> bool:
+    """Match, but only where the phrase ends the clause or points at now.
+
+    "I want to stop." and "I want to stop here." are requests. "I want to stop being the only
+    front-end person." is an answer to what drew them to the role.
+    """
+    negs = [i for i, t in enumerate(clause) if t in _NEGATORS]
+    for phrase in phrases:
+        want = phrase.split()
+        n = len(want)
+        for i in range(len(clause) - n + 1):
+            if clause[i:i + n] != want or any(j < i for j in negs):
+                continue
+            tail = clause[i + n:]
+            if not tail or tail[0] in _ENDPOINT:
+                return True
+    return False
+
+
 def read_control(utterance: str, *, bare_yes: str | None = None) -> str:
     """Read a reply to a control question. One of STOP, CONTINUE, SKIP_QUESTION, UNCLEAR.
 
@@ -160,7 +204,8 @@ def asked_to_stop(utterance: str) -> bool:
     failure this whole module exists to remove.
     """
     _, clauses = _split_particle(_clauses(utterance))
-    return any(_hits(c, STOP_STRONG)[0] for c in clauses)
+    return any(_hits(c, STOP_EXPLICIT)[0] or _endpoint_hit(c, STOP_REQUEST)
+               for c in clauses)
 
 
 def wants_skip(utterance: str) -> bool:

@@ -99,6 +99,56 @@ def test_ordinary_answer_vocabulary_is_not_consent():
         assert intent.asked_to_stop(answer) is False, answer
 
 
+def test_stop_vocabulary_does_not_fire_on_ordinary_interview_talk():
+    """Found live (9.18): "is there someone senior on the front end here" matched `end here`
+    and raised a stop confirmation mid-answer.
+
+    A 719-utterance corpus sweep found ONE of these, which is the trap -- a corpus of recorded
+    answers holds what candidates have already said, not what they might say. These seven
+    sentences were written in a minute and all seven fired. The bare location phrases are gone
+    and what is left needs a request frame: a subject and a modal pointing at now.
+    """
+    for answer in (
+            "I work on the front end here and the back end at my last place.",
+            "I needed to finish up the migration before the freeze.",
+            "We had to wrap this up before the quarter ended.",
+            "The retry logic would stop here and fall through to the dead letter queue.",
+            "That was the end here of the old pipeline.",
+            "I want to wrap it up cleanly rather than leave it half done.",
+            "We call it a day one deploy internally."):
+        assert intent.asked_to_stop(answer) is False, answer
+
+
+def test_a_stop_verb_with_an_object_is_not_a_request_to_leave():
+    """The second half of 9.18, found one turn after the first fix shipped. A request frame
+    is not enough on its own, because the verb takes an object: "I want to stop being the
+    only front-end person" is an answer to what drew them to the role. A STOP_REQUEST phrase
+    counts only where it ends its clause or is followed by a word meaning *now*."""
+    for answer in (
+            "I want to stop being the only front-end person.",
+            "I need to stop doing manual deploys.",
+            "I have to go through the logs first.",
+            "We wanted to stop the retries flooding the queue.",
+            "I want to stop guessing and start measuring.",
+            "I want to wrap it up cleanly rather than leave it half done."):
+        assert intent.asked_to_stop(answer) is False, answer
+
+    for ask in ("I want to stop.", "I want to stop here.", "we should stop now"):
+        assert intent.asked_to_stop(ask) is True, ask
+
+
+def test_a_request_to_stop_still_fires_however_it_is_phrased():
+    for ask in (
+            "I need to stop here.",
+            "Can we end here?",
+            "I'd like to end here if that's ok",
+            "something has come up and I have to go",
+            "can we wrap this up, I have another call",
+            "sorry, can we finish here",
+            "Sorry, this is a bit uncomfortable - do we have to stop here?"):
+        assert intent.asked_to_stop(ask) is True, ask
+
+
 def test_a_strong_phrase_inside_an_answer_still_counts():
     assert intent.asked_to_stop("sorry, something's come up and I need to stop here") is True
     assert intent.asked_to_stop("can we rearrange? this isn't a good time") is True
