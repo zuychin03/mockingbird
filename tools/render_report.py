@@ -1,0 +1,208 @@
+"""Render one or more candidate reports as a readable page.
+
+Separate from `app/report.py` on purpose: the app produces the feedback, this decides how it
+looks. The plan wants a plain report in Stage 2 and a web UI in Stage 4, and keeping the two
+apart is what stops the wording being tangled with the markup when that happens.
+
+    python tools/render_report.py --session <id> [--session <id>] --out report.html
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import html
+import json
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from tools._console import utf8  # noqa: E402
+
+utf8()
+
+from app import observe, provider as prov, report as rep, score, session as sess  # noqa: E402
+
+e = html.escape
+
+PAGE = """<title>Interview Feedback</title>
+<!-- No web fonts: the report is a local artifact and has to render the same offline. It
+     used to link Google Fonts, which lost its typography with nothing to say about why. -->
+<style>
+:root{--paper:#eceef1;--card:#f7f8fa;--ink:#191c22;--muted:#5c6472;--rule:#cdd3da;
+ --good:#2f6b6b;--work:#8c5a1f;--bar:#9aa6b4;
+ --serif:Georgia,"Iowan Old Style","Palatino Linotype",Palatino,"Times New Roman",serif;
+ --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+ --cond:"Segoe UI",-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+ --paper:#14161b;--card:#1b1f26;--ink:#dee3ea;--muted:#8e99a8;--rule:#2c323b;
+ --good:#63b3ac;--work:#d9a24a;--bar:#4a5461}}
+:root[data-theme="dark"]{--paper:#14161b;--card:#1b1f26;--ink:#dee3ea;--muted:#8e99a8;
+ --rule:#2c323b;--good:#63b3ac;--work:#d9a24a;--bar:#4a5461}
+*{box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:var(--serif);font-size:17px;
+ line-height:1.62;margin:0;padding:0 20px 80px;-webkit-font-smoothing:antialiased}
+.wrap{max-width:820px;margin:0 auto}
+h1,h2,h3{text-wrap:balance;margin:0}
+.masthead{padding:60px 0 30px;border-bottom:2px solid var(--ink)}
+.masthead h1{font-size:clamp(2rem,5vw,2.9rem);font-weight:600;letter-spacing:-.02em;line-height:1.1}
+.eyebrow{font-family:var(--cond);text-transform:uppercase;letter-spacing:.13em;font-size:.72rem;
+ color:var(--muted);margin:0 0 6px}
+.sub{color:var(--muted);margin:14px 0 0;max-width:62ch}
+.note{margin:26px 0 0;padding:15px 17px;background:var(--card);border-left:3px solid var(--bar);
+ font-size:.94rem;color:var(--muted);max-width:74ch}
+.note b{color:var(--ink);font-weight:600}
+.rpt{padding:46px 0 0}
+.rpt h2{font-size:1.6rem;font-weight:600;letter-spacing:-.015em}
+.who{font-family:var(--cond);text-transform:uppercase;letter-spacing:.11em;font-size:.7rem;
+ color:var(--muted);margin:0 0 4px}
+.meta{color:var(--muted);font-size:.94rem;margin:6px 0 0}
+h3.sec{font-family:var(--cond);text-transform:uppercase;letter-spacing:.11em;font-size:.76rem;
+ color:var(--muted);margin:32px 0 12px;padding-bottom:7px;border-bottom:1px solid var(--rule)}
+.item{margin:0 0 22px;padding-left:15px;border-left:3px solid var(--work)}
+.item.good{border-color:var(--good)}
+.item p{margin:0 0 6px}
+.claim{font-weight:600}
+.count{font-family:var(--mono);font-size:.8rem;color:var(--muted)}
+.fix{color:var(--ink)}
+.said{color:var(--muted);font-size:.94rem;margin-top:8px}
+.said q{font-style:italic}
+table{border-collapse:collapse;width:100%;font-size:.94rem;margin-top:4px}
+td{padding:7px 10px 7px 0;border-bottom:1px solid var(--rule);vertical-align:baseline}
+td.n{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;width:4.5rem}
+td.g{width:112px}
+.gauge{display:block;height:7px;background:var(--paper);border-radius:4px;overflow:hidden}
+.gauge i{display:block;height:100%;background:var(--good)}
+.gauge i.low{background:var(--work)}
+td.d{color:var(--muted)}
+footer{margin-top:56px;padding-top:20px;border-top:1px solid var(--rule);color:var(--muted);
+ font-size:.88rem}
+@media(max-width:620px){body{font-size:16px;padding:0 16px 60px}td.g{display:none}}
+</style>
+<div class="wrap">
+<header class="masthead">
+  <p class="eyebrow">Mockingbird &middot; Stage 2 &middot; generated locally</p>
+  <h1>Interview feedback</h1>
+  <p class="sub">What the coach says after the interview ends. Two candidates, the same
+  fourteen questions, the same rubric.</p>
+  <div class="note"><b>Every line is drawn from what the candidate said.</b> The model's only
+  job was to quote them; which quotes count as meeting a criterion, and what the feedback leads
+  with, is arithmetic in Python. A score can be disputed by pointing at the sentence under it.</div>
+  <div class="note"><b>No overall grade, deliberately.</b> A number out of ten tells someone how
+  they did and not what to change, and invites comparison against strangers. The criteria are
+  reported and the arithmetic is left visible instead.</div>
+</header>
+@@BODY@@
+<footer>Generated by <code>tools/render_report.py</code> from the recorded transcript.
+The scoring is arithmetic and adds nothing of its own; the extraction that feeds it is a model
+call, and re-running one transcript moves a criterion by a point or two (measured 7-9 of 10 on
+<code>states_outcome</code> over five runs at temperature&nbsp;0). Read a single criterion as
+a direction, not a measurement.</footer>
+</div>
+"""
+
+
+def block(title: str, blurb: str, report, asked: int, answered: int) -> str:
+    totals = report.totals
+    rate = {k: v[0] / v[1] for k, v in totals.items() if v[1]}
+    weak = sorted((k for k, r in rate.items() if r <= rep.WEAK), key=lambda k: rate[k])
+    strong = sorted((k for k, r in rate.items() if r >= rep.STRONG), key=lambda k: -rate[k])
+    o = ['<section class="rpt">', '<p class="who">Candidate</p>',
+         "<h2>%s</h2>" % e(title),
+         '<p class="meta">%s &middot; %d questions, %d answered, %d scored</p>'
+         % (e(blurb), asked, answered, len(report.scores))]
+
+    if weak:
+        o.append('<h3 class="sec">What would change the most</h3>')
+        cited: set[str] = set()
+        for name in weak[:3]:
+            problem, fix = rep.ADVICE[name]
+            got, n = totals[name]
+            miss = rep._missed(report, name, cited)
+            if miss:
+                cited.add(miss.question_id)
+            o.append('<div class="item"><p class="claim">%s <span class="count">(%d of %d)</span></p>'
+                     '<p class="fix">%s</p>' % (e(problem), got, n, e(fix)))
+            if miss and miss.answer:
+                o.append('<p class="said">On &ldquo;%s&rdquo; you said <q>%s&hellip;</q></p>'
+                         % (e(miss.question[:64]), e(" ".join(miss.answer.split())[:150])))
+            o.append("</div>")
+
+    if strong:
+        o.append('<h3 class="sec">What you already do well</h3>')
+        for name in strong[:3]:
+            got, n = totals[name]
+            q = next((x for x in report.scores
+                      if x.met.get(name) and len(rep._quote(x, name)) > 20), None)
+            o.append('<div class="item good"><p class="claim">On %d of %d, %s. </p>'
+                     % (got, n, e(rep.PRAISE[name])))
+            if q:
+                o.append('<p class="said"><q>%s</q></p>' % e(rep._quote(q, name)[:150]))
+            o.append("</div>")
+
+    o.append('<h3 class="sec">Every criterion</h3><table>')
+    for name in sorted(totals):
+        got, n = totals[name]
+        pct = round(100 * got / n)
+        o.append('<tr><td class="n">%d/%d</td><td class="g"><span class="gauge">'
+                 '<i class="%s" style="width:%d%%"></i></span></td><td>%s</td>'
+                 '<td class="d">%s</td></tr>'
+                 % (got, n, "" if pct >= 80 else "low", pct,
+                    e(name.replace("_", " ")), e(score.CRITERIA[name][1])))
+    o.append("</table></section>")
+    return "\n".join(o)
+
+
+async def one(sid: str, plan, re_extract: bool = False):
+    d = ROOT / "data" / "sessions" / sid
+    turns = json.loads((d / "transcript.json").read_text(encoding="utf-8"))["turns"]
+    meta = {q["question_id"]: q for q in sess.iter_questions(plan)}
+    by_q: dict[str, list[str]] = defaultdict(list)
+    order: list[str] = []
+    for t in turns:
+        if t["question_id"] not in by_q:
+            order.append(t["question_id"])
+        by_q[t["question_id"]].append(t["utterance"])
+    p = prov.LMStudio()
+    items = [(q, meta.get(q, {}).get("question", q), by_q[q],
+              meta.get(q, {}).get("observation_shape", "star")) for q in order]
+    obs, _ = await observe.observe_all(p, items, cache=d / "observations.json",
+                                       re_extract=re_extract)
+    r = score.build(sid, obs, {q: meta.get(q, {}).get("rubric_criteria", []) for q in order})
+    return r, len(order), sum(1 for o in obs if o.text.strip())
+
+
+async def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--session", action="append", required=True)
+    ap.add_argument("--title", action="append", default=[])
+    ap.add_argument("--blurb", action="append", default=[])
+    ap.add_argument("--out", default=str(ROOT / "data" / "report.html"))
+    ap.add_argument("--plan", default=str(ROOT / "config" / "interview_swe_general.json"))
+    ap.add_argument("--re-extract", action="store_true",
+                    help="ignore the cached extraction and call the model again")
+    a = ap.parse_args()
+
+    plan = sess.load_plan(a.plan)
+    parts = []
+    for i, sid in enumerate(a.session):
+        r, asked, answered = await one(sid, plan, a.re_extract)
+        parts.append(block(a.title[i] if i < len(a.title) else sid,
+                           a.blurb[i] if i < len(a.blurb) else "",
+                           r, asked, answered))
+    out = Path(a.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(PAGE.replace("@@BODY@@", "\n".join(parts)), encoding="utf-8", newline="\n")
+    print("wrote %s (%.0f KB)" % (out, out.stat().st_size / 1024))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(asyncio.run(main()))
+    except prov.ProviderError as ex:
+        print("provider error: %s" % ex)
+        sys.exit(1)

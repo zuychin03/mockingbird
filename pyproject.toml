@@ -1,0 +1,21 @@
+[project]
+name = "mockingbird"
+version = "0.2.0"
+description = "A locally-hosted mock-interview coach for software-engineering roles."
+requires-python = ">=3.12"
+
+# The runtime is standard library only, deliberately: asyncio, urllib, json, dataclasses,
+# pathlib. Nothing here talks to a package index at interview time.
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=9.1,<10"]
+# Tier 1 harnesses only. `app/` does not import either.
+research = ["numpy>=2.5,<3", "praat-parselmouth>=0.4.7", "sherpa-onnx>=1.13"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Every module has to pass on its own. `app/` reached outside itself for `depth_signals` via
+# a sys.path mutation, so the full suite passed while `pytest tests/test_guards.py` did not,
+# and a green run stopped being evidence of anything.
+addopts = "-q"

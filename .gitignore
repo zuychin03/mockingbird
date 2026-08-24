@@ -1,0 +1,53 @@
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.superpowers/
+.worktrees/
+
+models/
+council/
+
+# Session artifacts and generated reports.
+data/sessions/
+data/calibration/
+data/live_session.json
+data/live_*.json
+data/report.html
+data/transcripts.html
+data/live_pair.html
+
+# ---------------------------------------------------------------- not published
+# Private working documents. They stay on disk and out of the repository: the plan
+# and the research log carry the measurements and the reasoning behind every rule
+# here, and internal_docs/ holds three model reviews of this codebase.
+MOCKINGBIRD_PLAN.md
+RESEARCH_AND_EXPERIMENTS_LOG.md
+REVIEW_TAKEAWAYS_IMPROVEMENT_PLAN.md
+internal_docs/
+
+# Research harnesses. Tier 1 and Tier 2 measured the model, the prompts and the
+# rubric before any of it shipped; they are instruments rather than product, and
+# several embed fixture answers and findings from the log above.
+tools/README.md
+tools/tier1_*.py
+tools/tier2_*.py
+tools/stage0*.py
+tools/stage0*.json
+tools/stage1_*.py
+tools/stage2_*.py
+!tools/stage2_report.py
+tools/analyse_*.py
+tools/analysis*.json
+tools/model_bench.*
+tools/deciders.py
+tools/depth_signals.py
+tools/fixtures_v2.py
+tools/make_samples.py
+tools/samples.json
+tools/session_long.py
+tools/session_script.py
+tools/calibrate.py
+tools/audition.html
+tools/tts_bench.py
+tools/tier1_posterior_granite.json

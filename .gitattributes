@@ -1,0 +1,10 @@
+# Keep LF in the working tree on every platform. This machine has core.autocrlf=true, which
+# would rewrite every source file to CRLF on checkout -- and tests/test_persistence.py fails
+# on CRLF by design, so a fresh clone would arrive with a red suite.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gguf binary
+*.onnx binary
+*.wav binary
