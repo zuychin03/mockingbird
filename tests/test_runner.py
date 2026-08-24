@@ -1300,3 +1300,46 @@ def test_a_design_question_is_not_paced_by_the_star_triple(tmp_path):
     assert parts.calls == 0, "no extraction should have been attempted"
     assert "no-new-observation->advance" not in state.turns[-1].guards
     assert not out.closed_question
+
+
+# ------------------------------------- speech profile (log 9.21, 9.22)
+def test_only_the_exemplar_rule_varies_by_model():
+    """9.21 measured the exemplar list worth +3 fixtures to granite and a third of Yi's probe
+    variety. That suggested the whole speech layer was granite-shaped; 9.22 measured the other
+    two and it is not -- turning substitution off cost Yi 3 distinct request types. One knob
+    varies, and this pins that so a future profile has to justify a second."""
+    from app.runner import YI, Speech
+    default = Speech()
+    differing = [f for f in ("exemplars", "substitute_focus", "repeat_closes")
+                 if getattr(YI, f) != getattr(default, f)]
+    assert differing == ["exemplars"], differing
+
+
+def test_the_profile_follows_the_model_id():
+    from app.runner import Speech
+    assert Speech.for_model("yi-1.5-6b-chat").exemplars is False
+    assert Speech.for_model("granite-4.1-3b").exemplars is True
+    assert Speech.for_model("").exemplars is True, "an unknown model gets the default"
+
+
+def test_dropping_the_exemplars_leaves_the_rest_of_the_prompt_intact():
+    """A variant, not an edit: everything else V5 measured has to survive."""
+    from app import contract
+    assert "What did you measure?" in contract.SYSTEM
+    assert "What did you measure?" not in contract.SYSTEM_NO_EXEMPLARS
+    for kept in ("ONE question, at most 15 words", "Choose exactly one action",
+                 "copy their question verbatim"):
+        assert kept in contract.SYSTEM_NO_EXEMPLARS, kept
+
+
+def test_speech_rules_never_touch_policy(tmp_path):
+    """The split this profile rests on: a rule that decides what the interview DOES is not in
+    here. A profile with everything off must still honour a grounded stop."""
+    from app.runner import Speech
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(PLAN)
+    r = Runner(ScriptedProvider([d("probe", "More?")]), PLAN, state,
+               speech=Speech(exemplars=False, substitute_focus=False, repeat_closes=False))
+    run(r.ask())
+    out = run(r.submit("Sorry, I need to stop the interview here."))
+    assert r.awaiting_confirm and not out.end_session

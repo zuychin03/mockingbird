@@ -75,6 +75,19 @@ Rules:
   Otherwise "ask" is an empty string. On clarify there is ALWAYS a question to copy."""
 
 
+# The exemplar list is the one part of V5 that is model-specific. Measured on both (9.21):
+# granite never copies it and loses 3 of 60 fixtures without it, because its lines run 16.3
+# words and the exemplars are what keeps them short. Yi emits the first item VERBATIM on a
+# third of its probes and, without them, scores variety 1.00 at the same length and the same
+# guarded accuracy. So it is a variant rather than an edit, selected by `runner.Speech`.
+EXEMPLAR_BLOCK = """- Probes that sound right: "Why?" / "What did you measure?" / "How did that land?" /
+  "Who else was involved?" / "What would you do differently?" / "How long did that take?"
+  Match that length. Anything longer is a form, not a conversation.
+"""
+assert EXEMPLAR_BLOCK in SYSTEM, "the exemplar block moved; SYSTEM_NO_EXEMPLARS is stale"
+SYSTEM_NO_EXEMPLARS = SYSTEM.replace(EXEMPLAR_BLOCK, "")
+
+
 def render(question: str, answer: str, history: str = "") -> str:
     """Assemble the user turn.
 

@@ -132,8 +132,9 @@ def test_the_live_harness_saves_every_field_the_runner_carries():
     # Rebuilt from the plan or the provider on every restore, so they carry nothing.
     # `_pending` is an in-flight extraction task and MUST NOT cross a process boundary --
     # `settle()` is what makes its result durable, as `seen` and `stalls`.
+    # `speech` is configuration, not turn state: it is derived from the loaded model.
     rebuilt = {"provider", "plan", "state", "questions", "history", "pace",
-               "observe_fn", "_pending"}
+               "observe_fn", "_pending", "speech"}
     missing = attrs - rebuilt - saved
     assert not missing, "live_candidate.save() does not persist: %s" % sorted(missing)
 

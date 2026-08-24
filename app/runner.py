@@ -95,6 +95,42 @@ STAR_PACED_TYPES = frozenset({"adaptive_discussion"})
 
 
 @dataclass
+class Speech:
+    """Which SPEECH rules apply. Policy and consent rules are not in here on purpose.
+
+    Everything in 8.18 and 8.19 was measured against one model, and section 7's conclusion --
+    that ~1.5 distinct requests per question is what granite has, and guarding cannot
+    manufacture a second one -- is a fact about THAT model rather than about interviewing.
+    9.21 measured the first of these on a second model and found the same prompt line worth
+    +3 items to one and a third of its probe variety to the other.
+
+    That suggested the whole speech layer might be granite-shaped. It is not. 9.22 measured
+    the other two on both models and they earn their place on both -- turning substitution off
+    cost Yi three distinct request types and four words a line, which is the opposite of the
+    prediction. ONE of three knobs varies by model.
+
+    They stay knobs anyway, and the difference from the `detour_budget` defect matters: that
+    field was read by nothing. These are read on every turn, and they exist so the next model
+    is measured rather than assumed. Assuming is what put an exemplar list tuned for one model
+    in front of another for a whole session.
+    """
+    exemplars: bool = True          # the six probes in contract.SYSTEM
+    substitute_focus: bool = True   # replace an off-focus line with a fixed template
+    repeat_closes: bool = True      # a twice-repeated line closes the question
+
+    @classmethod
+    def for_model(cls, model_id: str) -> "Speech":
+        return YI if "yi" in (model_id or "").lower() else cls()
+
+
+# `exemplars=False` from 9.21: Yi emits the first exemplar verbatim on a third of its probes
+# and, without them, scores variety 1.00 at the same length and the same guarded accuracy.
+# The other two are at the default because 9.22 MEASURED them and they help -- substitution
+# off cost 3 distinct request types and 4 words a line.
+YI = Speech(exemplars=False)
+
+
+@dataclass
 class Spoken:
     """What the participant is allowed to receive. Nothing else crosses the live channel."""
     text: str
@@ -162,7 +198,10 @@ def live_view(spoken: Spoken) -> dict:
 class Runner:
     def __init__(self, provider: Provider, plan: dict, state: session.SessionState,
                  pool: int | None = None, pace: bool = True,
-                 observe_fn: Callable[[str, str, str], Awaitable] | None = None):
+                 observe_fn: Callable[[str, str, str], Awaitable] | None = None,
+                 speech: "Speech | None" = None):
+        # Which SPEECH rules apply. Policy and consent rules are not optional.
+        self.speech = speech or Speech()
         # `observe_fn` turns one answer into an Observation. Injected rather than imported so
         # the runner keeps no dependency on the Stage 2 extractor, and so a test can drive the
         # stop rule without a model. None disables the adaptive stop and leaves the cap alone,
@@ -250,7 +289,7 @@ class Runner:
     async def _decide(self, utterance: str, retry_of: list[str],
                       want: str | None = None) -> tuple[Completion, dict | None]:
         q = self.current
-        system = contract.SYSTEM
+        system = contract.SYSTEM if self.speech.exemplars else contract.SYSTEM_NO_EXEMPLARS
         if want:
             system += focus.instruction(want)
         if retry_of:
@@ -440,9 +479,15 @@ class Runner:
             # line (NFR-6 degrades, it does not skip ahead), while a line the model will not
             # vary means this question has had this probe.
             if g.needs_regeneration and "repeated-say->regenerate" in g.applied:
-                g.act = "advance"
-                g.say = ""
-                g.applied.append("regeneration-repeated->advance")
+                if self.speech.repeat_closes:
+                    g.act = "advance"
+                    g.say = ""
+                    g.applied.append("regeneration-repeated->advance")
+                else:
+                    # D5's alternative: a wording failure picks an unused line rather than
+                    # closing a question that evidence has not finished with.
+                    g.say = ""
+                    g.applied.append("regeneration-repeated->fallback")
 
         # Budget backstop. The adaptive rule of section 1c.5 -- stop after two consecutive
         # turns with no new observation -- needs the Stage 2 extractor, so Stage 1 runs the
@@ -553,6 +598,10 @@ class Runner:
             if fresh:
                 got = fresh
                 self.focus_used |= fresh
+            elif not self.speech.substitute_focus:
+                got = {want}
+                self.focus_used.add(want)
+                g.applied.append("off-focus-kept")
             else:
                 got = {want}
                 g.say = focus.template(want, set(self.said_this_session))

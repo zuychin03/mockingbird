@@ -20,7 +20,7 @@ from . import observe
 from . import provenance
 from . import provider as prov
 from . import session
-from .runner import Runner, live_view
+from .runner import Runner, Speech, live_view
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PLAN = ROOT / "config" / "interview_swe_general.json"
@@ -78,7 +78,9 @@ async def run(plan_path: Path, skip_canary: bool) -> int:
         """Plan 1c.5's per-answer extraction. Runs between turns, never inside one."""
         return await observe.observe(p, question_id, question, [utterance])
 
-    r = Runner(p, plan, state, observe_fn=observe_answer)
+    # The speech profile follows the loaded model. Policy rules do not vary (9.22).
+    r = Runner(p, plan, state, observe_fn=observe_answer,
+               speech=Speech.for_model(model.get("id", "")))
 
     print("\nplan: %s   %d questions" % (plan.get("label", plan.get("id")), len(r.questions)))
     print("session: %s" % state.dir)

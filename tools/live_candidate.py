@@ -35,7 +35,7 @@ from tools._console import utf8  # noqa: E402
 utf8()
 
 from app import contract, observe, provenance, provider as prov, session as sess  # noqa: E402
-from app.runner import Runner  # noqa: E402
+from app.runner import Runner, Speech  # noqa: E402
 
 STATE = ROOT / "data" / "live_session.json"
 
@@ -85,7 +85,12 @@ def restore(p, plan) -> Runner:
                               started_at="", status=d["status"])
     state.turns = [sess.Turn(**t) for t in d["turns"]]
     state.questions = [sess.QuestionState(**q) for q in d["questions"]]
-    r = Runner(p, plan, state, pool=d["pool"], observe_fn=extractor(p))
+    try:
+        live = prov.loaded_models()
+    except Exception:
+        live = []
+    r = Runner(p, plan, state, pool=d["pool"], observe_fn=extractor(p),
+               speech=Speech.for_model(live[0]["id"] if live else ""))
     r.index = d["index"]
     r.follow_ups_used = d["follow_ups_used"]
     r.clarifies_used = d["clarifies_used"]
@@ -138,7 +143,8 @@ async def main() -> int:
         except Exception:
             loaded = []
         state = sess.new_session(plan, provenance.snapshot(loaded[0] if loaded else None))
-        r = Runner(p, plan, state, observe_fn=extractor(p))
+        r = Runner(p, plan, state, observe_fn=extractor(p),
+                   speech=Speech.for_model(loaded[0]["id"] if loaded else ""))
         await p.warmup(contract.SYSTEM,
                        contract.render(r.current["question"], "", ""))
         spoken = await r.ask()
