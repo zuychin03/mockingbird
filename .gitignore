@@ -11,8 +11,7 @@ council/
 # Session artifacts and generated reports.
 data/sessions/
 data/calibration/
-data/live_session.json
-data/live_*.json
+data/*.json
 data/*.html
 
 # ---------------------------------------------------------------- not published
