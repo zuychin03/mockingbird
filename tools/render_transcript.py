@@ -31,6 +31,20 @@ _ids = _a.session or [d.name for d in sorted(
 # Hand-written where a session has been read and characterised; anything else renders with
 # its id, so the tool still works on a session recorded five minutes ago.
 KNOWN = {
+    # 9.48's four. Same 22-turn script through the real runner, each model at its own
+    # profile, to keep one exaone and one Llama-3.2-3B build.
+    "20260826-014015-759572": (
+        "exaone-3.5-2.4b Q5_K_M",
+        "14/22 decisions, one family crossing, 4 of 10 questions closed."),
+    "20260826-014103-5bbfcf": (
+        "exaone-3.5-2.4b Q4_K_M",
+        "Identical acts and identical navigation to Q5, on different wording."),
+    "20260826-014148-1662fc": (
+        "llama-3.2-3b-instruct",
+        "14/22 decisions, no crossings, 7 of 10 closed. Eleven probes to two reasks."),
+    "20260826-014239-7853a1": (
+        "hermes-3-llama-3.2-3b",
+        "12/22 decisions, no crossings, 8 of 10 closed -- but TEN reasks to two probes."),
     # 9.43's pair. Same candidate, same answers, same build, one knob apart: granite runs
     # `trust_ok=False` and llama the default. Fourteen turns each.
     "20260825-234319-d44b8b": (
@@ -80,7 +94,8 @@ def stats(meta, turns):
         "status": meta.get("status"),
         "p50": statistics.median(ordered),
         "p90": p90,
-        "crossings": 0,
+        "probes": sum(1 for x in turns if x["act"] == "probe"),
+        "reasks": sum(1 for x in turns if x["act"] == "reask"),
         "guards": sum(1 for t in turns if t["guards"]),
     }
 
@@ -150,18 +165,18 @@ def session_html(tag, sid, label, blurb):
       <p class="blurb">%s</p>
     </div>
     <dl class="figures">
-      <div><dt>Questions closed</dt><dd>%d<span class="of"> / 14</span></dd></div>
+      <div><dt>Questions closed</dt><dd>%d<span class="of"> asked</span></dd></div>
       <div><dt>Turns</dt><dd>%d</dd></div>
       <div><dt>Latency p50</dt><dd>%.0f<span class="of"> ms</span></dd></div>
       <div><dt>Latency p90</dt><dd>%.0f<span class="of"> ms</span></dd></div>
       <div><dt>Guards fired</dt><dd>%d</dd></div>
-      <div class="hero"><dt>Family crossings</dt><dd>0</dd></div>
+      <div class="hero"><dt>Probes : reasks</dt><dd>%d<span class="of"> : %d</span></dd></div>
     </dl>
     <p class="status %s">%s</p>
   </header>
   %s
 </section>""" % (tag, tag, e(label), e(blurb), s["questions"], s["turns"],
-                 s["p50"], s["p90"], s["guards"],
+                 s["p50"], s["p90"], s["guards"], s["probes"], s["reasks"],
                  "ok" if done else "warn",
                  "Ran to completion \u2014 every question asked and closed."
                  if done else
@@ -326,7 +341,7 @@ COPY = {
            "Complete 14-question mock interviews against the local model, answered turn by "
            "turn rather than replayed from a script, on the build after five fixes."),
     False: ("Mockingbird Session Records",
-            "Two mock interviews, turn by turn",
+            "@@N@@ mock interviews, turn by turn",
             "Complete records of the scripted sessions used to validate the Stage&nbsp;1 "
             "runner, replayed against the local model."),
 }
@@ -345,6 +360,9 @@ eyebrow = "Mockingbird &middot; Stage 1 &middot; %s &middot; local" % (
     html.escape(", ".join(models)) if models else "local model")
 PAGE = (PAGE.replace("@@TITLE@@", title).replace("@@HEADLINE@@", headline)
         .replace("@@EYEBROW@@", eyebrow)
+        .replace("@@N@@", {1: "One", 2: "Two", 3: "Three", 4: "Four",
+                           5: "Five", 6: "Six"}.get(len(SESSIONS),
+                                                   str(len(SESSIONS)))) 
         .replace("@@SUB@@", sub)
         .replace("@@SCRIPTED_NOTE@@", "" if _a.live else SCRIPTED_NOTE))
 OUT.write_text(PAGE.replace("@@SESSIONS@@", "".join(parts)), encoding="utf-8", newline="\n")

@@ -127,6 +127,8 @@ class Speech:
             return YI
         if "granite" in m:
             return GRANITE
+        if "exaone" in m:
+            return EXAONE
         return cls()
 
     @property
@@ -152,6 +154,12 @@ YI = Speech(exemplars=False)
 # 45/49 under the default and 43/49 here. The default stays `True` because an unknown model
 # should err toward probing, which keeps the question open (1c.5).
 GRANITE = Speech(trust_ok=False)
+
+# The same resolution as granite and for the same reason, further along: exaone-3.5 reads
+# 38/49 under the default and 45/49 here, recovering nine of its ten correct advances (9.45).
+# Without this it would be measured at its worse configuration, which is the asymmetry 9.43
+# was written to stop repeating.
+EXAONE = Speech(trust_ok=False)
 
 
 @dataclass
