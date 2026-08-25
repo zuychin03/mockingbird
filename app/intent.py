@@ -69,7 +69,7 @@ _PARTICLE_NO = frozenset({"no", "nope", "nah"})
 # adversarial sentences found seven.
 STOP_EXPLICIT = [
     "stop the interview", "end the interview", "stop this interview", "end this interview",
-    "stop the session", "end the session", "not a good time", "rearrange",
+    "stop the session", "end the session",
     # Naming the conversation by what it is rather than what it is for. "I'm going to have
     # to end the call here" is unambiguous and matched nothing: the object sits between the
     # verb and the endpoint, so neither the explicit list nor the request frame caught it.
@@ -84,6 +84,13 @@ STOP_REQUEST = [
     "shall we stop", "let us stop", "lets stop", "we stop here", "we end here",
     "call it here", "cut this short", "cut it short", "stop it here", "end it here",
     "should stop", "should we stop", "wrap this up", "wrap it up", "we stop", "we end",
+    # Moved out of STOP_EXPLICIT, which fires on its own. As bare substrings these matched
+    # ordinary interview vocabulary -- "I rearrange my calendar every Monday" and "it was
+    # not a good time to deploy, so we waited" both read as a request to END THE INTERVIEW,
+    # and "it is not a good time to stop" read backwards into the very inversion 9.13 exists
+    # to remove. Under the request frame they still catch "this isn't a good time, can we
+    # rearrange?" because there the phrase ends its clause (9.38).
+    "not a good time", "rearrange",
 ]
 STOP_STRONG = STOP_EXPLICIT + STOP_REQUEST
 
@@ -178,8 +185,16 @@ def read_control(utterance: str, *, bare_yes: str | None = None) -> str:
 
     stop_a = stop_n = skip_a = skip_n = continue_a = False
     for c in clauses:
-        a, n = _hits(c, STOP_STRONG + STOP_BARE)
-        stop_a, stop_n = stop_a or a, stop_n or n
+        # Only the EXPLICIT phrases fire on their own here. The request frames and the bare
+        # verbs take the endpoint rule, for the same reason `asked_to_stop` does: "we need to
+        # finish the migration before Friday" is not consent, and "it is not a good time to
+        # stop" is a REFUSAL that read as consent because the phrase begins with its own
+        # negator -- `_hits` only counts a negator that PRECEDES the phrase, and index 2 is
+        # not before index 2 (9.38).
+        a, n = _hits(c, STOP_EXPLICIT)
+        _, n_rest = _hits(c, STOP_REQUEST + STOP_BARE)
+        a = a or _endpoint_hit(c, STOP_REQUEST + STOP_BARE)
+        stop_a, stop_n = stop_a or a, stop_n or (n or n_rest)
         a, n = _hits(c, SKIP_CONTENT)
         skip_a, skip_n = skip_a or a, skip_n or n
         a, _ = _hits(c, CONTINUE_CONTENT)

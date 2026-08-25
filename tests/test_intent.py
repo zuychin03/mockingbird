@@ -7,6 +7,7 @@ land where it did.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -194,3 +195,75 @@ def test_empty_and_punctuation_only_replies_are_unclear():
     for junk in ("", "   ", "...", "???", "\n"):
         assert read(junk) == UNCLEAR
         assert intent.asked_to_stop(junk) is False
+
+
+# ------------------------------------- an independently authored corpus (log 9.38)
+# 75 consent cases written against a PARALLEL implementation, by someone who had never seen
+# this module. 9.15's lesson is that a hand-authored fixture set only measures whether a rule
+# matches its own author's reading; this one measures whether it generalises. It found two
+# real inversions on first contact.
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "consent_cases.json"
+
+# Cases where the two implementations genuinely disagree about the RIGHT answer and this one
+# is deliberate. Each is a measured decision, not an oversight:
+#   bare particles -- a lone "no" to "do you want to stop?" declines it; a lone "yes" to the
+#     skip offer accepts, because a wrong skip costs a question and a wrong stop costs the
+#     session, so only the cheaper prompt lets a bare affirmative decide (read_control).
+#   "no, skip it and carry on" -- CONFIRM_LINE asks a THREE-way question and skip is one of
+#     the options it offers; reading this as "continue" re-asks the question they just asked
+#     to leave. That was the half of the release blocker the review missed (9.13).
+DELIBERATE = {
+    ("stop_confirmation", "no"),
+    ("stop_confirmation", "no, skip it and carry on"),
+    ("skip_offer", "yes"),
+    ("skip_offer", "no"),
+}
+
+# Bare stop-verbs stay unmatched in an ORDINARY answer and that is not an oversight either:
+# allowing them under the endpoint rule was tried and fired on 20 of 914 real stored
+# utterances, including "Four years, full-stack on a logistics product..." (9.38).
+CONSERVATIVE = {
+    ("ordinary", "Please stop here."), ("ordinary", "Please stop."),
+    ("ordinary", "STOP HERE"), ("ordinary", "stop-here"),
+    ("ordinary", "we should finish here"),
+    ("ordinary", "I need to finish here and leave."),
+    ("skip_offer", "Pass."), ("skip_offer", "Next."),
+}
+
+_EXPECT = {"stop": intent.STOP, "continue": intent.CONTINUE, "keep_trying": intent.CONTINUE,
+           "skip": intent.SKIP_QUESTION, "ambiguous": intent.UNCLEAR}
+
+
+def _read(case):
+    text, ctx = case["text"], case["context"]
+    if ctx == "ordinary":
+        return "stop" if intent.asked_to_stop(text) else "none", \
+               ("stop" if case["expected"] == "stop" else "none")
+    bare = intent.SKIP_QUESTION if ctx == "skip_offer" else None
+    return intent.read_control(text, bare_yes=bare), _EXPECT[case["expected"]]
+
+
+def test_the_independent_consent_corpus():
+    cases = json.loads(FIXTURES.read_text(encoding="utf-8"))
+    assert len(cases) == 75
+    unexpected = []
+    for case in cases:
+        key = (case["context"], case["text"])
+        got, want = _read(case)
+        if got != want and key not in DELIBERATE and key not in CONSERVATIVE:
+            unexpected.append((key, want, got))
+    assert not unexpected, unexpected
+
+
+def test_the_two_inversions_the_corpus_found_stay_fixed():
+    """Both fired as a request to END THE INTERVIEW on ordinary interview vocabulary, and the
+    second read a REFUSAL to stop as consent -- 9.13's inversion, reintroduced by a phrase
+    that begins with its own negator so `_hits` could never negate it."""
+    for said in ("I know how to rearrange the queue.",
+                 "I rearrange my calendar every Monday.",
+                 "It was not a good time to deploy, so we waited."):
+        assert not intent.asked_to_stop(said), said
+    assert intent.read_control("It is not a good time to stop.") == intent.CONTINUE
+    assert intent.read_control("We need to finish the migration before Friday.") == intent.UNCLEAR
+    # and the genuine request it was originally added for still lands
+    assert intent.asked_to_stop("This isn't a good time, can we rearrange?")
