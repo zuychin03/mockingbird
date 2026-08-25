@@ -119,6 +119,11 @@ class Speech:
     substitute_focus: bool = True   # replace an off-focus line with a fixed template
     repeat_closes: bool = True      # a twice-repeated line closes the question
     trust_ok: bool = True           # `advance` with ok=false is a contradiction, not an advance
+    # The contract asks for one question in at most 15 words and NOTHING enforced it.
+    # None keeps that. A number substitutes the focus template over an over-length
+    # line even when it makes a fresh request, which is the one lever 9.50 left
+    # untested and the only one aimed at what exaone actually does wrong.
+    max_say_words: int | None = None
 
     @classmethod
     def for_model(cls, model_id: str) -> "Speech":
@@ -159,7 +164,7 @@ GRANITE = Speech(trust_ok=False)
 # 38/49 under the default and 45/49 here, recovering nine of its ten correct advances (9.45).
 # Without this it would be measured at its worse configuration, which is the asymmetry 9.43
 # was written to stop repeating.
-EXAONE = Speech(trust_ok=False)
+EXAONE = Speech(trust_ok=False, max_say_words=15)
 
 
 @dataclass
@@ -641,6 +646,12 @@ class Runner:
             # ten canned sentences, which trades repetition within a question for the same
             # template across questions (log 8.19).
             fresh = focus.classify(g.say) - self.focus_used
+            # A fresh request said in 25 words is still a bad question. Measured on exaone,
+            # whose five surviving lines averaged 19.2 words against the template's 5.8 and
+            # every one of them broke the contract's own limit (9.51).
+            if (self.speech.max_say_words
+                    and len(g.say.split()) > self.speech.max_say_words):
+                fresh = set()
             if fresh:
                 got = fresh
                 self.focus_used |= fresh

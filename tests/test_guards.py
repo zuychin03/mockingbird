@@ -482,3 +482,12 @@ def test_the_could_you_mirrors_rewrite_like_their_can_you_twins():
         r = guards.apply(g("probe", said), "we shipped it", [])
         assert r.say == want, (said, r.say)
         assert "hedge-stripped" in r.applied
+
+
+def test_the_length_trigger_is_off_unless_a_profile_asks_for_it():
+    """9.51. Measured once on granite it cost 3 decision items through history feedback, so
+    it does not default on; exaone gains 3.4 words a line for nothing."""
+    from app.runner import Speech
+    assert Speech().max_say_words is None
+    assert Speech.for_model("granite-4.1-3b").max_say_words is None
+    assert Speech.for_model("exaone-3.5-2.4b-instruct@q4_k_m").max_say_words == 15
