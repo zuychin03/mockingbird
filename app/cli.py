@@ -38,7 +38,9 @@ def _preflight(p: prov.LMStudio, skip: bool) -> dict | None:
         print("cannot reach LM Studio: %s" % e)
         return None
     if not loaded:
-        print("no model loaded. run: lms load granite-4.1-3b@q4_k_m "
+        # No quant suffix: LM Studio only accepts `key@quant` while several quants of that
+        # key are on disk, and `granite-4.1-3b@q4_k_m` now fails to resolve outright.
+        print("no model loaded. run: lms load granite-4.1-3b "
               "--context-length 8192 --identifier mockingbird-llm -y")
         return None
     # `id` is the instance alias when the model was loaded with --identifier (9.24).

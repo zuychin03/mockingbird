@@ -65,7 +65,7 @@ Needs Python 3.12 and [LM Studio](https://lmstudio.ai/) with a local model loade
 
 ```bash
 lms server start
-lms load granite-4.1-3b@q4_k_m --context-length 8192 --identifier mockingbird-llm -y
+lms load granite-4.1-3b --context-length 8192 --identifier mockingbird-llm -y
 ```
 
 Then, for an interview in the terminal:
