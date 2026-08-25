@@ -631,6 +631,7 @@ class Runner:
         # The design follow-up is exempt: it is not the model's line to validate, it already
         # names its own request, and substituting a focus template over it would replace the
         # one question the gap check exists to ask.
+        say_model = None
         if (want and g.act in ("probe", "reask") and g.say
                 and "design-gap->probe" not in g.applied):
             # The objective is a DISTINCT request, not obedience. If the model ignored the
@@ -649,6 +650,7 @@ class Runner:
                 g.applied.append("off-focus-kept")
             else:
                 got = {want}
+                say_model = g.say
                 g.say = focus.template(want, set(self.said_this_session))
                 g.applied.append("off-focus->%s" % want.lower())
                 self.focus_used.add(want)
@@ -657,7 +659,7 @@ class Runner:
         self.answers_this_question.append(utterance)
         outcome = self._dispatch(g, utterance, out,
                                  wall_ms=(time.perf_counter() - t0) * 1000, calls=calls,
-                                 want=want, asked=asked)
+                                 want=want, asked=asked, say_model=say_model)
         if not outcome.closed_question:
             self._observe_later(utterance)
         return outcome
@@ -666,7 +668,8 @@ class Runner:
     def _dispatch(self, g: guards.Guarded, utterance: str, out: Completion,
                   wall_ms: float | None = None, calls: int = 1,
                   want: str | None = None,
-                  asked: list[str] | None = None) -> TurnOutcome:
+                  asked: list[str] | None = None,
+                  say_model: str | None = None) -> TurnOutcome:
         q = self.current
         # Captured before any handler runs: `_close_question` moves the index, and the line
         # this returns belongs to the question being closed, not to the one after it.
@@ -695,6 +698,10 @@ class Runner:
             "close_reason": close_reason(g.act, g.applied) if closed else None,
             "focus_asked": want,
             "focus_got": asked or [],
+            # The model's own line where a guard replaced it. Without this the record cannot
+            # say what the model WANTED to ask, so a substitution rate is a number with no
+            # diagnosis attached -- and exaone substitutes on 67% of its probes (9.49).
+            "say_model": say_model,
             "follow_ups_used": self.follow_ups_used,
             "pool_left": self.pool,
             # Logged every turn, never branched on. The threshold gets set from real data
