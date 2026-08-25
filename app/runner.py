@@ -107,7 +107,8 @@ class Speech:
     That suggested the whole speech layer might be granite-shaped. It is not. 9.22 measured
     the other two on both models and they earn their place on both -- turning substitution off
     cost Yi three distinct request types and four words a line, which is the opposite of the
-    prediction. ONE of three knobs varies by model.
+    prediction. 9.43 then measured the fourth both ways on both models and found each wanting
+    the OPPOSITE resolution, so two of four now vary by model rather than one of three.
 
     They stay knobs anyway, and the difference from the `detour_budget` defect matters: that
     field was read by nothing. These are read on every turn, and they exist so the next model
@@ -117,10 +118,16 @@ class Speech:
     exemplars: bool = True          # the six probes in contract.SYSTEM
     substitute_focus: bool = True   # replace an off-focus line with a fixed template
     repeat_closes: bool = True      # a twice-repeated line closes the question
+    trust_ok: bool = True           # `advance` with ok=false is a contradiction, not an advance
 
     @classmethod
     def for_model(cls, model_id: str) -> "Speech":
-        return YI if "yi" in (model_id or "").lower() else cls()
+        m = (model_id or "").lower()
+        if "yi" in m:
+            return YI
+        if "granite" in m:
+            return GRANITE
+        return cls()
 
     @property
     def system(self) -> str:
@@ -134,6 +141,17 @@ class Speech:
 # The other two are at the default because 9.22 MEASURED them and they help -- substitution
 # off cost 3 distinct request types and 4 words a line.
 YI = Speech(exemplars=False)
+
+# `trust_ok=False` from 9.43, and it is the second knob measured to vary by model. The
+# advance/ok contradiction has two resolutions and each model wants the other one:
+#
+#     granite   act right 10 of 11 advances, `ok` right 7 of 10   trust the act
+#     llama     act right 10 of 13 advances, `ok` right 10 of 10  trust the `ok`
+#
+# Measured both ways on both: granite reads 44/49 under the default and 46/49 here, llama
+# 45/49 under the default and 43/49 here. The default stays `True` because an unknown model
+# should err toward probing, which keeps the question open (1c.5).
+GRANITE = Speech(trust_ok=False)
 
 
 @dataclass
@@ -461,7 +479,7 @@ class Runner:
                                 (self.current or {}).get("focus_ladder") or [])
         t0 = time.perf_counter()
         out, raw = await self._decide(utterance, [], want)
-        g = guards.apply(raw, utterance, self.said_this_question)
+        g = guards.apply(raw, utterance, self.said_this_question, self.speech.trust_ok)
 
         # Guard 3 asks for one regeneration with the previous lines fed back. One retry
         # only: a second identical answer is the model's position, not a slip.
@@ -475,7 +493,7 @@ class Runner:
         if g.needs_regeneration:
             first = g.applied
             out, raw = await self._decide(utterance, self.said_this_question, want)
-            g = guards.apply(raw, utterance, self.said_this_question)
+            g = guards.apply(raw, utterance, self.said_this_question, self.speech.trust_ok)
             # The first pass's guard names would otherwise vanish from the record replay
             # depends on (section 8.1).
             g.applied = first + ["regenerated"] + g.applied

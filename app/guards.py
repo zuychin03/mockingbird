@@ -329,7 +329,8 @@ def skip_requested(utterance: str) -> bool:
     return refuses(utterance) or intent.asked_to_skip(utterance)
 
 
-def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded:
+def apply(raw: dict | None, utterance: str, previous_says: list[str],
+          trust_ok: bool = True) -> Guarded:
     """Run the guards in order and return the decision a handler may act on."""
     applied: list[str] = []
 
@@ -354,7 +355,7 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
             # turned a grounded stop request into a probe, which is guard 2's call and not
             # this one's. Strip the question and let guard 2 decide whether the end stands
             # -- an ungrounded one still becomes `probe` two lines below (9.19).
-            if not ok and act == "advance":
+            if not ok and act == "advance" and trust_ok:
                 act, say, applied = "probe", say, applied + ["invented-question->probe"]
             else:
                 say = " ".join(s for s in _sentences(say) if not _is_question(s))
@@ -367,7 +368,7 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
     # Measured on llama-3.2-3b over the 60 fixtures (9.42): it advanced 13 times, all ten
     # gold=`advance` carried ok=true, and both ok=false advances were gold=`probe`. Perfect
     # discrimination, so this costs nothing and recovers two.
-    if act == "advance" and not ok:
+    if act == "advance" and not ok and trust_ok:
         act, applied = "probe", applied + ["advance-not-ok->probe"]
 
     # 2. `end` gate. Wrongly continuing costs seconds; wrongly ending loses the session.

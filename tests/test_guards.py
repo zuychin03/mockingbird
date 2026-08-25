@@ -410,3 +410,25 @@ def test_a_disjunctive_question_is_a_clarification_request():
     # The tenth, and the reason this is 9 of 10: the alternatives are separate sentences with
     # no disjunction between them, so a test for `or` inside a question cannot reach it.
     assert not guards.offers_a_choice("Quickly meaning what, a few days? A sprint?")
+
+
+def test_trust_ok_false_resolves_the_contradiction_the_other_way():
+    """9.43. The two resolutions are mutually exclusive and each model wants the other one.
+    granite's act is right on 10 of 11 advances and its `ok` on 7 of 10, so it advances; the
+    invented question is stripped rather than promoted into the decision."""
+    raw = {"act": "advance", "ok": False, "say": "What did you measure?", "ask": ""}
+    said = "We split the users table live. I wrote the backfill and ran it in batches."
+    assert guards.apply(dict(raw), said, [], True).act == "probe"
+    g = guards.apply(dict(raw), said, [], False)
+    assert g.act == "advance"
+    assert "?" not in g.say
+
+
+def test_the_knob_defaults_to_the_probing_side():
+    """An unknown model errs toward keeping the question open (1c.5), so the default is the
+    resolution that downgrades rather than the one that advances."""
+    from app.runner import Speech
+    assert Speech().trust_ok is True
+    assert Speech.for_model("granite-4.1-3b").trust_ok is False
+    assert Speech.for_model("llama-3.2-3b-instruct").trust_ok is True
+    assert Speech.for_model("").trust_ok is True
