@@ -140,6 +140,18 @@ HEDGES = {
     "could you walk me through ": "Walk me through ",
     "can you talk about ": "Tell me about ",
     "can you share ": "Tell me about ",
+    # The `could you` mirrors that were missing, and the `more` variant. The table was built
+    # from granite's phrasings, so a form granite never uses was never in it: seven of ten
+    # exaone lines open "could you elaborate MORE on", one word off an entry that is present,
+    # and it left an 18-word hedge in place of a 6-word imperative (9.50).
+    "could you elaborate more on ": "Tell me about ",
+    "can you elaborate more on ": "Tell me about ",
+    "could you elaborate ": "Tell me about ",
+    "could you tell me more about ": "Tell me about ",
+    "can you tell me more about ": "Tell me about ",
+    "could you tell me about ": "Tell me about ",
+    "could you talk about ": "Tell me about ",
+    "could you share ": "Tell me about ",
 }
 # Hedges whose remainder is always a complement, never a question clause.
 COMPLEMENT_ONLY = {"can you give an example of ": "Give me an example of ",
@@ -484,6 +496,15 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str],
             asks = [p for p in parts if _is_question(p)]
             say = asks[0] if asks else parts[0]
             applied.append("extra-sentences-dropped")
+            # 3c ran BEFORE this and saw the acknowledgement, not the question, so a hedge on
+            # the surviving sentence was never rewritten: three of exaone's ten substituted
+            # lines carried `extra-sentences-dropped` with no `hedge-stripped` (9.50). Rewrite
+            # the sentence that actually survives. Cheap and idempotent -- a line 3c already
+            # handled no longer starts with a hedge, so this is a no-op on it.
+            if act in ("probe", "reask", "clarify"):
+                say, changed = direct(say)
+                if changed and "hedge-stripped" not in applied:
+                    applied.append("hedge-stripped")
         cut = _truncate(say)
         if cut != say:
             applied.append("say-truncated")

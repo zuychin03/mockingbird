@@ -440,8 +440,12 @@ def test_the_one_sentence_guard_keeps_the_question_not_the_first_sentence():
     probe that asked nothing in 52% of its turns."""
     r = guards.apply(g("probe", "That sounds interesting! Could you elaborate on the "
                                 "bottlenecks you hit?"), "we shipped a caching layer", [])
-    assert r.say == "Could you elaborate on the bottlenecks you hit?"
     assert "extra-sentences-dropped" in r.applied
+    # And the surviving sentence is then rewritten, which it was not before 9.50: `direct()`
+    # runs earlier in the chain and saw the acknowledgement, so a hedge on the sentence that
+    # actually survives went unstripped.
+    assert r.say == "Tell me about the bottlenecks you hit."
+    assert "hedge-stripped" in r.applied
 
 
 def test_it_still_drops_a_second_question():
@@ -464,3 +468,17 @@ def test_exaone_gets_granites_resolution_not_the_default():
     from app.runner import Speech
     assert Speech.for_model("exaone-3.5-2.4b-instruct@q5_k_m").trust_ok is False
     assert Speech.for_model("hermes-3-llama-3.2-3b").trust_ok is True
+
+
+def test_the_could_you_mirrors_rewrite_like_their_can_you_twins():
+    """9.50. The hedge table was built from granite's phrasings, so forms granite never uses
+    were absent: "could you elaborate MORE on" is one word off an entry that is present, and
+    seven of ten exaone lines opened with it."""
+    for said, want in (
+            ("Could you elaborate more on the bottlenecks?", "Tell me about the bottlenecks."),
+            ("Could you tell me about the rollout?", "Tell me about the rollout."),
+            ("Could you share the numbers you saw?", "Tell me about the numbers you saw."),
+    ):
+        r = guards.apply(g("probe", said), "we shipped it", [])
+        assert r.say == want, (said, r.say)
+        assert "hedge-stripped" in r.applied
