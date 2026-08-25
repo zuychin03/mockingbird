@@ -253,8 +253,22 @@ _CANNOT = re.compile(
     r"(?:cant|cannot|couldnt|dont|didnt) " + _ADV + r"think of|"
     r"(?:havent|hadnt|have not) " + _ADV + r"(?:done|had)|"
     r"never (?:really )?(?:done|had to)|not done that|no experience|"
-    r"nothing comes to mind|not really had|(?:dont|do not) have one|never really"
+    r"nothing comes to mind|not really had|(?:dont|do not) have one|never really|"
+    # 9.42's reask family. Both priced over the 914 stored answers before adding: "not
+    # something i ve" fires on none of them, "dont think i ve" on three and all three are
+    # genuine blanks. Two more candidates were REJECTED on the same test -- "didnt really
+    # have" caught "I didn't really have a good argument for it", which is an answer, and
+    # "hard to say" caught nothing in the corpus but takes "it's hard to say exactly, but we
+    # cut p95 to 300ms" adversarially.
+    r"not something i ve|(?:dont|didnt) think i ve"
     r")", re.I)
+
+# Bare "not really" is a blank only where it ENDS the reply. The same endpoint reasoning
+# `intent.STOP_REQUEST` takes, and for the same reason: unrestricted it caught "it's not
+# really fair on whoever notices the email first", which is an answer about on-call load.
+# `_norm` has already turned the punctuation into spaces, so the trailing particle is matched
+# rather than a comma.
+_CANNOT_TRAILING = re.compile(r"\bnot really(?:\s+(?:no|nope|nah))?\s*$", re.I)
 
 
 # "Hmm." punctuates as a sentence of its own, which would hide the sentence that carries the
@@ -283,7 +297,8 @@ def cannot_answer(utterance: str) -> bool:
     60-fixture set are all sentence-one, so guarded accuracy cannot move.
     """
     # `_norm` strips the apostrophe and leaves "haven t"; rejoin so one spelling covers both.
-    return bool(_CANNOT.search(re.sub(r"(\w)n t\b", r"\1nt", _norm(_lead(utterance)))))
+    led = re.sub(r"(\w)n t\b", r"\1nt", _norm(_lead(utterance)))
+    return bool(_CANNOT.search(led) or _CANNOT_TRAILING.search(led))
 
 
 def refuses(utterance: str) -> bool:
@@ -299,6 +314,19 @@ def refuses(utterance: str) -> bool:
 def user_asked_to_stop(utterance: str) -> bool:
     """Guard 2's evidence test: the STOP has to be in the candidate's own words."""
     return intent.asked_to_stop(utterance)
+
+
+def skip_requested(utterance: str) -> bool:
+    """Guard 2c's evidence test, over both halves: a refusal, or a procedural request.
+
+    `REFUSES` reads a candidate declining the question. It cannot reach one who declines
+    nothing and simply asks for the next question, which is 9.39's surviving crossing.
+    """
+    # 6.3's ordering, and `refuses()` encodes the same rule internally: no experience to
+    # draw on is `reask`, and must not be read as either kind of skip.
+    if cannot_answer(utterance):
+        return False
+    return refuses(utterance) or intent.asked_to_skip(utterance)
 
 
 def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded:
@@ -332,6 +360,16 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
                 say = " ".join(s for s in _sentences(say) if not _is_question(s))
                 applied.append("invented-question-dropped")
 
+    # 1b. The advance/ok contradiction, which is guard 1's rule with the question dropped.
+    # `advance` claims the reply answers the question and `ok=false` says it does not, so the
+    # model has contradicted itself and `ok` is the field it was asked to reason about.
+    #
+    # Measured on llama-3.2-3b over the 60 fixtures (9.42): it advanced 13 times, all ten
+    # gold=`advance` carried ok=true, and both ok=false advances were gold=`probe`. Perfect
+    # discrimination, so this costs nothing and recovers two.
+    if act == "advance" and not ok:
+        act, applied = "probe", applied + ["advance-not-ok->probe"]
+
     # 2. `end` gate. Wrongly continuing costs seconds; wrongly ending loses the session.
     if act == "end" and not user_asked_to_stop(utterance):
         act, applied = "probe", applied + ["end-ungrounded->probe"]
@@ -354,7 +392,7 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
     # model getting this right: the follow-up cap forces `advance` once the allowance is
     # spent, so a refusal phrased outside the vocabulary is probed at most once more and the
     # interview moves on regardless. The gate cannot trap anyone.
-    if act == "skip" and not refuses(utterance):
+    if act == "skip" and not skip_requested(utterance):
         act, applied = "reask", applied + ["skip-ungrounded->reask"]
 
     # 2d/2e. The other half of 2b and 2c, and the reason it exists is that every gate above
@@ -369,7 +407,7 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
     # Order matters and follows 6.3: CANNOT beats REFUSES, which `refuses()` already encodes
     # by returning False on the cannot-answer vocabulary. `end` is never touched -- a
     # grounded stop outranks both, and an ungrounded one guard 2 has already downgraded.
-    if act in ("advance", "probe", "reask", "clarify") and refuses(utterance):
+    if act in ("advance", "probe", "reask", "clarify") and skip_requested(utterance):
         act, applied = "skip", applied + ["refusal->skip"]
     elif act in ("advance", "probe", "clarify") and cannot_answer(utterance):
         act, applied = "reask", applied + ["cannot->reask"]

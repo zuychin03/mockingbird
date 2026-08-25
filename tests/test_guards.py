@@ -361,3 +361,52 @@ def test_the_upgrade_leaves_a_substantive_answer_alone():
         g("advance", "", ok=True),
         "Honestly the scale. I've never had to think hard about delivery guarantees.", [])
     assert r.act == "advance", r.guards
+
+
+def _raw(act, ok=True, say="", ask=""):
+    return {"act": act, "ok": ok, "say": say, "ask": ask}
+
+
+def test_advance_with_ok_false_is_a_contradiction():
+    """9.42. Guard 1 encoded this already but only inside the invented-question branch, so it
+    fired only for a model that also wrote a question. granite writes one every time, llama
+    writes none, and the identical error went uncaught on the model that stays quiet."""
+    g = guards.apply(_raw("advance", ok=False), "I had to pick up a legacy Java service.", [])
+    assert g.act == "probe"
+    assert "advance-not-ok->probe" in g.applied
+
+
+def test_an_honest_advance_still_advances():
+    g = guards.apply(_raw("advance", ok=True), "We split the table live. I wrote the "
+                                               "backfill, ran it in batches, zero downtime.", [])
+    assert g.act == "advance"
+
+
+def test_the_reask_vocabulary_added_in_942():
+    for said in ("I've mostly worked on things I built myself, so not really.",
+                 "Hmm. Not really, no. Nothing that stands out anyway.",
+                 "That's not something I've personally owned, I don't think.",
+                 "I don't think I've hit anything at that kind of scale, to be honest."):
+        assert guards.cannot_answer(said), said
+
+
+def test_the_two_phrases_rejected_on_corpus_evidence_stay_out():
+    """Both were candidates for the same six fixtures and both took a real answer with them:
+    a bare "not really" mid-sentence, and "didn't really have" in front of a noun phrase."""
+    for said in ("It's not really fair on whoever notices the email first.",
+                 "I didn't really have a good argument for it other than I know React better.",
+                 "It's hard to say exactly, but we cut p95 from eight seconds to 300ms."):
+        assert not guards.cannot_answer(said), said
+
+
+def test_a_disjunctive_question_is_a_clarification_request():
+    """`offers_a_choice` covers 9 of the 10 gold=clarify fixtures against `asks_what_i_meant`'s
+    5, and was never consulted as a detector -- only to pick the reply once already clarify."""
+    for said in ("Are you after the measurement process, or the actual fix?",
+                 "Do you want my general checklist or a specific recent change?",
+                 "Differently as in a different technology, or a different process?"):
+        assert guards.offers_a_choice(said), said
+    assert not guards.offers_a_choice("We used Redis, or Memcached before that.")
+    # The tenth, and the reason this is 9 of 10: the alternatives are separate sentences with
+    # no disjunction between them, so a test for `or` inside a question cannot reach it.
+    assert not guards.offers_a_choice("Quickly meaning what, a few days? A sprint?")

@@ -267,3 +267,30 @@ def test_the_two_inversions_the_corpus_found_stay_fixed():
     assert intent.read_control("We need to finish the migration before Friday.") == intent.UNCLEAR
     # and the genuine request it was originally added for still lands
     assert intent.asked_to_stop("This isn't a good time, can we rearrange?")
+
+
+def test_a_procedural_skip_needs_no_refusal_in_it():
+    """9.39's surviving crossing. Every model read "Next one, please." as `reask`, because
+    the only skip evidence guard 2c had was refusal vocabulary and there is none in it."""
+    for said in ("Next one, please.", "Next question.", "Can we move on?",
+                 "Let's move on.", "Could we skip this one?"):
+        assert intent.asked_to_skip(said), said
+
+
+def test_a_procedural_skip_does_not_fire_on_a_narrative():
+    """The endpoint rule that makes STOP_REQUEST safe is not enough for these: they end a
+    clause in ordinary answers too, so the phrase has to BE the clause."""
+    for said in ("In the end we decided to move on.",
+                 "We shipped the first one, then the next one.",
+                 "I wanted to move on from that team.",
+                 "The next one failed too.",
+                 "We move on to Postgres in the second phase."):
+        assert not intent.asked_to_skip(said), said
+
+
+def test_no_experience_is_still_a_reask_not_a_skip():
+    """6.3's ordering, which the procedural half must not reach around: CANNOT beats both
+    kinds of skip, or a junior with nothing to draw on is recorded as having refused."""
+    from app import guards
+    assert not guards.skip_requested("I haven't done one of those.")
+    assert not guards.skip_requested("I can't really think of one.")

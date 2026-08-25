@@ -514,7 +514,12 @@ class Runner:
         #
         # `end` and `skip` are excluded because both are grounded in the candidate's own
         # words already, and clarifying over them would ignore what that grounding said.
-        if g.act not in ("clarify", "end", "skip") and guards.asks_what_i_meant(utterance):
+        # `offers_a_choice` was only ever consulted to pick the REPLY once the turn was
+        # already a clarify. As a detector it covers 9 of the 10 gold=clarify fixtures where
+        # `asks_what_i_meant` covers 5, and the four it adds are the ones phrased without
+        # "do you mean" -- "Quickly meaning what, a few days? A sprint?" (9.42).
+        if g.act not in ("clarify", "end", "skip") and (guards.asks_what_i_meant(utterance)
+                                                        or guards.offers_a_choice(utterance)):
             # "Did you mean A or B?" and "what does this mean?" want different answers, and
             # `_on_clarify`'s fallback only answers the second. The example is theirs to pick
             # either way, so the honest reply is to say so rather than explain the question.

@@ -109,6 +109,22 @@ SKIP_CONTENT = [
     "pass on that", "leave it", "leave this", "park it",
 ]
 
+# Leaving THIS QUESTION without declining it, read inside an ORDINARY answer. `SKIP_CONTENT`
+# above is licensed by the confirmation question that precedes it; nothing licenses these.
+#
+# `guards.REFUSES` already carries the refusal half ("I'd rather not", "pass on that") and
+# covers 9 of the 10 gold=skip fixtures. This is the half with no refusal in it, where the
+# candidate declines nothing and just moves the interview along: "Next one, please."
+SKIP_PROCEDURAL = ["next one", "next question", "move on", "skip ahead", "skip this one"]
+
+# The endpoint rule that makes STOP_REQUEST safe is NOT enough here, because these phrases
+# end a clause in ordinary answers too: "in the end we decided to move on" is a narrative.
+# So the phrase has to BE the clause, behind an optional request frame.
+# "let s" and "id" are what `_tokens` leaves of "let's" and "I'd": it replaces the
+# apostrophe with a space rather than closing it up.
+_SKIP_FRAME = ["can we", "could we", "shall we", "let us", "lets", "let s", "can i", "may i",
+               "i would like", "i d like", "id like", "how about", "please"]
+
 CONTINUE_CONTENT = [
     "carry on", "keep going", "continue", "go on", "keep at it", "stay on this",
     "i am fine", "im fine", "all good", "another go", "one more", "try again",
@@ -236,3 +252,21 @@ def wants_skip(utterance: str) -> bool:
     then auto-skips anyway, so the default converges either way.
     """
     return read_control(utterance, bare_yes=SKIP_QUESTION) == SKIP_QUESTION
+
+
+def asked_to_skip(utterance: str) -> bool:
+    """Guard 2c's evidence test for a PROCEDURAL skip, read over an ORDINARY answer.
+
+    The one crossing no model survived the 9.39 screen: "Next one, please." carries no
+    refusal, so `refuses()` cannot reach it, and both granite and llama read it as `reask`.
+    """
+    _, clauses = _split_particle(_clauses(utterance))
+    for clause in clauses:
+        rest = " ".join(clause)
+        for frame in _SKIP_FRAME:
+            if rest.startswith(frame + " "):
+                rest = rest[len(frame) + 1:]
+                break
+        if rest in SKIP_PROCEDURAL:
+            return True
+    return False
