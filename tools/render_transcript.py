@@ -31,6 +31,15 @@ _ids = _a.session or [d.name for d in sorted(
 # Hand-written where a session has been read and characterised; anything else renders with
 # its id, so the tool still works on a session recorded five minutes ago.
 KNOWN = {
+    # 9.43's pair. Same candidate, same answers, same build, one knob apart: granite runs
+    # `trust_ok=False` and llama the default. Fourteen turns each.
+    "20260825-234319-d44b8b": (
+        "granite-4.1-3b",
+        "Four-year backend engineer, payments. Reached question 4 of 14 in fourteen turns."),
+    "20260825-234641-729867": (
+        "llama-3.2-3b-instruct",
+        "The same candidate and the same answers. Reached question 5 of 14 in fourteen "
+        "turns, on shorter probes."),
     "20260823-103441-e9f616": (
         "Data engineer",
         "Six years, owns a claims ingestion pipeline. Answers with figures and says how "
@@ -262,7 +271,7 @@ footer{margin-top:64px;padding-top:22px;border-top:1px solid var(--rule);
 
 <div class="wrap">
 <header class="masthead">
-  <p class="eyebrow">Mockingbird &middot; Stage 1 &middot; granite-4.1-3b Q4_K_M, local</p>
+  <p class="eyebrow">@@EYEBROW@@</p>
   <h1>@@HEADLINE@@</h1>
   <p class="sub">@@SUB@@</p>
   <div class="note"><b>The column on the left is everything the candidate saw.</b>
@@ -325,7 +334,17 @@ COPY = {
 OUT.parent.mkdir(parents=True, exist_ok=True)
 parts = [session_html(*s) for s in SESSIONS]
 title, headline, sub = COPY[bool(_a.live)]
+# The eyebrow named one model because there had only ever been one. A two-model page
+# rendered under that line mislabels half of itself, so it is read from the sessions.
+models = []
+for _s in SESSIONS:
+    _m = ((load(_s[1])[0].get("provenance") or {}).get("model_id") or "").strip()
+    if _m and _m not in models:
+        models.append(_m)
+eyebrow = "Mockingbird &middot; Stage 1 &middot; %s &middot; local" % (
+    html.escape(", ".join(models)) if models else "local model")
 PAGE = (PAGE.replace("@@TITLE@@", title).replace("@@HEADLINE@@", headline)
+        .replace("@@EYEBROW@@", eyebrow)
         .replace("@@SUB@@", sub)
         .replace("@@SCRIPTED_NOTE@@", "" if _a.live else SCRIPTED_NOTE))
 OUT.write_text(PAGE.replace("@@SESSIONS@@", "".join(parts)), encoding="utf-8", newline="\n")
