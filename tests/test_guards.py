@@ -432,3 +432,35 @@ def test_the_knob_defaults_to_the_probing_side():
     assert Speech.for_model("granite-4.1-3b").trust_ok is False
     assert Speech.for_model("llama-3.2-3b-instruct").trust_ok is True
     assert Speech.for_model("").trust_ok is True
+
+
+def test_the_one_sentence_guard_keeps_the_question_not_the_first_sentence():
+    """9.46. It kept parts[0], which is the question for granite every time and an
+    acknowledgement for any model that acknowledges before asking. exaone-3.5 shipped a
+    probe that asked nothing in 52% of its turns."""
+    r = guards.apply(g("probe", "That sounds interesting! Could you elaborate on the "
+                                "bottlenecks you hit?"), "we shipped a caching layer", [])
+    assert r.say == "Could you elaborate on the bottlenecks you hit?"
+    assert "extra-sentences-dropped" in r.applied
+
+
+def test_it_still_drops_a_second_question():
+    """The fault the guard was built for: two questions in one turn. The FIRST question
+    survives, so this must not become "keep the last"."""
+    r = guards.apply(g("probe", "What did you measure? And who else was involved?"),
+                     "we shipped it", [])
+    assert r.say == "What did you measure?"
+
+
+def test_a_say_with_no_question_still_keeps_its_first_sentence():
+    r = guards.apply(g("probe", "Tell me about the rollout. It matters for the next part."),
+                     "we shipped it", [])
+    assert r.say == "Tell me about the rollout."
+
+
+def test_exaone_gets_granites_resolution_not_the_default():
+    """9.45 measured it at 38/49 under the default and 45/49 under the other, recovering nine
+    of its ten correct advances. Without a profile it would be benched at its worse one."""
+    from app.runner import Speech
+    assert Speech.for_model("exaone-3.5-2.4b-instruct@q5_k_m").trust_ok is False
+    assert Speech.for_model("hermes-3-llama-3.2-3b").trust_ok is True

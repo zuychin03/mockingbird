@@ -471,7 +471,18 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str],
         # sentence (log 8.18).
         parts = _sentences(say)
         if len(parts) > 1:
-            say = parts[0]
+            # Keep the sentence that ASKS, not the first one. For granite they are the same
+            # sentence every time, which is why the assumption survived unexamined: 0 of its
+            # 22 spoken probes lose their question. A model that acknowledges before asking
+            # shipped the acknowledgement and dropped the question -- exaone-3.5 wrote "That
+            # sounds interesting! Could you elaborate on the bottlenecks?" and spoke "That
+            # sounds interesting!", in 52% of its probes (9.46).
+            #
+            # `direct()` above can strip a question mark, but only off a line that STARTS
+            # with a hedge, and such a line has no acknowledgement in front to be confused
+            # with. So the question is still findable here.
+            asks = [p for p in parts if _is_question(p)]
+            say = asks[0] if asks else parts[0]
             applied.append("extra-sentences-dropped")
         cut = _truncate(say)
         if cut != say:
