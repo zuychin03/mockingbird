@@ -1366,3 +1366,14 @@ def test_an_either_or_is_answered_even_when_the_model_routed_it_itself(tmp_path)
     from app.runner import CLARIFY_EITHER
     assert out.spoken.text == CLARIFY_EITHER, out.spoken.text
     assert "clarify-either" in state.turns[-1].guards
+
+
+def test_a_shortening_retry_may_not_change_the_act():
+    """9.52. Shortening a question must not become a route to re-deciding the turn: 9.51
+    measured a speech-only change moving granite's decisions three items through History,
+    so a retry that comes back with a different act is refused and the template stands."""
+    import inspect
+    from app import runner as _r
+    src = inspect.getsource(_r.Runner.submit)
+    assert "too_long=cap" in src
+    assert "g2.act == g.act" in src, "the act-equality guard on the shortening retry is gone"

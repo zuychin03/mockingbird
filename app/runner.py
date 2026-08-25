@@ -324,11 +324,18 @@ class Runner:
         return self._spoken(q["question"])
 
     async def _decide(self, utterance: str, retry_of: list[str],
-                      want: str | None = None) -> tuple[Completion, dict | None]:
+                      want: str | None = None,
+                      too_long: int | None = None) -> tuple[Completion, dict | None]:
         q = self.current
         system = self.speech.system
         if want:
             system += focus.instruction(want)
+        if too_long:
+            # The second retry reason, and deliberately not folded into `retry_of`: that one
+            # asks for a DIFFERENT line, this asks for the SAME request in fewer words, and a
+            # model told to do both at once does neither (9.52).
+            system += ("\n\nYour last question was too long. Ask the same thing again in at "
+                       "most %d words. One short question, no preamble." % too_long)
         if retry_of:
             system += ("\n\nYou have already said the following on this question. Say something "
                        "materially different:\n" + "\n".join("- " + s for s in retry_of))
@@ -525,6 +532,27 @@ class Runner:
                     # closing a question that evidence has not finished with.
                     g.say = ""
                     g.applied.append("regeneration-repeated->fallback")
+
+        # 9.52. The one lever that asks the MODEL to fix its line rather than overwriting it.
+        # `max_say_words` alone hands an over-length line to the template; this offers one
+        # retry first, so a model that can say the same thing shorter keeps its own words.
+        #
+        # The accept test is strict on purpose. 9.51 measured a speech-only change moving
+        # granite's decisions three items through `History`, so a retry that comes back with a
+        # DIFFERENT act is refused outright: shortening a question must not be a route to
+        # re-deciding the turn.
+        cap = self.speech.max_say_words
+        if (cap and calls == 1 and g.act in ("probe", "reask") and g.say
+                and len(g.say.split()) > cap):
+            out2, raw2 = await self._decide(utterance, [], want, too_long=cap)
+            g2 = guards.apply(raw2, utterance, self.said_this_question, self.speech.trust_ok)
+            calls = 2
+            if g2.act == g.act and g2.say and len(g2.say.split()) <= cap:
+                first = g.applied
+                out, g = out2, g2
+                g.applied = first + ["too-long->shortened"] + g.applied
+            else:
+                g.applied.append("too-long->retry-failed")
 
         # Budget backstop. The adaptive rule of section 1c.5 -- stop after two consecutive
         # turns with no new observation -- needs the Stage 2 extractor, so Stage 1 runs the
