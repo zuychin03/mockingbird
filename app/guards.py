@@ -113,6 +113,12 @@ ASKS = ["what do you mean", "do you mean", "which do you mean", "sorry, do you",
         "could you clarify", "can you clarify", "what exactly", "are you asking",
         "can you repeat", "say that again", "not sure what you", "in what sense"]
 
+# Elliptical speech puts the thing being narrowed before the question word: "Quickly
+# meaning what, a few days?". The comma and non-empty text after it prove that this first
+# question carries an alternative; the scope words alone also occur in ordinary answers.
+_SEGMENTED_CHOICE_SCOPE = re.compile(
+    r"\b(?:mean|means|meaning) (?:what|which|how)\b[^?,]*,\s*[^?]+\?\s*$", re.I)
+
 
 # Granite opens 93% of its probes with this, and it will not stop being asked. Both a
 # prohibition ("never open with Can you elaborate") and a positive instruction ("start with a
@@ -224,8 +230,14 @@ def offers_a_choice(utterance: str) -> bool:
     "do you mean the WordPress site or the booking tool?" was met with "It just means a
     specific example from your own experience", which is a non-sequitur (9.17).
     """
-    return any(re.search(r"\bor\b", s, re.I)
-               for s in _sentences(utterance) if _is_question(s))
+    questions = [s for s in _sentences(utterance) if _is_question(s)]
+    if any(re.search(r"\bor\b", s, re.I) for s in questions):
+        return True
+    # Speech can segment the alternatives: "meaning what, a few days? A sprint?".
+    # The scope phrase grounds the first part as clarification, and the deliberately short
+    # second question is the alternative rather than another independent request.
+    return (len(questions) >= 2 and _SEGMENTED_CHOICE_SCOPE.search(questions[0]) is not None
+            and any(len(_norm(s).split()) <= 4 for s in questions[1:]))
 
 
 def asks_what_i_meant(utterance: str) -> bool:
@@ -268,10 +280,9 @@ _CANNOT = re.compile(
     r"nothing comes to mind|not really had|(?:dont|do not) have one|never really|"
     # 9.42's reask family. Both priced over the 914 stored answers before adding: "not
     # something i ve" fires on none of them, "dont think i ve" on three and all three are
-    # genuine blanks. Two more candidates were REJECTED on the same test -- "didnt really
-    # have" caught "I didn't really have a good argument for it", which is an answer, and
-    # "hard to say" caught nothing in the corpus but takes "it's hard to say exactly, but we
-    # cut p95 to 300ms" adversarially.
+    # genuine blanks. Two broader candidates stay out of this expression: "didnt really
+    # have" and "hard to say" both need the structural gates below to preserve real answers
+    # that recover with "but", "so I", or a concrete result.
     r"not something i ve|(?:dont|didnt) think i ve"
     r")", re.I)
 
@@ -279,8 +290,23 @@ _CANNOT = re.compile(
 # `intent.STOP_REQUEST` takes, and for the same reason: unrestricted it caught "it's not
 # really fair on whoever notices the email first", which is an answer about on-call load.
 # `_norm` has already turned the punctuation into spaces, so the trailing particle is matched
-# rather than a comma.
-_CANNOT_TRAILING = re.compile(r"\bnot really(?:\s+(?:no|nope|nah))?\s*$", re.I)
+# rather than a comma. This established rule reads the substantive lead, allowing a later
+# sentence to reinforce the blank without hiding it.
+_CANNOT_LEAD_TRAILING = re.compile(r"\bnot really(?:\s+(?:no|nope|nah))?\s*$", re.I)
+
+# These weaker dependency phrases must end the complete reply. Unlike a bare "not really",
+# a later sentence can turn "hard to say" into a concrete answer.
+_CANNOT_TRAILING = re.compile(r"\b(?:hard|difficult|impossible) to say\s*$", re.I)
+
+# A missing workplace process is the same no-experience case as "never had to", but the
+# broad phrase also opens real answers: "we didn't really have a runbook, so I wrote one".
+# Admit only a plain absence anchored to the workplace where it was absent, not any sentence
+# that opens with the gap and then describes an action. This is deliberately separate from
+# `_CANNOT`, where a substring cannot express the endpoint or recovery exclusion.
+_CANNOT_ABSENT = re.compile(
+    r"\b(?:i|we) (?:didnt|did not) really have\b.*"
+    r"\b(?:where i worked|in that role|at that company|on that team)\s*$", re.I)
+_CANNOT_RECOVERY = re.compile(r"\b(?:but|except|other than|so i|so we|and i|and we)\b", re.I)
 
 
 # "Hmm." punctuates as a sentence of its own, which would hide the sentence that carries the
@@ -301,16 +327,28 @@ def _lead(utterance: str) -> str:
 def cannot_answer(utterance: str) -> bool:
     """No experience to draw on, as opposed to declining to share it.
 
-    FIRST SENTENCE only. A cannot-answer OPENS with the inability; an answer that happens to
-    name a gap reaches it after answering, and "I've made deploys fast; I've never had to
-    make them provable" is one of the strongest replies in the corpus. Swept over 874 stored
-    utterances this is the line that separates them: all 15 true positives put the phrase in
-    sentence one and all 6 false positives put it later (9.23). The 3 it fires on in the
-    60-fixture set are all sentence-one, so guarded accuracy cannot move.
+    The established inability vocabulary is read from the FIRST SENTENCE only. A
+    cannot-answer OPENS with the inability; an answer that happens to name a gap reaches it
+    after answering. The narrower endpoint rules are instead checked against the complete
+    reply, so concrete recovery in a later sentence prevents a low-confidence reask.
     """
     # `_norm` strips the apostrophe and leaves "haven t"; rejoin so one spelling covers both.
     led = re.sub(r"(\w)n t\b", r"\1nt", _norm(_lead(utterance)))
-    return bool(_CANNOT.search(led) or _CANNOT_TRAILING.search(led))
+    whole = re.sub(r"(\w)n t\b", r"\1nt", _norm(utterance))
+    if _CANNOT.search(led) or _CANNOT_LEAD_TRAILING.search(led):
+        return True
+
+    # The new endpoint phrases are weaker evidence than an explicit refusal. Suppressing
+    # only these rules preserves the established CANNOT-over-REFUSES ordering for direct
+    # no-experience language while keeping consent/control language in the skip family.
+    explicit_skip = (any(p in whole for p in REFUSES)
+                     or intent.asked_to_skip(utterance))
+    if explicit_skip:
+        return False
+
+    absent_only = (_CANNOT_ABSENT.search(whole) is not None
+                   and _CANNOT_RECOVERY.search(whole) is None)
+    return bool(_CANNOT_TRAILING.search(whole) or absent_only)
 
 
 def refuses(utterance: str) -> bool:

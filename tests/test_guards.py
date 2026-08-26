@@ -407,9 +407,61 @@ def test_a_disjunctive_question_is_a_clarification_request():
                  "Differently as in a different technology, or a different process?"):
         assert guards.offers_a_choice(said), said
     assert not guards.offers_a_choice("We used Redis, or Memcached before that.")
-    # The tenth, and the reason this is 9 of 10: the alternatives are separate sentences with
-    # no disjunction between them, so a test for `or` inside a question cannot reach it.
-    assert not guards.offers_a_choice("Quickly meaning what, a few days? A sprint?")
+    # The tenth historically escaped this detector because its alternatives are separate
+    # questions. The regression below pins the broader segmented-choice form.
+
+
+def test_a_segmented_choice_is_still_a_clarification_request():
+    """Granite 4.2 exposed the tenth clarify fixture: speech often puts the second
+    alternative in its own short question instead of joining the two with `or`."""
+    for said in ("Quickly meaning what, a few days? A sprint?",
+                 "By soon, meaning how long, a week? A month?"):
+        assert guards.offers_a_choice(said), said
+
+
+def test_a_declarative_meaning_phrase_is_not_a_clarification_request():
+    for said in (
+            "The sample was stable, meaning what we measured was representative.",
+            "I mean what we measured was representative. Does that answer your question?",
+            "I mean what we measured was representative? Is that clear?"):
+        assert not guards.asks_what_i_meant(said), said
+        assert not guards.offers_a_choice(said), said
+
+
+def test_a_detail_free_dependency_or_missing_process_is_a_cannot_answer():
+    """Granite 4.2 probes these, but neither supplies a usable answer to follow up."""
+    for said in ("It depends a lot on the team, so it's hard to say.",
+                 "That varies by organisation, so it is difficult to say.",
+                 "There is too much context missing, so it is impossible to say.",
+                 "We didn't really have a formal on-call where I worked.",
+                 "I did not really have an incident process in that role."):
+        assert guards.cannot_answer(said), said
+        guarded = guards.apply(_raw("probe", ok=False, say="Can you give an example?"),
+                               said, [])
+        assert guarded.act == "reask", said
+        assert "cannot->reask" in guarded.applied
+
+
+def test_a_missing_process_followed_by_a_real_action_stays_an_answer():
+    for said in ("We didn't really have a runbook, so I wrote one.",
+                 "We didn't really have alerts, but I added them after an outage.",
+                 "We didn't really have dashboards; instead, I queried the logs.",
+                 "We didn't really have a formal rotation; support was shared across the team.",
+                 "I didn't really have a good argument for it other than I know React better.",
+                 "It's hard to say exactly, but we cut p95 from eight seconds to 300ms.",
+                 "It is hard to say. We cut p95 from eight seconds to 300 ms.",
+                 "We did not really have a runbook where I worked. I wrote one after an outage."):
+        assert not guards.cannot_answer(said), said
+
+
+def test_an_explicit_refusal_outranks_a_trailing_uncertainty_phrase():
+    said = "I would rather not answer because it is hard to say."
+    assert not guards.cannot_answer(said)
+    assert guards.refuses(said)
+    assert guards.skip_requested(said)
+    guarded = guards.apply(_raw("probe", ok=False, say="Can you give an example?"), said, [])
+    assert guarded.act == "skip"
+    assert "refusal->skip" in guarded.applied
 
 
 def test_trust_ok_false_resolves_the_contradiction_the_other_way():
