@@ -81,11 +81,13 @@ _PATTERNS = {
     "OUTCOME": r"outcome|what happened|end (up|result)|how did (it|that) (go|land|turn out)|"
                r"result|in the end|was it successful",
     "STEPS": r"step|walk (me )?through|how did you (do|approach|go about|handle)|"
-             r"what did you do first|sequence",
+             r"what did you do (?:first|next)|sequence",
     "REASON": r"\bwhy\b|reason|what made you|rationale|weigh|trade.?off|instead of|"
               r"what led you",
     "CHALLENGE": r"hard(est)?|difficult|challeng|went wrong|problem|obstacle|struggl|"
-                 r"tricky|blocker",
+                 r"tricky|blocker|what (?:happens|would happen) (?:if|when)|"
+                 r"how (?:would|do) you handle .*(?:unavailable|down|outage)|"
+                 r"what breaks first|how (?:does|would) .* behave (?:if|when)|failure mode",
     "ALTERNATIVE": r"alternativ|what else|other option|differently|considered|"
                    r"would you change",
     "LESSON": r"learn|lesson|take(away)?|changed how|since then|next time|do differently now",

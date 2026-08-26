@@ -910,6 +910,49 @@ def test_a_line_asking_a_DIFFERENT_unused_focus_is_kept(tmp_path):
     assert "OUTCOME" in r.focus_used
 
 
+def test_failure_mode_questions_are_a_fresh_challenge():
+    for said in (
+            "What happens if Redis is unavailable?",
+            "How would you handle an outage in one region?",
+            "What breaks first when this is under real load?",
+            "How does the design behave when the shared store is down?"):
+        assert "CHALLENGE" in focus.classify(said), said
+
+
+def test_failure_words_in_an_answer_do_not_create_a_challenge_question():
+    said = "Redis was unavailable during the incident. What did you do next?"
+    assert "STEPS" in focus.classify(said)
+    assert "CHALLENGE" not in focus.classify(said)
+
+
+def test_a_specific_failure_mode_question_beats_the_alternative_template(tmp_path):
+    plan = {
+        "id": "failure-mode-probe",
+        "phases": [{
+            "id": "design",
+            "answer_shape": "open",
+            "probe_budget": 2,
+            "scored": False,
+            "observation_shape": "star",
+            "focus_ladder": ["ALTERNATIVE", "CHALLENGE"],
+            "questions": ["How would you design a rate limiter?"],
+        }],
+    }
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(plan)
+    runner = Runner(ScriptedProvider([
+        d("probe", "How would you handle multiple regions if Redis is unavailable?")
+    ]), plan, state)
+
+    run(runner.ask())
+    outcome = run(runner.submit("I would use a Redis fixed-window counter."))
+
+    assert outcome.spoken.text == (
+        "How would you handle multiple regions if Redis is unavailable?")
+    assert "CHALLENGE" in runner.focus_used
+    assert not any("off-focus" in guard for guard in state.turns[-1].guards)
+
+
 def test_a_line_asking_nothing_new_is_replaced_with_the_template(tmp_path):
     r, state = build([d("probe", "Tell me about the weather.")], tmp_path)
     run(r.ask())
