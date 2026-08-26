@@ -158,7 +158,7 @@ YI = Speech(exemplars=False)
 # Measured both ways on both: granite reads 44/49 under the default and 46/49 here, llama
 # 45/49 under the default and 43/49 here. The default stays `True` because an unknown model
 # should err toward probing, which keeps the question open (1c.5).
-GRANITE = Speech(trust_ok=False)
+GRANITE = Speech(trust_ok=False, max_say_words=20)
 
 # The same resolution as granite and for the same reason, further along: exaone-3.5 reads
 # 38/49 under the default and 45/49 here, recovering nine of its ten correct advances (9.45).
