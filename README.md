@@ -84,6 +84,17 @@ python -m pytest
 `tools/` holds a turn-at-a-time harness (`live_candidate.py`) for driving a session
 programmatically, plus renderers for the report and the transcript.
 
+To audit how model-written questions were retained or transformed in a recent session:
+
+```powershell
+python tools/probe_audit.py --session SESSION_ID `
+  --out data/calibration/granite42-junior-probes.json
+```
+
+The audit measures speech transformation, not interview quality or model accuracy. It rejects
+sessions captured before raw model speech provenance was added rather than mixing incompatible
+records.
+
 ## Layout
 
 ```
