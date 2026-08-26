@@ -167,6 +167,12 @@ GRANITE = Speech(trust_ok=False, max_say_words=20)
 EXAONE = Speech(trust_ok=False, max_say_words=15)
 
 
+def _raw_say(raw: dict | None) -> str | None:
+    """Return the model's speech field without applying guard normalisation."""
+    say = raw.get("say") if isinstance(raw, dict) else None
+    return say if isinstance(say, str) else None
+
+
 @dataclass
 class Spoken:
     """What the participant is allowed to receive. Nothing else crosses the live channel."""
@@ -499,6 +505,7 @@ class Runner:
                                 (self.current or {}).get("focus_ladder") or [])
         t0 = time.perf_counter()
         out, raw = await self._decide(utterance, [], want)
+        say_raw = _raw_say(raw)
         g = guards.apply(raw, utterance, self.said_this_question, self.speech.trust_ok)
 
         # Guard 3 asks for one regeneration with the previous lines fed back. One retry
@@ -513,6 +520,7 @@ class Runner:
         if g.needs_regeneration:
             first = g.applied
             out, raw = await self._decide(utterance, self.said_this_question, want)
+            say_raw = _raw_say(raw)
             g = guards.apply(raw, utterance, self.said_this_question, self.speech.trust_ok)
             # The first pass's guard names would otherwise vanish from the record replay
             # depends on (section 8.1).
@@ -550,6 +558,7 @@ class Runner:
             if g2.act == g.act and g2.say and len(g2.say.split()) <= cap:
                 first = g.applied
                 out, g = out2, g2
+                say_raw = _raw_say(raw2)
                 g.applied = first + ["too-long->shortened"] + g.applied
             else:
                 g.applied.append("too-long->retry-failed")
@@ -563,7 +572,7 @@ class Runner:
             self.confirm_narrowed = False
             g = guards.Guarded("clarify", CONFIRM_LINE, False, "", ["stop-detected->confirm"])
             self.answers_this_question.append(utterance)
-            return self._dispatch(g, utterance, out)
+            return self._dispatch(g, utterance, out, say_raw=say_raw)
 
         # Rec 2's shape, one role later. Guard 2b only ever DOWNGRADES an ungrounded
         # `clarify`; nothing upgraded the reverse case, so a candidate who asked what the
@@ -606,7 +615,7 @@ class Runner:
                 g = guards.Guarded("clarify", SKIP_OFFER, False, "",
                                    g.applied + ["clarify-limit->skip-offer"])
             self.answers_this_question.append(utterance)
-            return self._dispatch(g, utterance, out)
+            return self._dispatch(g, utterance, out, say_raw=say_raw)
 
         # The per-question cap is the primary control and applies to probe and reask alike:
         # Stage 1 charged reask to the allowance without ever checking it against one, so a
@@ -698,7 +707,8 @@ class Runner:
         self.answers_this_question.append(utterance)
         outcome = self._dispatch(g, utterance, out,
                                  wall_ms=(time.perf_counter() - t0) * 1000, calls=calls,
-                                 want=want, asked=asked, say_model=say_model)
+                                 want=want, asked=asked, say_model=say_model,
+                                 say_raw=say_raw)
         if not outcome.closed_question:
             self._observe_later(utterance)
         return outcome
@@ -708,7 +718,8 @@ class Runner:
                   wall_ms: float | None = None, calls: int = 1,
                   want: str | None = None,
                   asked: list[str] | None = None,
-                  say_model: str | None = None) -> TurnOutcome:
+                  say_model: str | None = None,
+                  say_raw: str | None = None) -> TurnOutcome:
         q = self.current
         # Captured before any handler runs: `_close_question` moves the index, and the line
         # this returns belongs to the question being closed, not to the one after it.
@@ -741,6 +752,10 @@ class Runner:
             # say what the model WANTED to ask, so a substitution rate is a number with no
             # diagnosis attached -- and exaone substitutes on 67% of its probes (9.49).
             "say_model": say_model,
+            # Exact speech field from the model decision that fed the final guard pass.
+            # Unlike `say_model`, this is present even when a non-focus guard rewrites or
+            # drops the line. Deterministic turns make no model call and record null.
+            "say_raw": say_raw,
             "follow_ups_used": self.follow_ups_used,
             "pool_left": self.pool,
             # Logged every turn, never branched on. The threshold gets set from real data

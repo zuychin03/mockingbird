@@ -59,6 +59,11 @@ def d(act, say="line", ok=True, ask=""):
     return {"act": act, "say": say, "ok": ok, "ask": ask}
 
 
+def last_decision(state):
+    return json.loads((state.dir / "decisions.jsonl").read_text(
+        encoding="utf-8").strip().splitlines()[-1])
+
+
 # ------------------------------------------------------------------- the core
 def test_advance_closes_the_question_and_moves_on(tmp_path):
     r, state = build([d("advance", "Good.")], tmp_path)
@@ -585,6 +590,7 @@ def test_the_closing_phase_answers_for_itself(tmp_path):
     assert out.act == "clarify" and not out.closed_question, "still their turn"
     assert "candidate-question->noted" in state.turns[-1].guards
     assert out.spoken.text, "a question they asked gets an answer, not silence"
+    assert last_decision(state)["say_raw"] is None
 
 
 def test_the_closing_phase_is_bounded_by_detour_budget(tmp_path):
@@ -822,6 +828,53 @@ def test_a_regenerated_turn_records_both_model_calls(tmp_path, monkeypatch):
     last = json.loads((state.dir / "decisions.jsonl").read_text(
         encoding="utf-8").strip().splitlines()[-1])
     assert last["model_calls"] == 2
+
+
+def test_regeneration_records_the_accepted_retry_as_raw_speech(tmp_path, monkeypatch):
+    _accept_any_focus(monkeypatch)
+    r, state = build([d("probe", "Same line."), d("probe", "Same line."),
+                      d("probe", "What happened after that?")], tmp_path)
+    run(r.ask())
+    run(r.submit("first"))
+    run(r.submit("second"))
+    assert last_decision(state)["say_raw"] == "What happened after that?"
+
+
+def test_the_raw_model_line_survives_an_invented_question_drop(tmp_path):
+    raw_say = "Thanks for that. What would you do differently next time?"
+    r, state = build([d("advance", raw_say, ok=True)], tmp_path)
+    run(r.ask())
+    run(r.submit("I fixed the issue and documented it."))
+    decision = last_decision(state)
+    assert "invented-question-dropped" in decision["guards"]
+    assert decision["say_raw"] == raw_say
+
+
+def test_an_accepted_shortening_retry_replaces_the_raw_speech(tmp_path, monkeypatch):
+    from app.runner import Speech
+    _accept_any_focus(monkeypatch)
+    long_line = "What happened after the service was deployed into production that evening?"
+    short_line = "What happened after deployment?"
+    r, state = build([d("probe", long_line), d("probe", short_line)], tmp_path)
+    r.speech = Speech(max_say_words=5)
+    run(r.ask())
+    run(r.submit("I deployed the service."))
+    decision = last_decision(state)
+    assert "too-long->shortened" in decision["guards"]
+    assert decision["say_raw"] == short_line
+
+
+def test_a_rejected_shortening_retry_retains_the_original_raw_speech(tmp_path, monkeypatch):
+    from app.runner import Speech
+    _accept_any_focus(monkeypatch)
+    long_line = "What happened after the service was deployed into production that evening?"
+    r, state = build([d("probe", long_line), d("advance", "Thanks.")], tmp_path)
+    r.speech = Speech(max_say_words=5)
+    run(r.ask())
+    run(r.submit("I deployed the service."))
+    decision = last_decision(state)
+    assert "too-long->retry-failed" in decision["guards"]
+    assert decision["say_raw"] == long_line
 
 
 # --------------------------------------------- focus rotation (log 8.18)
