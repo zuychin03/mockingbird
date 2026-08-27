@@ -11,6 +11,7 @@ council/
 # Session artifacts and generated reports.
 data/sessions/
 data/calibration/
+data/comparisons/
 data/*.json
 data/*.html
 
