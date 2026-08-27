@@ -20,7 +20,7 @@ from . import observe
 from . import provenance
 from . import provider as prov
 from . import session
-from .runner import Runner, Speech, live_view
+from .runner import Runner, live_view
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PLAN = ROOT / "config" / "interview_swe_general.json"
@@ -37,14 +37,13 @@ def _preflight(p: prov.LMStudio, skip: bool) -> dict | None:
     except Exception as e:
         print("cannot reach LM Studio: %s" % e)
         return None
-    if not loaded:
-        # No quant suffix: LM Studio only accepts `key@quant` while several quants of that
-        # key are on disk, and `granite-4.1-3b@q4_k_m` now fails to resolve outright.
-        print("no model loaded. run: lms load granite-4.1-3b "
-              "--context-length 8192 --identifier mockingbird-llm -y")
+    model = prov.product_model(loaded)
+    if model is None:
+        print("Llama 3.2 is not loaded under Mockingbird's required identifier. run: "
+              "lms load llama-3.2-3b-instruct --context-length 8192 "
+              "--identifier llama-3.2-3b-instruct -y")
         return None
-    # `id` is the instance alias when the model was loaded with --identifier (9.24).
-    m = dict(loaded[0], id=prov.model_key(loaded[0]))
+    m = dict(model)
     print("model: %s (%s, ctx %s)" % (m["id"], m.get("quantization"), m.get("loaded_context_length")))
     if skip:
         return m
@@ -71,19 +70,17 @@ async def run(plan_path: Path, skip_canary: bool) -> int:
         return 1
 
     plan = session.load_plan(plan_path)
-    # The speech profile follows the loaded model. Policy rules do not vary (9.22).
-    speech = Speech.for_model(model.get("id", ""))
     # Before the first question, not after: this is what keeps turn 0 off the cold path.
-    ms = await p.warmup(speech.system, contract.render(
+    ms = await p.warmup(contract.SYSTEM, contract.render(
         next(session.iter_questions(plan))["question"], "", ""))
-    print("warmed prompt cache in %.0f ms   exemplars %s" % (ms, speech.exemplars))
+    print("warmed Llama prompt cache in %.0f ms" % ms)
     state = session.new_session(plan, provenance.snapshot(model))
 
     async def observe_answer(question_id, question, utterance):
         """Plan 1c.5's per-answer extraction. Runs between turns, never inside one."""
         return await observe.observe(p, question_id, question, [utterance])
 
-    r = Runner(p, plan, state, observe_fn=observe_answer, speech=speech)
+    r = Runner(p, plan, state, observe_fn=observe_answer)
 
     print("\nplan: %s   %d questions" % (plan.get("label", plan.get("id")), len(r.questions)))
     print("session: %s" % state.dir)

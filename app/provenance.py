@@ -1,10 +1,7 @@
 """What produced a session. Log section 9.14.
 
-A session recorded the model's ALIAS and nothing else, which is not enough to reproduce or
-even to interpret it: `mockingbird-llm` says nothing about the quantization, the context
-length, or which revision of the prompt and schema the numbers were measured against. Every
-figure in the research log is paired with a model and a prompt, and until now that pairing
-lived in the log's prose rather than in the session it describes.
+The exact Llama runtime id, quantisation, context length, prompt and code revision are stored
+with every session. An instance nickname alone is insufficient to reproduce a result.
 
 Cheap and best-effort by construction. Nothing here may raise: provenance that can abort an
 interview is worse than provenance that records "unknown".

@@ -35,7 +35,7 @@ from tools._console import utf8  # noqa: E402
 utf8()
 
 from app import contract, observe, provenance, provider as prov, session as sess  # noqa: E402
-from app.runner import Runner, Speech  # noqa: E402
+from app.runner import Runner  # noqa: E402
 
 STATE = ROOT / "data" / "live_session.json"
 
@@ -85,12 +85,7 @@ def restore(p, plan) -> Runner:
                               started_at="", status=d["status"])
     state.turns = [sess.Turn(**t) for t in d["turns"]]
     state.questions = [sess.QuestionState(**q) for q in d["questions"]]
-    try:
-        live = prov.loaded_models()
-    except Exception:
-        live = []
-    r = Runner(p, plan, state, pool=d["pool"], observe_fn=extractor(p),
-               speech=Speech.for_model(prov.model_key(live[0]) if live else ""))
+    r = Runner(p, plan, state, pool=d["pool"], observe_fn=extractor(p))
     r.index = d["index"]
     r.follow_ups_used = d["follow_ups_used"]
     r.clarifies_used = d["clarifies_used"]
@@ -142,15 +137,14 @@ async def main() -> int:
             loaded = prov.loaded_models()
         except Exception:
             loaded = []
-        # The resolved key, not the instance alias: it selects the profile AND is what a
-        # stored session needs to be reproducible (9.24).
-        key = prov.model_key(loaded[0]) if loaded else ""
-        state = sess.new_session(plan, provenance.snapshot(
-            dict(loaded[0], id=key) if loaded else None))
-        speech = Speech.for_model(key)
-        print("model %s   exemplars %s" % (key or "?", speech.exemplars))
-        r = Runner(p, plan, state, observe_fn=extractor(p), speech=speech)
-        await p.warmup(speech.system, contract.render(r.current["question"], "", ""))
+        model = prov.product_model(loaded)
+        if model is None:
+            print("Llama 3.2 is not loaded as %s" % prov.MODEL)
+            return 1
+        state = sess.new_session(plan, provenance.snapshot(model))
+        print("model %s" % model["id"])
+        r = Runner(p, plan, state, observe_fn=extractor(p))
+        await p.warmup(contract.SYSTEM, contract.render(r.current["question"], "", ""))
         spoken = await r.ask()
         save(r)
         show(r, spoken.text)

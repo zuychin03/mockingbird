@@ -368,9 +368,7 @@ def _raw(act, ok=True, say="", ask=""):
 
 
 def test_advance_with_ok_false_is_a_contradiction():
-    """9.42. Guard 1 encoded this already but only inside the invented-question branch, so it
-    fired only for a model that also wrote a question. granite writes one every time, llama
-    writes none, and the identical error went uncaught on the model that stays quiet."""
+    """Llama's measured `ok` signal keeps an incomplete answer open for probing."""
     g = guards.apply(_raw("advance", ok=False), "I had to pick up a legacy Java service.", [])
     assert g.act == "probe"
     assert "advance-not-ok->probe" in g.applied
@@ -412,8 +410,7 @@ def test_a_disjunctive_question_is_a_clarification_request():
 
 
 def test_a_segmented_choice_is_still_a_clarification_request():
-    """Granite 4.2 exposed the tenth clarify fixture: speech often puts the second
-    alternative in its own short question instead of joining the two with `or`."""
+    """Speech may put the second alternative in its own short question."""
     for said in ("Quickly meaning what, a few days? A sprint?",
                  "By soon, meaning how long, a week? A month?"):
         assert guards.offers_a_choice(said), said
@@ -429,7 +426,7 @@ def test_a_declarative_meaning_phrase_is_not_a_clarification_request():
 
 
 def test_a_detail_free_dependency_or_missing_process_is_a_cannot_answer():
-    """Granite 4.2 probes these, but neither supplies a usable answer to follow up."""
+    """These replies do not supply a usable answer to follow up."""
     for said in ("It depends a lot on the team, so it's hard to say.",
                  "That varies by organisation, so it is difficult to say.",
                  "There is too much context missing, so it is impossible to say.",
@@ -464,32 +461,8 @@ def test_an_explicit_refusal_outranks_a_trailing_uncertainty_phrase():
     assert "refusal->skip" in guarded.applied
 
 
-def test_trust_ok_false_resolves_the_contradiction_the_other_way():
-    """9.43. The two resolutions are mutually exclusive and each model wants the other one.
-    granite's act is right on 10 of 11 advances and its `ok` on 7 of 10, so it advances; the
-    invented question is stripped rather than promoted into the decision."""
-    raw = {"act": "advance", "ok": False, "say": "What did you measure?", "ask": ""}
-    said = "We split the users table live. I wrote the backfill and ran it in batches."
-    assert guards.apply(dict(raw), said, [], True).act == "probe"
-    g = guards.apply(dict(raw), said, [], False)
-    assert g.act == "advance"
-    assert "?" not in g.say
-
-
-def test_the_knob_defaults_to_the_probing_side():
-    """An unknown model errs toward keeping the question open (1c.5), so the default is the
-    resolution that downgrades rather than the one that advances."""
-    from app.runner import Speech
-    assert Speech().trust_ok is True
-    assert Speech.for_model("granite-4.1-3b").trust_ok is False
-    assert Speech.for_model("llama-3.2-3b-instruct").trust_ok is True
-    assert Speech.for_model("").trust_ok is True
-
-
 def test_the_one_sentence_guard_keeps_the_question_not_the_first_sentence():
-    """9.46. It kept parts[0], which is the question for granite every time and an
-    acknowledgement for any model that acknowledges before asking. exaone-3.5 shipped a
-    probe that asked nothing in 52% of its turns."""
+    """Keep the actual question when a model acknowledges before asking it."""
     r = guards.apply(g("probe", "That sounds interesting! Could you elaborate on the "
                                 "bottlenecks you hit?"), "we shipped a caching layer", [])
     assert "extra-sentences-dropped" in r.applied
@@ -514,18 +487,8 @@ def test_a_say_with_no_question_still_keeps_its_first_sentence():
     assert r.say == "Tell me about the rollout."
 
 
-def test_exaone_gets_granites_resolution_not_the_default():
-    """9.45 measured it at 38/49 under the default and 45/49 under the other, recovering nine
-    of its ten correct advances. Without a profile it would be benched at its worse one."""
-    from app.runner import Speech
-    assert Speech.for_model("exaone-3.5-2.4b-instruct@q5_k_m").trust_ok is False
-    assert Speech.for_model("hermes-3-llama-3.2-3b").trust_ok is True
-
-
 def test_the_could_you_mirrors_rewrite_like_their_can_you_twins():
-    """9.50. The hedge table was built from granite's phrasings, so forms granite never uses
-    were absent: "could you elaborate MORE on" is one word off an entry that is present, and
-    seven of ten exaone lines opened with it."""
+    """Equivalent polite openers receive the same direct rewrite."""
     for said, want in (
             ("Could you elaborate more on the bottlenecks?", "Tell me about the bottlenecks."),
             ("Could you tell me about the rollout?", "Tell me about the rollout."),
@@ -534,11 +497,3 @@ def test_the_could_you_mirrors_rewrite_like_their_can_you_twins():
         r = guards.apply(g("probe", said), "we shipped it", [])
         assert r.say == want, (said, r.say)
         assert "hedge-stripped" in r.applied
-
-
-def test_the_length_trigger_follows_the_model_profile():
-    from app.runner import Speech
-    assert Speech().max_say_words is None
-    assert Speech.for_model("granite-4.1-3b").max_say_words == 20
-    assert Speech.for_model("granite-4.2-3b-a800m-instruct").max_say_words == 20
-    assert Speech.for_model("exaone-3.5-2.4b-instruct@q4_k_m").max_say_words == 15

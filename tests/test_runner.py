@@ -851,12 +851,11 @@ def test_the_raw_model_line_survives_an_invented_question_drop(tmp_path):
 
 
 def test_an_accepted_shortening_retry_replaces_the_raw_speech(tmp_path, monkeypatch):
-    from app.runner import Speech
     _accept_any_focus(monkeypatch)
     long_line = "What happened after the service was deployed into production that evening?"
     short_line = "What happened after deployment?"
     r, state = build([d("probe", long_line), d("probe", short_line)], tmp_path)
-    r.speech = Speech(max_say_words=5)
+    r.max_say_words = 5
     run(r.ask())
     run(r.submit("I deployed the service."))
     decision = last_decision(state)
@@ -865,16 +864,29 @@ def test_an_accepted_shortening_retry_replaces_the_raw_speech(tmp_path, monkeypa
 
 
 def test_a_rejected_shortening_retry_retains_the_original_raw_speech(tmp_path, monkeypatch):
-    from app.runner import Speech
     _accept_any_focus(monkeypatch)
     long_line = "What happened after the service was deployed into production that evening?"
     r, state = build([d("probe", long_line), d("advance", "Thanks.")], tmp_path)
-    r.speech = Speech(max_say_words=5)
+    r.max_say_words = 5
     run(r.ask())
     run(r.submit("I deployed the service."))
     decision = last_decision(state)
     assert "too-long->retry-failed" in decision["guards"]
     assert decision["say_raw"] == long_line
+
+
+def test_the_product_runner_enforces_llamas_twenty_word_cap(tmp_path, monkeypatch):
+    _accept_any_focus(monkeypatch)
+    long_line = ("What specific changes would you make to the deployment process if the same "
+                 "production incident happened again during a busy support shift?")
+    short_line = "What specific changes would you make next time?"
+    r, state = build([d("probe", long_line), d("probe", short_line)], tmp_path)
+
+    run(r.ask())
+    out = run(r.submit("I would add a staged rollout and monitor the error rate."))
+
+    assert out.spoken.text == short_line
+    assert "too-long->shortened" in state.turns[-1].guards
 
 
 # --------------------------------------------- focus rotation (log 8.18)
@@ -923,6 +935,36 @@ def test_failure_words_in_an_answer_do_not_create_a_challenge_question():
     said = "Redis was unavailable during the incident. What did you do next?"
     assert "STEPS" in focus.classify(said)
     assert "CHALLENGE" not in focus.classify(said)
+
+
+def test_relevant_llama_question_forms_map_to_their_actual_focus():
+    for said, expected in (
+            ("What was the impact of this change on your users?", {"OUTCOME"}),
+            ("How did you know that the free-text field caused failures?", {"MEASURE"}),
+            ("What specific changes did you make to the schema?", {"STEPS"}),
+            ("What specific changes would you make now?", {"STEPS"}),
+    ):
+        assert focus.classify(said) == expected, said
+
+
+def test_llama_focus_words_outside_the_bounded_question_forms_do_not_match():
+    assert "OUTCOME" not in focus.classify(
+        "What safeguards did you add after the impact review?")
+    assert "MEASURE" not in focus.classify(
+        "How did you know the colleague who reviewed it?")
+
+
+def test_a_relevant_llama_impact_question_beats_the_outcome_template(tmp_path, monkeypatch):
+    raw = "What was the impact of this change on your users?"
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "OUTCOME")
+    r, state = build([d("probe", raw)], tmp_path)
+
+    run(r.ask())
+    out = run(r.submit("The routing rule assigned several cases incorrectly."))
+
+    assert out.spoken.text == raw
+    assert "OUTCOME" in r.focus_used
+    assert not any("off-focus" in guard for guard in state.turns[-1].guards)
 
 
 def test_a_specific_failure_mode_question_beats_the_alternative_template(tmp_path):
@@ -1398,61 +1440,18 @@ def test_a_design_question_is_not_paced_by_the_star_triple(tmp_path):
     assert not out.closed_question
 
 
-# ------------------------------------- speech profile (log 9.21, 9.22)
-def test_only_the_exemplar_rule_varies_by_model():
-    """9.21 measured the exemplar list worth +3 fixtures to granite and a third of Yi's probe
-    variety. That suggested the whole speech layer was granite-shaped; 9.22 measured the other
-    two and it is not -- turning substitution off cost Yi 3 distinct request types. One knob
-    varies, and this pins that so a future profile has to justify a second."""
-    from app.runner import YI, Speech
-    default = Speech()
-    differing = [f for f in ("exemplars", "substitute_focus", "repeat_closes")
-                 if getattr(YI, f) != getattr(default, f)]
-    assert differing == ["exemplars"], differing
-
-
-def test_the_profile_follows_the_model_id():
-    from app.runner import Speech
-    assert Speech.for_model("yi-1.5-6b-chat").exemplars is False
-    assert Speech.for_model("granite-4.1-3b").exemplars is True
-    assert Speech.for_model("").exemplars is True, "an unknown model gets the default"
-
-
-def test_dropping_the_exemplars_leaves_the_rest_of_the_prompt_intact():
-    """A variant, not an edit: everything else V5 measured has to survive."""
-    from app import contract
-    assert "What did you measure?" in contract.SYSTEM
-    assert "What did you measure?" not in contract.SYSTEM_NO_EXEMPLARS
-    for kept in ("ONE question, at most 15 words", "Choose exactly one action",
-                 "copy their question verbatim"):
-        assert kept in contract.SYSTEM_NO_EXEMPLARS, kept
-
-
-def test_speech_rules_never_touch_policy(tmp_path):
-    """The split this profile rests on: a rule that decides what the interview DOES is not in
-    here. A profile with everything off must still honour a grounded stop."""
-    from app.runner import Speech
+def test_speech_shaping_never_overrides_stop_policy(tmp_path):
+    """Candidate-controlled stop policy remains authoritative over model speech."""
     session.SESSIONS = tmp_path / "sessions"
     state = session.new_session(PLAN)
-    r = Runner(ScriptedProvider([d("probe", "More?")]), PLAN, state,
-               speech=Speech(exemplars=False, substitute_focus=False, repeat_closes=False))
+    r = Runner(ScriptedProvider([d("probe", "More?")]), PLAN, state)
     run(r.ask())
     out = run(r.submit("Sorry, I need to stop the interview here."))
     assert r.awaiting_confirm and not out.end_session
 
 
-def test_the_warmup_primes_the_prompt_the_session_will_actually_send():
-    """The two variants diverge mid-prompt, so priming contract.SYSTEM for a model that gets
-    SYSTEM_NO_EXEMPLARS re-prefills turn 0's tail -- the exact cost warmup exists to remove."""
-    from app import contract
-    from app.runner import Speech
-    assert Speech().system == contract.SYSTEM
-    assert Speech(exemplars=False).system == contract.SYSTEM_NO_EXEMPLARS
-
-
 def test_an_either_or_is_answered_even_when_the_model_routed_it_itself(tmp_path):
-    """Found live on Yi. The upgrade sat behind `act not in ("clarify",...)`, so a model that
-    reached clarify on its own kept its own line -- and answered a different question."""
+    """A model-routed clarification must still answer the candidate's actual choice."""
     session.SESSIONS = tmp_path / "sessions"
     state = session.new_session(PLAN)
     r = Runner(ScriptedProvider([d("clarify", "Can you tell me more about the context?")]),
@@ -1465,9 +1464,8 @@ def test_an_either_or_is_answered_even_when_the_model_routed_it_itself(tmp_path)
 
 
 def test_a_shortening_retry_may_not_change_the_act():
-    """9.52. Shortening a question must not become a route to re-deciding the turn: 9.51
-    measured a speech-only change moving granite's decisions three items through History,
-    so a retry that comes back with a different act is refused and the template stands."""
+    """Shortening must not become a route to re-deciding the turn; changed speech enters
+    History, so a retry with a different act is refused and the template stands."""
     import inspect
     from app import runner as _r
     src = inspect.getsource(_r.Runner.submit)
