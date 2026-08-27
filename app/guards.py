@@ -26,6 +26,12 @@ _MASK = "\uE000"
 ASK_OVERLAP = 0.5
 _ABBREV = re.compile(r"(?:e\.g\.|i\.e\.|etc\.|vs\.|approx\.|no\.|fig\.|cf\.|"
                      r"inc\.|ltd\.|dept\.|\b[A-Z]\.)", re.I)
+# A fresh interrogative after explicit clause punctuation is a second request even when the
+# model puts both under one final question mark. Requiring both the punctuation and the new
+# question word keeps ordinary noun coordination ("metrics or feedback") and either/or
+# clarification intact.
+_COORDINATED_REQUEST = re.compile(
+    r"[,;]\s*(?:and|or)\s+(?=(?:what|why|how|when|who|which|where)\b)", re.I)
 _LABEL = re.compile(r"^\s*([A-Z][A-Z0-9 _/-]{2,})\s*[:\-—]")
 _ALLOW_CAPS = {"API", "SQL", "HTTP", "JSON", "CI", "CD", "AWS", "GCP", "TDD", "SRE", "CPU",
                "GPU", "RAM", "ORM", "REST", "TLS", "DNS", "URL", "UI", "UX", "QA", "PR"}
@@ -61,6 +67,17 @@ def _sentences(text: str) -> list[str]:
 
 def _is_question(s: str) -> bool:
     return s.rstrip().endswith("?")
+
+
+def _one_request(text: str) -> tuple[str, bool]:
+    """Keep the first of two explicitly coordinated interrogative clauses."""
+    match = _COORDINATED_REQUEST.search(text or "")
+    if not match:
+        return text, False
+    first = text[:match.start()].rstrip()
+    if first and first[-1] not in ".!?":
+        first += "?" if (text or "").rstrip().endswith("?") else "."
+    return first, True
 
 
 def _truncate(text: str, limit: int = MAX_SAY_CHARS) -> str:
@@ -532,6 +549,9 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
                 say, changed = direct(say)
                 if changed and "hedge-stripped" not in applied:
                     applied.append("hedge-stripped")
+        say, compound = _one_request(say)
+        if compound:
+            applied.append("compound-request-trimmed")
         cut = _truncate(say)
         if cut != say:
             applied.append("say-truncated")
