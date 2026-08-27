@@ -544,18 +544,19 @@ class Runner:
         # The per-question cap is the primary control and applies to probe and reask alike:
         # Stage 1 charged reask to the allowance without ever checking it against one, so a
         # reask spent a probe's turn for free (log 8.15).
+        # Design's displayed cap is a hard pacing contract. Unlike ordinary scored
+        # questions, it cannot borrow from the shared reserve: the live control otherwise
+        # advertised two follow-ups and asked five.
+        hard_cap = q.get("observation_shape") == "design"
+        pool_left = 0 if hard_cap else self.pool
         allow = budget.follow_ups_allowed(
-            q["probe_budget"], self.pool, self.index, len(self.questions))
+            q["probe_budget"], pool_left, self.index, len(self.questions))
         if g.act in ("probe", "reask"):
             if self.pace and self.follow_ups_used >= allow.total:
                 g.act = "advance"
                 g.say = ""
-                g.applied.append("pool-exhausted->advance" if allow.overflow == 0
-                                 else "follow-up-cap->advance")
-            elif self.follow_ups_used >= allow.cap:
-                # Past its own budget, so this one is bought from the session reserve.
-                self.pool -= 1
-                g.applied.append("pool-draw(%d left)" % self.pool)
+                g.applied.append("follow-up-cap->advance" if hard_cap or allow.overflow
+                                 else "pool-exhausted->advance")
 
         # Plan 1c.5: the observations, not the budget, decide when a question is done.
         # `probe_budget` is demoted to a backstop and still caps the question above this.
@@ -572,6 +573,13 @@ class Runner:
             elif self.stalls >= STALL_LIMIT:
                 g.act, g.say = "advance", ""
                 g.applied.append("no-new-observation->advance")
+
+        # Charge the reserve only after adaptive pacing has decided the follow-up will
+        # actually be dispatched. Previously an over-cap model proposal spent a token before
+        # `observations-complete` or `no-new-observation` silently converted it to advance.
+        if g.act in ("probe", "reask") and self.follow_ups_used >= allow.cap:
+            self.pool -= 1
+            g.applied.append("pool-draw(%d left)" % self.pool)
 
         # A design question that is about to advance with a part missing and budget unspent.
         # Deterministic, like the focus rotation: the code decides that a follow-up is owed,
@@ -594,12 +602,14 @@ class Runner:
         asked: list[str] = []
         # Validate what came back against what was asked for, and record the focus either
         # way -- a question must not be able to spend two turns on one request type.
-        # The design follow-up is exempt: it is not the model's line to validate, it already
-        # names its own request, and substituting a focus template over it would replace the
-        # one question the gap check exists to ask.
+        # The deterministic design line needs no validation or substitution, but it still
+        # spends CHALLENGE. Leaving it unrecorded let the very next model turn ask what breaks
+        # again while the decision log incorrectly claimed that no focus had been delivered.
         say_model = None
-        if (want and g.act in ("probe", "reask") and g.say
-                and "design-gap->probe" not in g.applied):
+        if "design-gap->probe" in g.applied:
+            self.focus_used.add("CHALLENGE")
+            asked = ["CHALLENGE"]
+        elif want and g.act in ("probe", "reask") and g.say:
             # The objective is a DISTINCT request, not obedience. If the model ignored the
             # requested focus but asked about some other unused one, that is a good turn and
             # its own wording beats a template -- take it and record what it actually asked.

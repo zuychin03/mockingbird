@@ -461,3 +461,42 @@ The wave is complete only when:
 - Granite 4.2 is rerun as a matched control on the same plugged-in machine;
 - the final verdict distinguishes speed, fixed accuracy, interview completion, and creative speech quality; and
 - generated artefacts remain ignored and commits remain user-owned.
+
+## Stage 2 Closure Addendum — 28/08/2026
+
+This addendum records the final product decisions without rewriting the historical experiment
+plan above. It supersedes only the completion gates that changed after the measured Llama
+controls and the decision to support one LLM.
+
+The accepted Stage 2 gates are:
+
+- Llama speech may contain at most 25 words. The action-preserving shortening retry and raw
+  speech provenance remain mandatory.
+- The junior-to-mid control must complete all 14 questions within 25 turns, with no reask,
+  family crossing, invalid action, repeated focus, or compound spoken request.
+- The strong control must complete all 14 questions within 18 turns. Probe count is no longer
+  a hard gate: additional probes are acceptable when they are relevant, single-focus, and
+  distinct from every focus already used on that question.
+- The design question has a hard two-follow-up cap and cannot borrow from the shared reserve.
+- A reserve token is charged only when its probe or reask is actually dispatched. A proposal
+  suppressed by observation pacing costs nothing.
+- Granite is retained as historical comparison evidence, not as a release gate. Mockingbird
+  now accepts only the exact `llama-3.2-3b-instruct` model identifier.
+
+Final Stage 2 controls:
+
+| Control | Session | Result | Probe behaviour |
+|---|---|---|---|
+| Junior-to-mid | `20260827-182435-73bff5` | 14/14 in 25 turns | 10 probes; nine retained model lines and one focus template |
+| Strong | `20260827-183849-7ba120` | 14/14 in 18 turns | Four distinct probes: context, measurement, steps, and reasoning |
+
+The Stage 2 implementation gate passed with `278 passed`, Python byte-compilation, and
+`git diff --check`. Generated sessions and rendered transcripts remain ignored. Stage 2 is
+closed when the commit containing this addendum and its runner/guard regressions is integrated
+into `main` and pushed.
+
+The following are non-blocking follow-up candidates rather than Stage 2 exit criteria:
+
+- retain more useful Llama-authored questions that the bounded focus classifier currently
+  substitutes;
+- avoid past-experience wording when probing a hypothetical design answer.

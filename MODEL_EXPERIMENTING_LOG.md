@@ -251,3 +251,35 @@ Final local evidence files were generated under `data/calibration/` and `data/se
 remain intentionally ignored because they include large, machine-specific run artefacts. The
 durable values and decision rationale are recorded here; the implementation-specific test and
 experiment procedure remains in `LLAMA_ADAPTATION_PLAN.md`.
+
+## 9. Stage 2 probing hardening — 28/08/2026
+
+Two fresh Llama controls validated the 25-word speech profile and the final probing rules.
+The junior-to-mid session `20260827-182435-73bff5` completed 14 questions in 25 turns with ten
+probes, no reasks, and no invalid action. Nine probes retained model-authored wording and one
+used a focus template. Its design question stopped after exactly two follow-ups without using
+the shared reserve.
+
+The strong session `20260827-183849-7ba120` completed 14 questions in 18 turns. It asked four
+distinct follow-ups on one retrospective answer: scale, measurement, implementation steps,
+and the reason for a two-week shadow run. The first three were focus templates and the fourth
+retained Llama's wording. Although this exceeded the original three-probe limit, each turn
+elicited new evidence. The accepted policy therefore judges extra probes by relevance and
+focus distinctness rather than a session-wide numeric ceiling.
+
+Three shared harness defects were closed:
+
+- a design question can no longer extend its displayed two-follow-up cap with the pool;
+- the deterministic design-gap question records `CHALLENGE`, preventing a repeated failure
+  probe on the next turn;
+- a punctuated sentence containing two coordinated interrogative clauses is reduced to its
+  first request without changing action, model-call count, or raw provenance.
+
+The live audit also found that an over-cap probe proposal could draw from the pool before the
+observation pacer converted it to an unspoken `advance`. Pool charging now occurs after pacing,
+so only a dispatched follow-up consumes the reserve. The resulting branch passed all 278
+tests plus byte-compilation and whitespace checks before integration.
+
+Two quality opportunities remain outside Stage 2: bounded retention for additional useful raw
+questions, and tense-aware probing that does not describe a hypothetical design as something
+the candidate already implemented.

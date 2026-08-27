@@ -850,6 +850,21 @@ def test_the_raw_model_line_survives_an_invented_question_drop(tmp_path):
     assert decision["say_raw"] == raw_say
 
 
+def test_compound_speech_is_trimmed_without_hiding_raw_provenance_or_adding_a_turn(
+        tmp_path, monkeypatch):
+    _accept_any_focus(monkeypatch)
+    raw_say = "How did your team respond, and what was the outcome?"
+    r, state = build([d("probe", raw_say, ok=False)], tmp_path)
+    run(r.ask())
+    out = run(r.submit("We restored the service together."))
+    decision = last_decision(state)
+    assert out.spoken.text == "How did your team respond?"
+    assert r.follow_ups_used == 1
+    assert decision["model_calls"] == 1
+    assert decision["say_raw"] == raw_say
+    assert "compound-request-trimmed" in decision["guards"]
+
+
 def test_an_accepted_shortening_retry_replaces_the_raw_speech(tmp_path, monkeypatch):
     _accept_any_focus(monkeypatch)
     long_line = "What happened after the service was deployed into production that evening?"
@@ -1181,7 +1196,7 @@ def test_the_skip_line_does_not_promise_a_revisit():
 DESIGN_PLAN = {
     "id": "test-design",
     "phases": [{
-        "id": "design", "answer_shape": "open", "probe_budget": 3, "scored": False,
+        "id": "design", "answer_shape": "open", "probe_budget": 2, "scored": False,
         "observation_shape": "design", "questions": ["Design a rate limiter."],
     }],
 }
@@ -1206,7 +1221,25 @@ def test_a_design_answer_with_no_failure_mode_is_probed_before_advancing(tmp_pat
     out = run(r.submit(NO_FAILURE))
     assert out.spoken.text == focus.DESIGN_FOLLOW_UP
     assert "design-gap->probe" in state.turns[-1].guards
+    assert r.focus_used == {"CHALLENGE"}
+    decision = last_decision(state)
+    assert decision["focus_asked"] == "CONTEXT"
+    assert decision["focus_got"] == ["CHALLENGE"]
     assert not out.closed_question
+
+
+def test_the_turn_after_a_design_gap_cannot_repeat_challenge(tmp_path):
+    r, state = design_runner([
+        d("advance", ""),
+        d("probe", "Where would the architecture get difficult?"),
+    ], tmp_path)
+    run(r.ask())
+    run(r.submit(NO_FAILURE))
+    out = run(r.submit("Redis could become unavailable under load."))
+    assert out.act == "probe"
+    assert out.spoken.text != "Where would the architecture get difficult?"
+    assert "off-focus->context" in state.turns[-1].guards
+    assert last_decision(state)["focus_got"] == ["CONTEXT"]
 
 
 def test_a_design_answer_that_names_a_failure_is_left_alone(tmp_path):
@@ -1235,6 +1268,26 @@ def test_the_design_follow_up_never_draws_on_the_shared_pool(tmp_path):
     before = r.pool
     run(r.submit(NO_FAILURE))
     assert r.pool == before
+
+
+def test_a_design_question_cannot_extend_its_cap_with_the_shared_pool(tmp_path):
+    """Design has a displayed two-turn budget; the shared reserve must not silently turn
+    that into a third, fourth, or fifth follow-up."""
+    decisions = [
+        d("probe", "What trade-off mattered most?"),
+        d("probe", "How would you detect overload?"),
+        d("probe", "What would you change next?"),
+    ]
+    r, state = design_runner(decisions, tmp_path)
+    run(r.ask())
+    before = r.pool
+    assert run(r.submit(WITH_FAILURE)).act == "probe"
+    assert run(r.submit("We preferred predictable latency over perfect fairness.")).act == "probe"
+    out = run(r.submit("We would alert on rejection rate and p95 latency."))
+    assert out.act == "advance"
+    assert r.pool == before
+    assert "follow-up-cap->advance" in state.turns[-1].guards
+    assert "pool-exhausted->advance" not in state.turns[-1].guards
 
 
 def test_only_a_design_question_gets_the_design_follow_up(tmp_path):
@@ -1296,6 +1349,12 @@ ROOMY = {
                 "questions": ["Question one?", "Question two?"]}],
 }
 
+PACING_WITH_POOL = {
+    "id": "pacing-with-pool",
+    "phases": [{"id": "p1", "answer_shape": "open", "probe_budget": 3,
+                "scored": True, "questions": ["Question one?"]}],
+}
+
 
 def adaptive(decisions, parts, tmp_path, plan=ROOMY):
     session.SESSIONS = tmp_path / "sessions"
@@ -1329,6 +1388,24 @@ def test_two_answers_that_add_nothing_close_the_question(tmp_path):
     out = run(r.submit("still nothing"))
     assert "no-new-observation->advance" in state.turns[-1].guards
     assert out.closed_question
+
+
+def test_the_pool_is_not_charged_when_the_observation_pacer_suppresses_the_probe(tmp_path):
+    """A reserve token buys a spoken follow-up, not a model proposal discarded before
+    dispatch. The junior live control lost a token to this ordering bug."""
+    parts = Parts(("situation",), ("situation",), ("situation",), ("situation",))
+    r, state = adaptive([d("probe", x) for x in "abcd"], parts, tmp_path,
+                        plan=PACING_WITH_POOL)
+    run(r.ask())
+    run(r.submit("first"))
+    run(r.submit("adds nothing"))
+    run(r.submit("adds nothing again"))
+    before = r.pool
+    out = run(r.submit("still nothing"))
+    assert out.closed_question
+    assert "no-new-observation->advance" in state.turns[-1].guards
+    assert r.pool == before
+    assert not any(g.startswith("pool-draw") for g in state.turns[-1].guards)
 
 
 def test_the_stop_rule_lags_the_candidate_by_exactly_one_answer(tmp_path):
@@ -1450,8 +1527,7 @@ def test_a_design_question_is_not_paced_by_the_star_triple(tmp_path):
                observe_fn=parts)
     run(r.ask())
     run(r.submit("I would build a token bucket."))
-    run(r.submit("Redis, with a Lua script."))
-    out = run(r.submit("Because it is shared and fast."))
+    out = run(r.submit("Redis, with a Lua script."))
     assert parts.calls == 0, "no extraction should have been attempted"
     assert "no-new-observation->advance" not in state.turns[-1].guards
     assert not out.closed_question

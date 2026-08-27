@@ -242,6 +242,29 @@ def test_a_single_sentence_is_untouched():
     assert "extra-sentences-dropped" not in r.applied
 
 
+def test_a_coordinated_question_keeps_only_its_first_request():
+    for said, want in (
+        ("How did your team respond, and what was the outcome?",
+         "How did your team respond?"),
+        ("What failed, and how did you recover?", "What failed?"),
+    ):
+        r = guards.apply(g("probe", said), "...", [])
+        assert r.say == want
+        assert r.act == "probe"
+        assert "compound-request-trimmed" in r.applied
+
+
+def test_noun_coordination_is_not_mistaken_for_two_requests():
+    for said in (
+        "What metrics or feedback informed that choice?",
+        "Would you use Redis or Postgres?",
+        "Are you after the measurement process, or the actual fix?",
+    ):
+        r = guards.apply(g("probe", said), "...", [])
+        assert r.say == said
+        assert "compound-request-trimmed" not in r.applied
+
+
 # ------------------------------- the unverified-figure signal (log 8.19)
 def test_a_spelled_number_without_a_unit_is_not_a_figure():
     """"one layer up" and "seven years" of service made the agent ask how they measured it."""
