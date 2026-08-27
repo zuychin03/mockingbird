@@ -31,29 +31,6 @@ _ids = _a.session or [d.name for d in sorted(
 # Hand-written where a session has been read and characterised; anything else renders with
 # its id, so the tool still works on a session recorded five minutes ago.
 KNOWN = {
-    # 9.48's four. Same 22-turn script through the real runner, each model at its own
-    # profile, to keep one exaone and one Llama-3.2-3B build.
-    "20260826-014015-759572": (
-        "exaone-3.5-2.4b Q5_K_M",
-        "14/22 decisions, one family crossing, 4 of 10 questions closed."),
-    "20260826-014103-5bbfcf": (
-        "exaone-3.5-2.4b Q4_K_M",
-        "Identical acts and identical navigation to Q5, on different wording."),
-    "20260826-014148-1662fc": (
-        "llama-3.2-3b-instruct",
-        "14/22 decisions, no crossings, 7 of 10 closed. Eleven probes to two reasks."),
-    "20260826-014239-7853a1": (
-        "hermes-3-llama-3.2-3b",
-        "12/22 decisions, no crossings, 8 of 10 closed -- but TEN reasks to two probes."),
-    # 9.43's pair. Same candidate, same answers, same build, one knob apart: granite runs
-    # `trust_ok=False` and llama the default. Fourteen turns each.
-    "20260825-234319-d44b8b": (
-        "granite-4.1-3b",
-        "Four-year backend engineer, payments. Reached question 4 of 14 in fourteen turns."),
-    "20260825-234641-729867": (
-        "llama-3.2-3b-instruct",
-        "The same candidate and the same answers. Reached question 5 of 14 in fourteen "
-        "turns, on shorter probes."),
     "20260823-103441-e9f616": (
         "Data engineer",
         "Six years, owns a claims ingestion pipeline. Answers with figures and says how "

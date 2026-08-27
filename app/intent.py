@@ -257,8 +257,7 @@ def wants_skip(utterance: str) -> bool:
 def asked_to_skip(utterance: str) -> bool:
     """Guard 2c's evidence test for a PROCEDURAL skip, read over an ORDINARY answer.
 
-    The one crossing no model survived the 9.39 screen: "Next one, please." carries no
-    refusal, so `refuses()` cannot reach it, and both granite and llama read it as `reask`.
+    "Next one, please." carries no refusal, so `refuses()` cannot reach a procedural skip.
     """
     _, clauses = _split_particle(_clauses(utterance))
     for clause in clauses:

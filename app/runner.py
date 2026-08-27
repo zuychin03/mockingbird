@@ -94,77 +94,10 @@ CLARIFY_EITHER = "Your choice -- take whichever you can say most about, and tell
 STAR_PACED_TYPES = frozenset({"adaptive_discussion"})
 
 
-@dataclass
-class Speech:
-    """Which SPEECH rules apply. Policy and consent rules are not in here on purpose.
-
-    Everything in 8.18 and 8.19 was measured against one model, and section 7's conclusion --
-    that ~1.5 distinct requests per question is what granite has, and guarding cannot
-    manufacture a second one -- is a fact about THAT model rather than about interviewing.
-    9.21 measured the first of these on a second model and found the same prompt line worth
-    +3 items to one and a third of its probe variety to the other.
-
-    That suggested the whole speech layer might be granite-shaped. It is not. 9.22 measured
-    the other two on both models and they earn their place on both -- turning substitution off
-    cost Yi three distinct request types and four words a line, which is the opposite of the
-    prediction. 9.43 then measured the fourth both ways on both models and found each wanting
-    the OPPOSITE resolution, so two of four now vary by model rather than one of three.
-
-    They stay knobs anyway, and the difference from the `detour_budget` defect matters: that
-    field was read by nothing. These are read on every turn, and they exist so the next model
-    is measured rather than assumed. Assuming is what put an exemplar list tuned for one model
-    in front of another for a whole session.
-    """
-    exemplars: bool = True          # the six probes in contract.SYSTEM
-    substitute_focus: bool = True   # replace an off-focus line with a fixed template
-    repeat_closes: bool = True      # a twice-repeated line closes the question
-    trust_ok: bool = True           # `advance` with ok=false is a contradiction, not an advance
-    # The contract asks for one question in at most 15 words and NOTHING enforced it.
-    # None keeps that. A number substitutes the focus template over an over-length
-    # line even when it makes a fresh request, which is the one lever 9.50 left
-    # untested and the only one aimed at what exaone actually does wrong.
-    max_say_words: int | None = None
-
-    @classmethod
-    def for_model(cls, model_id: str) -> "Speech":
-        m = (model_id or "").lower()
-        if "yi" in m:
-            return YI
-        if "granite" in m:
-            return GRANITE
-        if "exaone" in m:
-            return EXAONE
-        return cls()
-
-    @property
-    def system(self) -> str:
-        """The one place the variant is chosen. Warmup primes this, not contract.SYSTEM:
-        the two diverge mid-prompt, so priming the wrong one re-prefills turn 0's tail."""
-        return contract.SYSTEM if self.exemplars else contract.SYSTEM_NO_EXEMPLARS
-
-
-# `exemplars=False` from 9.21: Yi emits the first exemplar verbatim on a third of its probes
-# and, without them, scores variety 1.00 at the same length and the same guarded accuracy.
-# The other two are at the default because 9.22 MEASURED them and they help -- substitution
-# off cost 3 distinct request types and 4 words a line.
-YI = Speech(exemplars=False)
-
-# `trust_ok=False` from 9.43, and it is the second knob measured to vary by model. The
-# advance/ok contradiction has two resolutions and each model wants the other one:
-#
-#     granite   act right 10 of 11 advances, `ok` right 7 of 10   trust the act
-#     llama     act right 10 of 13 advances, `ok` right 10 of 10  trust the `ok`
-#
-# Measured both ways on both: granite reads 44/49 under the default and 46/49 here, llama
-# 45/49 under the default and 43/49 here. The default stays `True` because an unknown model
-# should err toward probing, which keeps the question open (1c.5).
-GRANITE = Speech(trust_ok=False, max_say_words=20)
-
-# The same resolution as granite and for the same reason, further along: exaone-3.5 reads
-# 38/49 under the default and 45/49 here, recovering nine of its ten correct advances (9.45).
-# Without this it would be measured at its worse configuration, which is the asymmetry 9.43
-# was written to stop repeating.
-EXAONE = Speech(trust_ok=False, max_say_words=15)
+# Llama's own questions are normally concise, but the junior live control still produced a
+# 22-word compound request. Twenty words keeps useful model-written probes while retaining a
+# deterministic backstop. See MODEL_EXPERIMENTING_LOG.md for the paired cap and live evidence.
+MAX_SAY_WORDS = 20
 
 
 def _raw_say(raw: dict | None) -> str | None:
@@ -242,9 +175,8 @@ class Runner:
     def __init__(self, provider: Provider, plan: dict, state: session.SessionState,
                  pool: int | None = None, pace: bool = True,
                  observe_fn: Callable[[str, str, str], Awaitable] | None = None,
-                 speech: "Speech | None" = None):
-        # Which SPEECH rules apply. Policy and consent rules are not optional.
-        self.speech = speech or Speech()
+                 max_say_words: int | None = MAX_SAY_WORDS):
+        self.max_say_words = max_say_words
         # `observe_fn` turns one answer into an Observation. Injected rather than imported so
         # the runner keeps no dependency on the Stage 2 extractor, and so a test can drive the
         # stop rule without a model. None disables the adaptive stop and leaves the cap alone,
@@ -333,7 +265,7 @@ class Runner:
                       want: str | None = None,
                       too_long: int | None = None) -> tuple[Completion, dict | None]:
         q = self.current
-        system = self.speech.system
+        system = contract.SYSTEM
         if want:
             system += focus.instruction(want)
         if too_long:
@@ -506,7 +438,7 @@ class Runner:
         t0 = time.perf_counter()
         out, raw = await self._decide(utterance, [], want)
         say_raw = _raw_say(raw)
-        g = guards.apply(raw, utterance, self.said_this_question, self.speech.trust_ok)
+        g = guards.apply(raw, utterance, self.said_this_question)
 
         # Guard 3 asks for one regeneration with the previous lines fed back. One retry
         # only: a second identical answer is the model's position, not a slip.
@@ -521,7 +453,7 @@ class Runner:
             first = g.applied
             out, raw = await self._decide(utterance, self.said_this_question, want)
             say_raw = _raw_say(raw)
-            g = guards.apply(raw, utterance, self.said_this_question, self.speech.trust_ok)
+            g = guards.apply(raw, utterance, self.said_this_question)
             # The first pass's guard names would otherwise vanish from the record replay
             # depends on (section 8.1).
             g.applied = first + ["regenerated"] + g.applied
@@ -531,29 +463,22 @@ class Runner:
             # line (NFR-6 degrades, it does not skip ahead), while a line the model will not
             # vary means this question has had this probe.
             if g.needs_regeneration and "repeated-say->regenerate" in g.applied:
-                if self.speech.repeat_closes:
-                    g.act = "advance"
-                    g.say = ""
-                    g.applied.append("regeneration-repeated->advance")
-                else:
-                    # D5's alternative: a wording failure picks an unused line rather than
-                    # closing a question that evidence has not finished with.
-                    g.say = ""
-                    g.applied.append("regeneration-repeated->fallback")
+                g.act = "advance"
+                g.say = ""
+                g.applied.append("regeneration-repeated->advance")
 
         # 9.52. The one lever that asks the MODEL to fix its line rather than overwriting it.
         # `max_say_words` alone hands an over-length line to the template; this offers one
         # retry first, so a model that can say the same thing shorter keeps its own words.
         #
-        # The accept test is strict on purpose. 9.51 measured a speech-only change moving
-        # granite's decisions three items through `History`, so a retry that comes back with a
-        # DIFFERENT act is refused outright: shortening a question must not be a route to
-        # re-deciding the turn.
-        cap = self.speech.max_say_words
+        # The accept test is strict because spoken text enters `History`, so a nominally
+        # speech-only change can alter later decisions. A retry with a DIFFERENT act is
+        # refused outright: shortening must not become a route to re-deciding the turn.
+        cap = self.max_say_words
         if (cap and calls == 1 and g.act in ("probe", "reask") and g.say
                 and len(g.say.split()) > cap):
             out2, raw2 = await self._decide(utterance, [], want, too_long=cap)
-            g2 = guards.apply(raw2, utterance, self.said_this_question, self.speech.trust_ok)
+            g2 = guards.apply(raw2, utterance, self.said_this_question)
             calls = 2
             if g2.act == g.act and g2.say and len(g2.say.split()) <= cap:
                 first = g.applied
@@ -596,9 +521,8 @@ class Runner:
             g.applied.append("clarify-detected->clarify")
 
         # The either/or answer is owed whenever the turn IS a clarify, not only when the
-        # harness was the one that routed it there. Yi reached clarify on its own, so the
-        # block above never ran, its line survived untouched, and "work or open source?" was
-        # answered with "tell me more about the context" (9.25).
+        # harness was the one that routed it there. A captured model-routed clarification
+        # otherwise answered "work or open source?" with "tell me more about the context".
         if g.act == "clarify" and guards.offers_a_choice(utterance):
             g.say = CLARIFY_EITHER
             g.applied.append("clarify-either")
@@ -683,19 +607,13 @@ class Runner:
             # ten canned sentences, which trades repetition within a question for the same
             # template across questions (log 8.19).
             fresh = focus.classify(g.say) - self.focus_used
-            # A fresh request said in 25 words is still a bad question. Measured on exaone,
-            # whose five surviving lines averaged 19.2 words against the template's 5.8 and
-            # every one of them broke the contract's own limit (9.51).
-            if (self.speech.max_say_words
-                    and len(g.say.split()) > self.speech.max_say_words):
+            # A fresh request can still be too long to speak naturally. The live Llama control
+            # produced one 22-word compound request; the cap sent it to a focused template.
+            if self.max_say_words and len(g.say.split()) > self.max_say_words:
                 fresh = set()
             if fresh:
                 got = fresh
                 self.focus_used |= fresh
-            elif not self.speech.substitute_focus:
-                got = {want}
-                self.focus_used.add(want)
-                g.applied.append("off-focus-kept")
             else:
                 got = {want}
                 say_model = g.say
@@ -749,8 +667,8 @@ class Runner:
             "focus_asked": want,
             "focus_got": asked or [],
             # The model's own line where a guard replaced it. Without this the record cannot
-            # say what the model WANTED to ask, so a substitution rate is a number with no
-            # diagnosis attached -- and exaone substitutes on 67% of its probes (9.49).
+            # say what the model WANTED to ask, so a substitution rate would have no
+            # diagnosis attached.
             "say_model": say_model,
             # Exact speech field from the model decision that fed the final guard pass.
             # Unlike `say_model`, this is present even when a non-focus guard rewrites or

@@ -4,8 +4,9 @@ A mock-interview coach for software-engineering roles that runs entirely on your
 It conducts a structured interview, decides for itself when to probe and when to move on, and
 produces feedback in which every claim quotes something you actually said.
 
-Built against a 3B model on a 6GB laptop GPU, which is the constraint that shaped the whole
-design.
+Built and validated against Llama 3.2 3B on a 6GB laptop GPU, which is the constraint that
+shaped the whole design. Mockingbird intentionally supports that model only: accepting an
+unknown loaded model would bypass the controls measured for the product.
 
 ## The idea it is testing
 
@@ -65,7 +66,7 @@ Needs Python 3.12 and [LM Studio](https://lmstudio.ai/) with a local model loade
 
 ```bash
 lms server start
-lms load granite-4.1-3b --context-length 8192 --identifier mockingbird-llm -y
+lms load llama-3.2-3b-instruct --context-length 8192 --identifier llama-3.2-3b-instruct -y
 ```
 
 Then, for an interview in the terminal:
@@ -88,7 +89,7 @@ To audit how model-written questions were retained or transformed in a recent se
 
 ```powershell
 python tools/probe_audit.py --session SESSION_ID `
-  --out data/calibration/granite42-junior-probes.json
+  --out data/calibration/probe-audit.json
 ```
 
 The audit measures speech transformation, not interview quality or model accuracy. It rejects
@@ -111,15 +112,14 @@ app/
   report.py        the feedback, and the rules about how it is worded
   session.py       plan validation and persistence
 config/            interview plans
-tests/             224 tests
+tests/             deterministic unit and integration coverage
 ```
 
-## A note on the comments
+## Why Llama
 
-The source comments cite section numbers from a research log that is not part of this
-repository — the project was built measurement-first, and most rules here exist because an
-alternative was tried and measured worse. The citations are left in because the reasoning is
-worth more than the tidiness, but the documents behind them are private.
+Mockingbird was built measurement-first. [MODEL_EXPERIMENTING_LOG.md](MODEL_EXPERIMENTING_LOG.md)
+records the symmetric fixture screens, full interview controls, speech audits and rejected
+alternatives that led to selecting Llama as the sole runtime.
 
 ## Status
 

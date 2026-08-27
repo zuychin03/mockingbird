@@ -75,13 +75,15 @@ LADDER = ["STEPS", "REASON", "OUTCOME", "MEASURE", "CHALLENGE", "ROLE",
 # sentence per focus; with variants it is not.
 _PATTERNS = {
     "MEASURE": r"measur|metric|number|how (much|many|fast|long)|quantif|benchmark|profil|"
-               r"how do you know|what data|p9\d|percentile|baseline",
+               r"how do you know|how did you know (?:that|whether|if)|what data|p9\d|"
+               r"percentile|baseline",
     "ROLE": r"\byou personally\b|your (own )?(part|role|contribution)|which parts were you|"
             r"what did you do|were you the",
     "OUTCOME": r"outcome|what happened|end (up|result)|how did (it|that) (go|land|turn out)|"
-               r"result|in the end|was it successful",
+               r"result|in the end|was it successful|what (?:was|is) the impact",
     "STEPS": r"step|walk (me )?through|how did you (do|approach|go about|handle)|"
-             r"what did you do (?:first|next)|sequence",
+             r"what did you do (?:first|next)|what specific changes (?:did|would) you make|"
+             r"sequence",
     "REASON": r"\bwhy\b|reason|what made you|rationale|weigh|trade.?off|instead of|"
               r"what led you",
     "CHALLENGE": r"hard(est)?|difficult|challeng|went wrong|problem|obstacle|struggl|"

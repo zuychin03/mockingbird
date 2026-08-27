@@ -29,14 +29,16 @@ from typing import Any, Protocol
 # back. Measured: 2,109 ms per call against 66 ms. It is invisible in LM Studio's own
 # `stats` -- ttft still reads 30 ms -- so only wall-clock timing catches it.
 BASE = "http://127.0.0.1:1234"
-MODEL = "mockingbird-llm"
+# Mockingbird deliberately supports one measured runtime. Keeping the API model id identical
+# to the LM Studio instance id makes both routing and stored provenance unambiguous.
+MODEL = "llama-3.2-3b-instruct"
 TOP_LOGPROBS = 20          # server rejects anything higher (log 7.2)
 CANARY_WARN_MS = 150.0     # a warm TTFT above this means the GPU clock dropped (log 7.23)
 # `clock_ok` watches TTFT, which is PREFILL, and 8.8 measured the turn as essentially all
 # DECODE -- warm prefill is ~0 ms while decode runs at 8-16 tok/s throttled. So the check was
 # looking at the half that does not matter: running on battery, TTFT stayed at 13 ms and
-# reported healthy while throughput fell from 85.6 tok/s to 9.2 (log 9.19). Well under any
-# healthy reading on this hardware (granite 114, Yi 86) and well over any throttled one.
+# reported healthy while throughput fell from 85.6 tok/s to 9.2 (log 9.19). Llama measured
+# above 110 tok/s when plugged in, leaving a wide gap above this throttling threshold.
 DECODE_FLOOR_TPS = 25.0
 TRANSPORT_WARN_MS = 250.0  # wall clock minus what the server says it spent. A healthy
                            # loopback runs 20-40 ms; the IPv6 stall was 2,080 (log 8.6)
@@ -226,28 +228,13 @@ def loaded_models() -> list[dict]:
     return [m for m in all_models() if m.get("state") == "loaded"]
 
 
-# Publisher, arch and quantization alone tie Yi to mistral-7b-instruct-v0.3 on this disk.
-# `max_context_length` is the model's ceiling and not the loaded window -- verified by loading
-# Yi at 2048 and reading 4096 back -- so it discriminates without tracking how it was loaded.
-_KEY_FIELDS = ("publisher", "arch", "quantization", "max_context_length")
+def product_model(models: list[dict] | None = None) -> dict | None:
+    """Return the exact supported LM Studio instance, never an alias or a fallback.
 
-
-def model_key(loaded: dict, catalogue: list[dict] | None = None) -> str:
-    """The real model key behind a loaded instance's `id`.
-
-    LM Studio reports a loaded model under its INSTANCE identifier, and that is an alias
-    whenever `--identifier` was passed -- which every harness here does. So `id` read back as
-    "live-llm", `Speech.for_model` matched nothing, and a Yi session ran a whole interview on
-    granite's profile without a word of complaint (9.24). Provenance recorded the alias too,
-    which makes a stored session unreproducible.
-
-    The catalogue lists the same file again, unloaded, under its true key, so the key is
-    recoverable by matching metadata -- see `_KEY_FIELDS` for which, and why three of them
-    were not enough. Anything ambiguous or absent returns the identifier unchanged, and the
-    caller PRINTS what it resolved, because failing silently to a default is the whole defect.
+    Earlier multi-model runs tried to infer the weights behind an instance alias from model
+    metadata. That became ambiguous when two installed revisions shared the same metadata.
+    The Llama-only product instead requires its runtime identifier to be exact; a wrong model
+    is rejected before an interview starts rather than silently receiving Llama's controls.
     """
-    ident = loaded.get("id") or ""
-    want = tuple(loaded.get(f) for f in _KEY_FIELDS)
-    hits = [m["id"] for m in (catalogue if catalogue is not None else all_models())
-            if m.get("id") != ident and tuple(m.get(f) for f in _KEY_FIELDS) == want]
-    return hits[0] if len(hits) == 1 else ident
+    available = loaded_models() if models is None else models
+    return next((model for model in available if model.get("id") == MODEL), None)

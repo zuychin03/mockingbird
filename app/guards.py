@@ -120,12 +120,9 @@ _SEGMENTED_CHOICE_SCOPE = re.compile(
     r"\b(?:mean|means|meaning) (?:what|which|how)\b[^?,]*,\s*[^?]+\?\s*$", re.I)
 
 
-# Granite opens 93% of its probes with this, and it will not stop being asked. Both a
-# prohibition ("never open with Can you elaborate") and a positive instruction ("start with a
-# question word") were measured: the first left it at 65%, the second at 93%, with 1 line in
-# 41 complying. The length rule in the same prompt DID take, so this is not the model ignoring
-# the prompt wholesale -- it is one phrase it cannot be talked out of. Section 7.10's rule
-# applies: derive it deterministically instead of asking (log 8.17).
+# Polite filler persisted despite both negative and positive prompt instructions. Because the
+# length rule in the same prompt did take, this is handled as a deterministic speech rewrite
+# rather than as another prompt iteration (MODEL_EXPERIMENTING_LOG.md).
 # Each hedge maps to the imperative an interviewer would have used instead. The mapping
 # matters because stripping alone does not always leave a sentence: "an example of how X"
 # opens on a question word but is a noun phrase, and shortcutting on that word produces
@@ -146,10 +143,8 @@ HEDGES = {
     "could you walk me through ": "Walk me through ",
     "can you talk about ": "Tell me about ",
     "can you share ": "Tell me about ",
-    # The `could you` mirrors that were missing, and the `more` variant. The table was built
-    # from granite's phrasings, so a form granite never uses was never in it: seven of ten
-    # exaone lines open "could you elaborate MORE on", one word off an entry that is present,
-    # and it left an 18-word hedge in place of a 6-word imperative (9.50).
+    # The `could you` mirrors and the `more` variant are separate forms in real output; they
+    # must normalise to the same direct question as their `can you` equivalents.
     "could you elaborate more on ": "Tell me about ",
     "can you elaborate more on ": "Tell me about ",
     "could you elaborate ": "Tell me about ",
@@ -379,8 +374,7 @@ def skip_requested(utterance: str) -> bool:
     return refuses(utterance) or intent.asked_to_skip(utterance)
 
 
-def apply(raw: dict | None, utterance: str, previous_says: list[str],
-          trust_ok: bool = True) -> Guarded:
+def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded:
     """Run the guards in order and return the decision a handler may act on."""
     applied: list[str] = []
 
@@ -405,7 +399,7 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str],
             # turned a grounded stop request into a probe, which is guard 2's call and not
             # this one's. Strip the question and let guard 2 decide whether the end stands
             # -- an ungrounded one still becomes `probe` two lines below (9.19).
-            if not ok and act == "advance" and trust_ok:
+            if not ok and act == "advance":
                 act, say, applied = "probe", say, applied + ["invented-question->probe"]
             else:
                 say = " ".join(s for s in _sentences(say) if not _is_question(s))
@@ -418,7 +412,7 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str],
     # Measured on llama-3.2-3b over the 60 fixtures (9.42): it advanced 13 times, all ten
     # gold=`advance` carried ok=true, and both ok=false advances were gold=`probe`. Perfect
     # discrimination, so this costs nothing and recovers two.
-    if act == "advance" and not ok and trust_ok:
+    if act == "advance" and not ok:
         act, applied = "probe", applied + ["advance-not-ok->probe"]
 
     # 2. `end` gate. Wrongly continuing costs seconds; wrongly ending loses the session.
@@ -450,7 +444,7 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str],
     # only ever DOWNGRADES. Rec 2 built the upgrade for `stop` and 9.17 built it for
     # `clarify`; `skip` and `reask` had an evidence test and no upgrade, so a candidate whose
     # words plainly said one of them got whatever the model had picked instead. Both cost a
-    # real turn live on Yi (9.20):
+    # real turn in a captured live interview:
     #
     #   "I'd rather not go into that one"  -> "Could you say a bit more about that?"
     #   "I can't really think of one"      -> "What did you measure?"
@@ -521,12 +515,8 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str],
         # sentence (log 8.18).
         parts = _sentences(say)
         if len(parts) > 1:
-            # Keep the sentence that ASKS, not the first one. For granite they are the same
-            # sentence every time, which is why the assumption survived unexamined: 0 of its
-            # 22 spoken probes lose their question. A model that acknowledges before asking
-            # shipped the acknowledgement and dropped the question -- exaone-3.5 wrote "That
-            # sounds interesting! Could you elaborate on the bottlenecks?" and spoke "That
-            # sounds interesting!", in 52% of its probes (9.46).
+            # Keep the sentence that ASKS, not the first one. Otherwise an acknowledgement
+            # before a question can survive while the actual question is discarded.
             #
             # `direct()` above can strip a question mark, but only off a line that STARTS
             # with a hedge, and such a line has no acknowledgement in front to be confused
@@ -535,10 +525,9 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str],
             say = asks[0] if asks else parts[0]
             applied.append("extra-sentences-dropped")
             # 3c ran BEFORE this and saw the acknowledgement, not the question, so a hedge on
-            # the surviving sentence was never rewritten: three of exaone's ten substituted
-            # lines carried `extra-sentences-dropped` with no `hedge-stripped` (9.50). Rewrite
-            # the sentence that actually survives. Cheap and idempotent -- a line 3c already
-            # handled no longer starts with a hedge, so this is a no-op on it.
+            # the surviving sentence would never be rewritten. Rewrite the sentence that
+            # actually survives. Cheap and idempotent: a line 3c already handled no longer
+            # starts with a hedge, so this is a no-op on it.
             if act in ("probe", "reask", "clarify"):
                 say, changed = direct(say)
                 if changed and "hedge-stripped" not in applied:
