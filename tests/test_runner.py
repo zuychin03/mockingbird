@@ -875,16 +875,33 @@ def test_a_rejected_shortening_retry_retains_the_original_raw_speech(tmp_path, m
     assert decision["say_raw"] == long_line
 
 
-def test_the_product_runner_enforces_llamas_twenty_word_cap(tmp_path, monkeypatch):
+def test_the_product_runner_accepts_a_twenty_five_word_question(tmp_path, monkeypatch):
+    _accept_any_focus(monkeypatch)
+    boundary_line = ("What specific changes would you make to the deployment process if the same "
+                     "production incident happened again during a busy support shift next week onsite?")
+    retry_line = "What specific changes would you make next time?"
+    r, state = build([d("probe", boundary_line), d("probe", retry_line)], tmp_path)
+
+    assert len(boundary_line.split()) == 25
+    run(r.ask())
+    out = run(r.submit("I would add a staged rollout and monitor the error rate."))
+
+    assert out.spoken.text == boundary_line
+    assert not any(guard.startswith("too-long->") for guard in state.turns[-1].guards)
+
+
+def test_the_product_runner_shortens_a_twenty_six_word_question(tmp_path, monkeypatch):
     _accept_any_focus(monkeypatch)
     long_line = ("What specific changes would you make to the deployment process if the same "
-                 "production incident happened again during a busy support shift?")
+                 "production incident happened again during a busy support shift next week onsite "
+                 "overnight?")
     short_line = "What specific changes would you make next time?"
     r, state = build([d("probe", long_line), d("probe", short_line)], tmp_path)
 
     run(r.ask())
     out = run(r.submit("I would add a staged rollout and monitor the error rate."))
 
+    assert len(long_line.split()) == 26
     assert out.spoken.text == short_line
     assert "too-long->shortened" in state.turns[-1].guards
 
