@@ -1,0 +1,994 @@
+<!doctype html>
+<html lang="en-AU" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Interactive current-state architecture guide for Mockingbird.">
+  <title>Mockingbird architecture explorer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f3f0e8;
+      --surface: #fffdf8;
+      --surface-2: #e9e4d8;
+      --ink: #17211c;
+      --muted: #59645e;
+      --line: #cbc4b7;
+      --brand: #116149;
+      --brand-2: #0a4132;
+      --brand-soft: #d9ebe4;
+      --model: #985629;
+      --model-soft: #f4dfcf;
+      --store: #4f4c8d;
+      --store-soft: #e3e1f4;
+      --warn: #9a312b;
+      --warn-soft: #f6ddda;
+      --shadow: 0 18px 50px rgba(28, 36, 31, .11);
+      --radius: 20px;
+      --radius-sm: 12px;
+      --max: 1180px;
+    }
+
+    html[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #121814;
+      --surface: #1b241f;
+      --surface-2: #26322b;
+      --ink: #edf4ef;
+      --muted: #afbbb3;
+      --line: #3a493f;
+      --brand: #77d2ad;
+      --brand-2: #b4ecd5;
+      --brand-soft: #203e32;
+      --model: #f0aa78;
+      --model-soft: #4b3022;
+      --store: #b8b4ef;
+      --store-soft: #343253;
+      --warn: #f39a93;
+      --warn-soft: #4a2928;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .28);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+    }
+    button, select { font: inherit; }
+    a { color: var(--brand); text-underline-offset: .2em; }
+    a:hover { color: var(--brand-2); }
+    button:focus-visible, a:focus-visible {
+      outline: 3px solid var(--brand);
+      outline-offset: 3px;
+    }
+    .skip-link {
+      position: absolute;
+      left: 1rem;
+      top: -5rem;
+      z-index: 20;
+      padding: .7rem 1rem;
+      background: var(--ink);
+      color: var(--bg);
+      border-radius: .5rem;
+    }
+    .skip-link:focus { top: 1rem; }
+    .shell { width: min(calc(100% - 2rem), var(--max)); margin-inline: auto; }
+    .hero {
+      padding: 4.8rem 0 2.8rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(260px, .55fr);
+      gap: 3rem;
+      align-items: end;
+    }
+    .eyebrow {
+      margin: 0 0 .8rem;
+      color: var(--brand);
+      font-size: .78rem;
+      font-weight: 800;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 900px;
+      margin-bottom: 1.2rem;
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(3rem, 8vw, 6.6rem);
+      font-weight: 500;
+      letter-spacing: -.055em;
+      line-height: .92;
+    }
+    h2 {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: clamp(2rem, 4vw, 3.5rem);
+      font-weight: 500;
+      letter-spacing: -.035em;
+      line-height: 1.05;
+    }
+    h3 { font-size: 1.08rem; line-height: 1.3; }
+    .lede { max-width: 760px; color: var(--muted); font-size: 1.15rem; }
+    .snapshot {
+      padding: 1.2rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .snapshot dt { color: var(--muted); font-size: .76rem; text-transform: uppercase; letter-spacing: .08em; }
+    .snapshot dd { margin: 0 0 .8rem; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .88rem; overflow-wrap: anywhere; }
+    .snapshot dd:last-child { margin-bottom: 0; }
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px;
+      margin-top: 2.4rem;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+    .metric { padding: 1.2rem; background: var(--surface); }
+    .metric strong { display: block; font-family: Georgia, serif; font-size: 2rem; font-weight: 500; line-height: 1; }
+    .metric span { color: var(--muted); font-size: .8rem; }
+    .page-nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--bg) 92%, transparent);
+      backdrop-filter: blur(16px);
+    }
+    .nav-inner { display: flex; gap: .35rem; align-items: center; overflow-x: auto; padding: .7rem 0; }
+    .nav-inner a, .theme-button {
+      flex: 0 0 auto;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: var(--muted);
+      padding: .5rem .75rem;
+      text-decoration: none;
+      font-size: .83rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .nav-inner a:hover, .theme-button:hover { background: var(--surface-2); color: var(--ink); }
+    .theme-button { margin-left: auto; }
+    main section { padding: 5.5rem 0; border-bottom: 1px solid var(--line); scroll-margin-top: 4rem; }
+    .section-intro { max-width: 760px; margin-bottom: 2.3rem; color: var(--muted); }
+    .kicker { display: inline-block; margin-bottom: .65rem; color: var(--brand); font-size: .76rem; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
+    .authority-grid {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: stretch;
+      gap: 1rem;
+    }
+    .authority-panel { min-width: 0; padding: 1.5rem; border-radius: var(--radius); }
+    .authority-panel.model { background: var(--model-soft); }
+    .authority-panel.python { background: var(--brand-soft); }
+    .authority-panel h3 { display: flex; gap: .65rem; align-items: center; }
+    .authority-panel ul { margin: 0; padding-left: 1.15rem; }
+    .authority-panel li + li { margin-top: .45rem; }
+    .authority-arrow { align-self: center; color: var(--muted); font-size: 2rem; }
+    .boundary-note { margin-top: 1rem; padding: 1rem 1.2rem; border-left: 4px solid var(--brand); background: var(--surface); }
+    .topology { margin: 2.5rem 0 0; padding: 1.2rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+    .topology svg { display: block; width: 100%; height: auto; }
+    .topology .edge { stroke: var(--line); stroke-width: 3; fill: none; marker-end: url(#arrow); }
+    .topology .edge.model-edge { stroke: var(--model); }
+    .topology .edge.store-edge { stroke: var(--store); }
+    .topology .node rect { stroke-width: 2; rx: 16; }
+    .topology .node text { fill: var(--ink); font: 700 16px Inter, system-ui, sans-serif; text-anchor: middle; }
+    .topology .candidate rect, .topology .runtime rect { fill: var(--brand-soft); stroke: var(--brand); }
+    .topology .model-node rect { fill: var(--model-soft); stroke: var(--model); }
+    .topology .store-node rect { fill: var(--store-soft); stroke: var(--store); }
+    .topology .sub { fill: var(--muted); font: 500 12px Inter, system-ui, sans-serif; text-anchor: middle; }
+    .topology-mobile { display: none; }
+    .legend { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; color: var(--muted); font-size: .8rem; }
+    .legend span::before { content: ""; display: inline-block; width: .7rem; height: .7rem; margin-right: .35rem; border-radius: 50%; background: var(--brand); }
+    .legend .legend-model::before { background: var(--model); }
+    .legend .legend-store::before { background: var(--store); }
+    .explorer-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(300px, .9fr);
+      gap: 1.3rem;
+      align-items: start;
+    }
+    .component-board {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: .7rem;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .component-button {
+      min-height: 100px;
+      padding: .9rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+      transition: transform .16s ease, border-color .16s ease, background .16s ease;
+    }
+    .component-button:hover { transform: translateY(-2px); border-color: var(--brand); }
+    .component-button[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-soft); }
+    .component-button[data-kind="model"] { border-left: 4px solid var(--model); }
+    .component-button[data-kind="storage"] { border-left: 4px solid var(--store); }
+    .component-button[data-kind="python"] { border-left: 4px solid var(--brand); }
+    .component-button b, .component-button small { display: block; }
+    .component-button small { margin-top: .25rem; color: var(--muted); }
+    .detail-panel {
+      position: sticky;
+      top: 5.5rem;
+      padding: 1.5rem;
+      border-radius: var(--radius);
+      background: var(--ink);
+      color: var(--bg);
+      box-shadow: var(--shadow);
+    }
+    html[data-theme="dark"] .detail-panel { background: #eef5f0; color: #162019; }
+    .detail-panel .detail-kicker { color: color-mix(in srgb, var(--bg) 68%, transparent); font-size: .76rem; text-transform: uppercase; letter-spacing: .12em; }
+    html[data-theme="dark"] .detail-panel .detail-kicker { color: #526158; }
+    .detail-panel h3 { margin-top: .35rem; font-family: Georgia, serif; font-size: 1.9rem; font-weight: 500; }
+    .detail-panel dl { display: grid; grid-template-columns: 90px 1fr; gap: .75rem; margin: 1.3rem 0; }
+    .detail-panel dt { opacity: .65; }
+    .detail-panel dd { margin: 0; }
+    .detail-panel a { color: inherit; }
+    .chip-row { display: flex; flex-wrap: wrap; gap: .5rem; }
+    .chip { padding: .25rem .55rem; border: 1px solid currentColor; border-radius: 999px; font-size: .74rem; opacity: .85; }
+    .control-row { display: flex; flex-wrap: wrap; gap: .55rem; margin-bottom: 1.2rem; }
+    .control-button {
+      padding: .62rem .85rem;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--ink);
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .control-button:hover { border-color: var(--brand); }
+    .control-button[aria-pressed="true"] { border-color: var(--brand); background: var(--brand); color: var(--bg); }
+    html[data-theme="dark"] .control-button[aria-pressed="true"] { color: #112018; }
+    .turn-lab { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(270px, .65fr); gap: 1.2rem; }
+    .path-card { padding: 1.2rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+    .path-list { display: grid; gap: .55rem; margin: 0; padding: 0; list-style: none; }
+    .path-step {
+      position: relative;
+      display: grid;
+      grid-template-columns: 2.1rem 1fr auto;
+      gap: .75rem;
+      align-items: center;
+      padding: .8rem;
+      border-radius: var(--radius-sm);
+      background: var(--surface-2);
+    }
+    .path-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      left: 1.78rem;
+      bottom: -.58rem;
+      width: 2px;
+      height: .6rem;
+      background: var(--line);
+    }
+    .path-step .number { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; background: var(--brand); color: var(--bg); font-weight: 800; }
+    .path-step[data-owner="model"] .number { background: var(--model); }
+    .path-step[data-owner="storage"] .number { background: var(--store); }
+    .path-step small { color: var(--muted); }
+    .outcome-panel { padding: 1.3rem; border-radius: var(--radius); background: var(--brand-soft); }
+    .outcome-panel h3 { margin-bottom: .5rem; }
+    .outcome-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; margin-top: 1rem; }
+    .outcome-grid div { padding: .75rem; border-top: 1px solid color-mix(in srgb, var(--brand) 35%, transparent); }
+    .outcome-grid span, .outcome-grid strong { display: block; }
+    .outcome-grid span { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .07em; }
+    .phase-strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .4rem; }
+    .phase-button {
+      min-height: 135px;
+      padding: .85rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+    }
+    .phase-button[aria-pressed="true"] { border-color: var(--brand); background: var(--brand-soft); }
+    .phase-button b, .phase-button span { display: block; }
+    .phase-button span { margin-top: .4rem; color: var(--muted); font-size: .78rem; }
+    .phase-detail { display: grid; grid-template-columns: 1.2fr repeat(4, minmax(95px, .5fr)); gap: 1px; margin-top: 1rem; border: 1px solid var(--line); background: var(--line); }
+    .phase-detail > div { padding: 1rem; background: var(--surface); }
+    .phase-detail small, .phase-detail strong { display: block; }
+    .phase-detail small { color: var(--muted); text-transform: uppercase; letter-spacing: .07em; }
+    .phase-detail strong { margin-top: .25rem; }
+    .pipeline-wrap { display: grid; grid-template-columns: minmax(220px, .36fr) 1fr; gap: 1.2rem; }
+    .channel-menu { display: grid; gap: .5rem; align-content: start; }
+    .channel-button {
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--ink);
+      text-align: left;
+      cursor: pointer;
+    }
+    .channel-button[aria-pressed="true"] { border-color: var(--store); background: var(--store-soft); }
+    .pipeline { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: stretch; gap: .65rem; }
+    .pipe-node { position: relative; display: flex; flex-direction: column; justify-content: center; min-height: 140px; padding: .9rem; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+    .pipe-node:not(:last-child)::after { content: "→"; position: absolute; right: -.58rem; top: 50%; z-index: 2; transform: translateY(-50%); color: var(--muted); font-weight: 900; }
+    .pipe-node b, .pipe-node small { display: block; }
+    .pipe-node small { margin-top: .35rem; color: var(--muted); }
+    .file-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .8rem; }
+    .file-card { padding: 1.2rem; border-top: 4px solid var(--store); background: var(--surface); }
+    .file-card code { overflow-wrap: anywhere; }
+    .file-card p { margin-bottom: 0; color: var(--muted); }
+    .quality-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .quality-panel { padding: 1.3rem; border-radius: var(--radius); background: var(--surface); }
+    .quality-panel ul { margin-bottom: 0; padding-left: 1.2rem; }
+    .quality-panel li + li { margin-top: .5rem; }
+    .quality-panel.risks { border-top: 5px solid var(--warn); }
+    .quality-panel.preserve { border-top: 5px solid var(--brand); }
+    .risk-stack { display: grid; gap: .65rem; margin-top: 1.2rem; }
+    details.risk { border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+    details.risk summary { cursor: pointer; padding: 1rem; font-weight: 750; }
+    details.risk p { margin: 0; padding: 0 1rem 1rem; color: var(--muted); }
+    .severity { display: inline-block; min-width: 5.2rem; margin-right: .6rem; color: var(--warn); font-size: .75rem; letter-spacing: .07em; text-transform: uppercase; }
+    .next-steps { counter-reset: step; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; margin: 0; padding: 0; list-style: none; }
+    .next-steps li { min-height: 145px; padding: 1rem; border: 1px solid var(--line); background: var(--surface); }
+    .next-steps li::before { counter-increment: step; content: counter(step, decimal-leading-zero); display: block; margin-bottom: .7rem; color: var(--brand); font-family: Georgia, serif; font-size: 1.7rem; }
+    .callout { margin-top: 1.2rem; padding: 1.1rem; border-left: 4px solid var(--model); background: var(--model-soft); }
+    footer { padding: 2.5rem 0 4rem; color: var(--muted); }
+    footer .footer-grid { display: flex; justify-content: space-between; gap: 2rem; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+    @media (max-width: 920px) {
+      .hero-grid, .explorer-grid, .turn-lab, .pipeline-wrap { grid-template-columns: 1fr; }
+      .detail-panel { position: static; }
+      .phase-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .pipeline { grid-template-columns: 1fr 1fr; }
+      .pipe-node:not(:last-child)::after { content: "↓"; right: .7rem; top: auto; bottom: -.78rem; transform: none; }
+      .next-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 650px) {
+      .shell { width: min(calc(100% - 1.2rem), var(--max)); }
+      .hero { padding-top: 3rem; }
+      .metric-row { grid-template-columns: 1fr 1fr; }
+      .authority-grid { grid-template-columns: 1fr; }
+      .authority-arrow { transform: rotate(90deg); justify-self: center; }
+      .topology svg { display: none; }
+      .topology-mobile { display: grid; gap: .5rem; }
+      .topology-mobile div { padding: .7rem; border-radius: .7rem; background: var(--brand-soft); text-align: center; font-weight: 700; }
+      .topology-mobile div:nth-child(4) { background: var(--model-soft); }
+      .topology-mobile div:nth-child(5) { background: var(--store-soft); }
+      .component-board { grid-template-columns: 1fr 1fr; }
+      .phase-strip, .file-grid, .quality-grid { grid-template-columns: 1fr; }
+      .phase-button { min-height: 0; }
+      .phase-detail { grid-template-columns: 1fr 1fr; }
+      .phase-detail > div:first-child { grid-column: 1 / -1; }
+      .pipeline { grid-template-columns: 1fr; }
+      .next-steps { grid-template-columns: 1fr; }
+      footer .footer-grid { display: block; }
+    }
+
+    @media (max-width: 430px) {
+      .component-board, .metric-row, .outcome-grid, .phase-detail { grid-template-columns: 1fr; }
+      .phase-detail > div:first-child { grid-column: auto; }
+      .nav-inner { flex-wrap: wrap; overflow-x: visible; }
+      .nav-inner a, .theme-button { flex: 1 1 30%; margin-left: 0; text-align: center; }
+      .nav-inner a:nth-of-type(n+5) { display: none; }
+      h1 { font-size: 3rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
+    }
+
+    @media print {
+      .page-nav, .control-row, .theme-button { display: none !important; }
+      body { background: white; color: black; }
+      main section { break-inside: avoid; padding: 2rem 0; }
+      .detail-panel { position: static; background: white; color: black; border: 1px solid #777; box-shadow: none; }
+      .snapshot, .path-card, .quality-panel { box-shadow: none; }
+      a { color: black; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to architecture</a>
+
+  <header class="hero">
+    <div class="shell hero-grid">
+      <div>
+        <p class="eyebrow">Current-state architecture · 26/08/2026</p>
+        <h1>Mockingbird, from answer to evidence.</h1>
+        <p class="lede">A local interview coach where the language model writes and reads bounded text, while Python owns consent, pacing, persistence and every score.</p>
+      </div>
+      <dl class="snapshot" aria-label="Evidence snapshot">
+        <dt>Branch</dt><dd>exaone-adaptation</dd>
+        <dt>Commit</dt><dd>5e21330</dd>
+        <dt>Runtime</dt><dd>Python 3.12 · standard library</dd>
+        <dt>Model host</dt><dd>LM Studio · 127.0.0.1:1234</dd>
+      </dl>
+    </div>
+    <div class="shell metric-row" aria-label="Architecture summary">
+      <div class="metric"><strong>14</strong><span>scripted questions</span></div>
+      <div class="metric"><strong>6</strong><span>interview phases</span></div>
+      <div class="metric"><strong>6</strong><span>model action choices</span></div>
+      <div class="metric"><strong>262</strong><span>collected tests</span></div>
+    </div>
+  </header>
+
+  <nav class="page-nav" aria-label="Architecture sections">
+    <div class="shell nav-inner">
+      <a href="#boundary">Boundary</a>
+      <a href="#components">Components</a>
+      <a href="#turn">Turn lab</a>
+      <a href="#phases">Phases</a>
+      <a href="#lineage">Data</a>
+      <a href="#quality">Quality</a>
+      <button class="theme-button" id="theme-toggle" type="button" aria-pressed="false">Dark theme</button>
+    </div>
+  </nav>
+
+  <main id="main">
+    <section id="boundary">
+      <div class="shell">
+        <span class="kicker">01 · Authority boundary</span>
+        <h2>The model has a narrow job on purpose.</h2>
+        <p class="section-intro">Mockingbird is not an unconstrained interviewer agent. The model may propose one of six moves and phrase one short sentence. Python decides whether that move is grounded, affordable and safe to commit.</p>
+
+        <div class="authority-grid">
+          <article class="authority-panel model">
+            <h3><span aria-hidden="true">◌</span> Language model</h3>
+            <ul>
+              <li>Proposes <code>act</code>, <code>say</code>, <code>ok</code> and <code>ask</code>.</li>
+              <li>Words bounded conversational follow-ups.</li>
+              <li>Quotes concrete parts of completed answers.</li>
+              <li>Summarises already completed questions.</li>
+            </ul>
+          </article>
+          <div class="authority-arrow" aria-hidden="true">→</div>
+          <article class="authority-panel python">
+            <h3><span aria-hidden="true">◆</span> Deterministic Python</h3>
+            <ul>
+              <li>Owns stop, skip, refusal and clarification semantics.</li>
+              <li>Controls focus, phase rules, caps and overflow budget.</li>
+              <li>Grounds quotes and computes rubric totals.</li>
+              <li>Commits state, provenance and candidate-visible speech.</li>
+            </ul>
+          </article>
+        </div>
+        <p class="boundary-note"><strong>The effective action is not necessarily the model action.</strong> The stored guard list and semantic close reason explain the transition that actually happened.</p>
+
+        <figure class="topology">
+          <svg viewBox="0 0 1040 360" role="img" aria-labelledby="topology-title topology-desc">
+            <title id="topology-title">Mockingbird runtime topology</title>
+            <desc id="topology-desc">The candidate uses the terminal CLI, which calls the Python runner. The runner exchanges bounded requests with LM Studio, records local files and later sends closed answers through observation, scoring and reporting.</desc>
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke"></path></marker>
+            </defs>
+            <path class="edge" d="M170 95 H260"></path>
+            <path class="edge" d="M440 95 H520"></path>
+            <path class="edge model-edge" d="M700 78 C790 30 850 30 900 62"></path>
+            <path class="edge model-edge" d="M900 112 C820 145 770 150 700 122"></path>
+            <path class="edge store-edge" d="M610 145 V235"></path>
+            <path class="edge store-edge" d="M690 275 H790"></path>
+            <path class="edge" d="M960 275 H1000"></path>
+            <g class="node candidate"><rect x="30" y="55" width="140" height="80"></rect><text x="100" y="90">Candidate</text><text class="sub" x="100" y="113">utterance</text></g>
+            <g class="node runtime"><rect x="260" y="55" width="180" height="80"></rect><text x="350" y="90">Terminal CLI</text><text class="sub" x="350" y="113">candidate-safe view</text></g>
+            <g class="node runtime"><rect x="520" y="55" width="180" height="80"></rect><text x="610" y="90">Runner</text><text class="sub" x="610" y="113">effective policy</text></g>
+            <g class="node model-node"><rect x="850" y="45" width="160" height="80"></rect><text x="930" y="80">LM Studio</text><text class="sub" x="930" y="103">local model</text></g>
+            <g class="node store-node"><rect x="520" y="235" width="170" height="80"></rect><text x="605" y="270">Session files</text><text class="sub" x="605" y="293">JSON + JSONL</text></g>
+            <g class="node store-node"><rect x="790" y="235" width="170" height="80"></rect><text x="875" y="270">Observations</text><text class="sub" x="875" y="293">grounded quotes</text></g>
+            <text class="sub" x="998" y="342">score → report</text>
+          </svg>
+          <div class="topology-mobile" aria-hidden="true">
+            <div>Candidate ↓</div><div>Terminal CLI ↓</div><div>Runner ↔ policy ↓</div><div>LM Studio · bounded calls ↓</div><div>Session files → observations → report</div>
+          </div>
+          <figcaption class="legend"><span>Python runtime</span><span class="legend-model">model boundary</span><span class="legend-store">durable or derived data</span></figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="components">
+      <div class="shell">
+        <span class="kicker">02 · Component explorer</span>
+        <h2>Click a module to see its contract.</h2>
+        <p class="section-intro">The runner owns sequencing. Surrounding modules are deliberately narrower: each answers one policy, transport, evidence or persistence question.</p>
+        <div class="explorer-grid">
+          <div class="component-board" aria-label="Runtime components">
+            <button class="component-button" data-component="cli" data-kind="python" type="button" aria-pressed="false"><b>CLI</b><small>preflight and loop</small></button>
+            <button class="component-button" data-component="runner" data-kind="python" type="button" aria-pressed="true"><b>Runner</b><small>effective policy</small></button>
+            <button class="component-button" data-component="contract" data-kind="model" type="button" aria-pressed="false"><b>Contract</b><small>six-action schema</small></button>
+            <button class="component-button" data-component="intent" data-kind="python" type="button" aria-pressed="false"><b>Intent + direction</b><small>utterance role</small></button>
+            <button class="component-button" data-component="guards" data-kind="python" type="button" aria-pressed="false"><b>Guards</b><small>ground and sanitise</small></button>
+            <button class="component-button" data-component="focus" data-kind="python" type="button" aria-pressed="false"><b>Focus + budget</b><small>what and how much</small></button>
+            <button class="component-button" data-component="provider" data-kind="model" type="button" aria-pressed="false"><b>Provider</b><small>LM Studio port</small></button>
+            <button class="component-button" data-component="session" data-kind="storage" type="button" aria-pressed="false"><b>Session</b><small>plan and files</small></button>
+            <button class="component-button" data-component="observe" data-kind="model" type="button" aria-pressed="false"><b>Observe</b><small>grounded extraction</small></button>
+            <button class="component-button" data-component="score" data-kind="python" type="button" aria-pressed="false"><b>Score</b><small>criterion arithmetic</small></button>
+            <button class="component-button" data-component="report" data-kind="storage" type="button" aria-pressed="false"><b>Report</b><small>evidence-led feedback</small></button>
+            <button class="component-button" data-component="tools" data-kind="storage" type="button" aria-pressed="false"><b>Harnesses</b><small>replay and evaluation</small></button>
+          </div>
+          <aside class="detail-panel" aria-live="polite" aria-atomic="true">
+            <div class="detail-kicker" id="component-kind">Orchestrator</div>
+            <h3 id="component-title">Runner</h3>
+            <p id="component-role">One committed utterance in; one effective decision and state transition out.</p>
+            <dl>
+              <dt>Receives</dt><dd id="component-input">utterance, plan, state, provider</dd>
+              <dt>Returns</dt><dd id="component-output">TurnOutcome and persisted decision</dd>
+              <dt>Watch</dt><dd id="component-watch">Policy precedence is encoded by statement order.</dd>
+            </dl>
+            <div class="chip-row" id="component-files"><a class="chip" href="../app/runner.py">app/runner.py</a></div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section id="turn">
+      <div class="shell">
+        <span class="kicker">03 · Turn-path lab</span>
+        <h2>Change the utterance; watch ownership move.</h2>
+        <p class="section-intro">The same entry point takes different paths. Control replies and closing questions avoid a model call; an ordinary answer uses the model as one advisory step inside a larger deterministic transition.</p>
+        <div class="control-row" role="group" aria-label="Candidate scenario">
+          <button class="control-button" type="button" data-scenario="answer" aria-pressed="true">Candidate answer</button>
+          <button class="control-button" type="button" data-scenario="clarify" aria-pressed="false">Clarification</button>
+          <button class="control-button" type="button" data-scenario="question" aria-pressed="false">Candidate question</button>
+          <button class="control-button" type="button" data-scenario="skip" aria-pressed="false">Skip request</button>
+          <button class="control-button" type="button" data-scenario="stop" aria-pressed="false">Stop request</button>
+        </div>
+        <div class="turn-lab">
+          <div class="path-card">
+            <ol class="path-list" id="scenario-path" aria-label="Selected scenario path"></ol>
+          </div>
+          <aside class="outcome-panel" aria-live="polite">
+            <h3 id="scenario-title">Partial candidate answer</h3>
+            <p id="scenario-outcome">Python selects a missing focus, the model words a proposal, guards validate it, and budget/evidence rules decide whether the question remains open.</p>
+            <div class="outcome-grid">
+              <div><span>Model calls</span><strong id="scenario-calls">1–2</strong></div>
+              <div><span>Likely action</span><strong id="scenario-action">probe</strong></div>
+              <div><span>Budget cost</span><strong id="scenario-budget">1 follow-up</strong></div>
+              <div><span>State owner</span><strong id="scenario-owner">Runner</strong></div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section id="phases">
+      <div class="shell">
+        <span class="kicker">04 · Interview phases</span>
+        <h2>One plan, four executable phase types.</h2>
+        <p class="section-intro">Phase data changes scoring, pacing, observation shape and candidate-question handling. Unsupported types or rubric criteria fail when the plan loads.</p>
+        <div class="phase-strip" role="group" aria-label="Interview phases">
+          <button class="phase-button" type="button" data-phase="warmup" aria-pressed="true"><b>Warm-up</b><span>2 questions · cap 1</span></button>
+          <button class="phase-button" type="button" data-phase="behavioural" aria-pressed="false"><b>Behavioural</b><span>4 questions · cap 3</span></button>
+          <button class="phase-button" type="button" data-phase="technical" aria-pressed="false"><b>Technical</b><span>4 questions · cap 2</span></button>
+          <button class="phase-button" type="button" data-phase="design" aria-pressed="false"><b>Design</b><span>1 question · cap 2</span></button>
+          <button class="phase-button" type="button" data-phase="collaboration" aria-pressed="false"><b>Collaboration</b><span>2 questions · cap 2</span></button>
+          <button class="phase-button" type="button" data-phase="closing" aria-pressed="false"><b>Closing</b><span>1 question · hard zero</span></button>
+        </div>
+        <div class="phase-detail" aria-live="polite">
+          <div><small>Purpose</small><strong id="phase-purpose">Open naturally without scoring small talk.</strong></div>
+          <div><small>Type</small><strong id="phase-type">fixed_sequence</strong></div>
+          <div><small>Scored</small><strong id="phase-scored">No</strong></div>
+          <div><small>Evidence</small><strong id="phase-shape">STAR, no adaptive stop</strong></div>
+          <div><small>Questions</small><strong id="phase-count">2</strong></div>
+        </div>
+        <p class="callout"><strong>Shared overflow is demand-driven.</strong> The current 14-question plan starts with a 14-turn reserve. Positive-cap questions may receive an integer fair share; a zero-cap phase never draws from it.</p>
+      </div>
+    </section>
+
+    <section id="lineage">
+      <div class="shell">
+        <span class="kicker">05 · Data lineage</span>
+        <h2>Three views of one interview, for three audiences.</h2>
+        <p class="section-intro">Select a channel to trace only the fields that audience should receive. Candidate-visible state is intentionally smaller than durable diagnostic state.</p>
+        <div class="pipeline-wrap">
+          <div class="channel-menu" role="group" aria-label="Data channel">
+            <button class="channel-button" type="button" data-channel="live" aria-pressed="true"><strong>Live channel</strong><br><small>What the candidate may see</small></button>
+            <button class="channel-button" type="button" data-channel="durable" aria-pressed="false"><strong>Durable channel</strong><br><small>What supports diagnosis and replay</small></button>
+            <button class="channel-button" type="button" data-channel="report" aria-pressed="false"><strong>Assessment channel</strong><br><small>What supports feedback</small></button>
+          </div>
+          <div class="pipeline" id="channel-pipeline" aria-live="polite"></div>
+        </div>
+
+        <div class="file-grid" aria-label="Session file layout" style="margin-top:2rem">
+          <article class="file-card"><h3><code>session.json</code></h3><p>Plan snapshot, provenance, status, closed-question summaries and semantic close reasons.</p></article>
+          <article class="file-card"><h3><code>transcript.json</code></h3><p>Every committed utterance, effective action and interviewer line in turn order.</p></article>
+          <article class="file-card"><h3><code>decisions.jsonl</code></h3><p>Append-only effective decision, guards, focus, budgets, telemetry, prompt and timestamp.</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="quality">
+      <div class="shell">
+        <span class="kicker">06 · Quality and evolution</span>
+        <h2>Preserve the measured boundary; harden the state model.</h2>
+        <div class="quality-grid">
+          <article class="quality-panel preserve">
+            <h3>Keep</h3>
+            <ul>
+              <li>Python-owned consent, budgets and scores.</li>
+              <li>Grounded quotes before deterministic arithmetic.</li>
+              <li>Candidate-safe live projection.</li>
+              <li>Local provider port and reproducibility metadata.</li>
+              <li>Explicit runner instead of a general graph framework.</li>
+            </ul>
+          </article>
+          <article class="quality-panel risks">
+            <h3>Harden</h3>
+            <ul>
+              <li>Immutable per-attempt and turn event records.</li>
+              <li>Atomic persistence, restore and crash recovery.</li>
+              <li>Serialized, idempotent command handling.</li>
+              <li>Explicit typed policy precedence.</li>
+              <li>Independent held-out and human-authored evaluation.</li>
+            </ul>
+          </article>
+        </div>
+
+        <div class="risk-stack">
+          <details class="risk"><summary><span class="severity">High</span>Replay cannot reconstruct every model attempt and volatile runner field</summary><p>The log stores the effective turn and a rendered prompt, but two-call turns do not retain complete immutable envelopes for both attempts, and no restore path replays events into a runner.</p></details>
+          <details class="risk"><summary><span class="severity">High</span>Snapshots are not atomic or command-serialised</summary><p>JSON is rewritten directly and commands have no sequence, idempotency key or expected state version. A future UI or voice transport would expose this mutable boundary.</p></details>
+          <details class="risk"><summary><span class="severity">Medium-high</span>Policy is readable but coupled to statement order</summary><p><code>Runner.submit()</code> owns control states, routing, model retries, budgets, evidence pacing and dispatch. Pin precedence pairs as tests before extracting a pure reducer.</p></details>
+          <details class="risk"><summary><span class="severity">Medium</span>Normal-turn provider failures have limited recovery</summary><p>Background observation fails open, but a decision or history call can still exit the CLI. Preserve a recoverable state before adding remote or voice interfaces.</p></details>
+          <details class="risk"><summary><span class="severity">Medium</span>Design feedback is descriptive, but still model-mediated</summary><p>Keeping design unscored is correct. Quote presence can still be misread, so do not promote those fields without independent evaluation.</p></details>
+        </div>
+
+        <h3 style="margin-top:2.4rem">Safe extension order</h3>
+        <ol class="next-steps">
+          <li>Freeze current precedence with adversarial control tests.</li>
+          <li>Introduce utterance role, policy result, model attempt and event types.</li>
+          <li>Make events authoritative; add atomic projections and restore.</li>
+          <li>Serialize commands and reject duplicate submissions.</li>
+          <li>Build an independent evaluation gate with multiple authors.</li>
+          <li>Add generated plans only behind executable validation.</li>
+          <li>Add a web UI that consumes only the live projection.</li>
+          <li>Treat voice, interruption and echo control as a separate wave.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell footer-grid">
+      <p>Companion to <a href="ARCHITECTURE.md">the detailed Markdown guide</a>.</p>
+      <p>Source of truth: code, tests and executable plan at the recorded revision.</p>
+    </div>
+  </footer>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const components = {
+        cli: {
+          kind: "Entry point",
+          title: "Terminal CLI",
+          role: "Preflight, prompt-cache warm-up and the candidate-facing input/output loop.",
+          input: "plan path, stdin, loaded LM Studio model",
+          output: "candidate-safe speech, status and session paths",
+          watch: "Only live_view fields should cross this boundary.",
+          files: [["app/cli.py", "../app/cli.py"], ["app/provenance.py", "../app/provenance.py"]]
+        },
+        runner: {
+          kind: "Orchestrator",
+          title: "Runner",
+          role: "One committed utterance in; one effective decision and state transition out.",
+          input: "utterance, plan, state, provider",
+          output: "TurnOutcome and persisted decision",
+          watch: "Policy precedence is encoded by statement order.",
+          files: [["app/runner.py", "../app/runner.py"]]
+        },
+        contract: {
+          kind: "Model contract",
+          title: "Turn contract",
+          role: "Defines the six advisory actions, strict JSON schema and measured system prompt.",
+          input: "question, answer, completed-question summary",
+          output: "structured model request",
+          watch: "Changing fields or prompt language invalidates measured comparisons.",
+          files: [["app/contract.py", "../app/contract.py"]]
+        },
+        intent: {
+          kind: "Utterance role",
+          title: "Intent and direction",
+          role: "Separates stop, skip, continue, clarification, answer and candidate-question language.",
+          input: "candidate utterance",
+          output: "control intent, direction and optional answer prefix",
+          watch: "False positives can discard evidence or interfere with consent.",
+          files: [["app/intent.py", "../app/intent.py"], ["app/direction.py", "../app/direction.py"]]
+        },
+        guards: {
+          kind: "Deterministic policy",
+          title: "Proposal guards",
+          role: "Grounds closing actions, resolves candidate evidence and sanitises model speech.",
+          input: "raw model JSON, utterance, prior speech",
+          output: "Guarded proposal and applied-rule list",
+          watch: "Ordering is load-bearing; terminal decisions must not be reopened.",
+          files: [["app/guards.py", "../app/guards.py"]]
+        },
+        focus: {
+          kind: "Deterministic pacing",
+          title: "Focus and budget",
+          role: "Chooses the next missing request type and caps follow-up demand.",
+          input: "answer signals, criteria, used focuses, pool",
+          output: "focus instruction, template and Allowance",
+          watch: "Zero phase caps are hard; clarification has a separate liveness limit.",
+          files: [["app/focus.py", "../app/focus.py"], ["app/budget.py", "../app/budget.py"]]
+        },
+        provider: {
+          kind: "Model boundary",
+          title: "LM Studio provider",
+          role: "One async port for structured completions, enum posteriors, model identity and health.",
+          input: "system/user prompts, schema, model alias",
+          output: "Completion metrics or ProviderError",
+          watch: "127.0.0.1 avoids the measured localhost IPv6 stall.",
+          files: [["app/provider.py", "../app/provider.py"]]
+        },
+        session: {
+          kind: "Durable state",
+          title: "Session and plan",
+          role: "Validates executable plan fields and persists session, transcript and decisions.",
+          input: "plan and SessionState",
+          output: "flattened questions, JSON and JSONL",
+          watch: "Current snapshots are direct rewrites, not atomic event projections.",
+          files: [["app/session.py", "../app/session.py"], ["interview plan", "../config/interview_swe_general.json"]]
+        },
+        observe: {
+          kind: "Model-mediated evidence",
+          title: "Observation extraction",
+          role: "Quotes STAR or design parts, grounds them and caches by input/contract fingerprint.",
+          input: "question, answers, observation shape",
+          output: "Observation with grounded quotes and text facts",
+          watch: "Grounding proves the words were said, not that they satisfy a qualitative judgement.",
+          files: [["app/observe.py", "../app/observe.py"], ["app/result_check.py", "../app/result_check.py"]]
+        },
+        score: {
+          kind: "Deterministic assessment",
+          title: "Scoring arithmetic",
+          role: "Maps declared criteria to observation fields and aggregates per-criterion rates.",
+          input: "observations and question-to-criteria map",
+          output: "QuestionScore and Report",
+          watch: "No overall grade; design remains unscored.",
+          files: [["app/score.py", "../app/score.py"]]
+        },
+        report: {
+          kind: "Candidate feedback",
+          title: "Report renderer",
+          role: "Turns criterion arithmetic and evidence into actionable plain-text coaching.",
+          input: "scores, observations and semantic close reasons",
+          output: "weak habits, strengths, full arithmetic and caveats",
+          watch: "Candidate words are checkable; model selection of evidence remains a reading.",
+          files: [["app/report.py", "../app/report.py"]]
+        },
+        tools: {
+          kind: "Evaluation surface",
+          title: "Harnesses and renderers",
+          role: "Drive live, scripted and replay sessions; render transcripts and reports; preserve experiments.",
+          input: "plans, fixtures or saved sessions",
+          output: "traces, comparisons and human-readable pages",
+          watch: "Script drift can mimic a runner failure; choose the harness deliberately.",
+          files: [["tools/README.md", "../tools/README.md"], ["live_candidate.py", "../tools/live_candidate.py"]]
+        }
+      };
+
+      const scenarios = {
+        answer: {
+          title: "Partial candidate answer",
+          outcome: "Python selects a missing focus, the model words a proposal, guards validate it, and budget/evidence rules decide whether the question remains open.",
+          calls: "1–2", action: "probe", budget: "1 follow-up", owner: "Runner",
+          steps: [
+            ["Settle", "Fold the previous background observation into STAR evidence.", "python"],
+            ["Classify", "Confirm this is an answer, not a pending control reply or candidate question.", "python"],
+            ["Focus", "Choose an unused missing evidence/request type.", "python"],
+            ["Propose", "Request one strict six-action JSON decision.", "model"],
+            ["Guard", "Ground action and sanitise the proposed sentence.", "python"],
+            ["Bound", "Apply retry, evidence stop and follow-up allowance.", "python"],
+            ["Commit", "Dispatch action, append decision and checkpoint state.", "storage"],
+            ["Overlap", "Start per-answer extraction while the candidate thinks.", "model"]
+          ]
+        },
+        clarify: {
+          title: "Clarification request",
+          outcome: "Clarification language upgrades a non-closing model proposal. It does not spend the probe budget, but repeated clarifications enter a bounded skip-offer state.",
+          calls: "1", action: "clarify", budget: "0 follow-ups", owner: "Runner",
+          steps: [
+            ["Settle", "Finish any previous observation task.", "python"],
+            ["Classify", "Detect a request to explain or choose between meanings.", "python"],
+            ["Propose", "Model proposal is still collected on a normal phase turn.", "model"],
+            ["Upgrade", "Force clarify unless stop or skip already owns the turn.", "python"],
+            ["Phrase", "Use the either/or line or a safe explanation fallback.", "python"],
+            ["Limit", "Count real clarifications; offer a consensual exit when exhausted.", "python"],
+            ["Commit", "Persist without charging follow-up allowance.", "storage"]
+          ]
+        },
+        question: {
+          title: "Candidate asks about the role",
+          outcome: "Direction routing runs before focus, extraction and budget. A trailing answer prefix may be kept; the hiring-context question is stored separately and deferred.",
+          calls: "0", action: "clarify/defer", budget: "0 follow-ups", owner: "Direction handler",
+          steps: [
+            ["Settle", "Finish any previous observation task.", "python"],
+            ["Scope", "Locate the question sentence and hiring-context language.", "python"],
+            ["Separate", "Keep a sufficiently long answer prefix as evidence.", "python"],
+            ["Defer", "Store the candidate question outside answers.", "python"],
+            ["Commit", "Speak the fixed defer line and persist the turn.", "storage"]
+          ]
+        },
+        skip: {
+          title: "Candidate refuses this question",
+          outcome: "Candidate-grounded refusal outranks a non-terminal model proposal. A surviving skip closes only the current question with a semantic refusal/consent reason.",
+          calls: "1", action: "skip", budget: "0 follow-ups", owner: "Guards",
+          steps: [
+            ["Settle", "Finish any previous observation task.", "python"],
+            ["Propose", "Model returns its advisory action.", "model"],
+            ["Ground", "Cannot-answer is checked before refusal.", "python"],
+            ["Upgrade", "Eligible actions become skip on explicit refusal.", "python"],
+            ["Silence", "Discard model closing speech and use handler acknowledgement.", "python"],
+            ["Close", "Record refused or skip-consented reason and advance.", "storage"]
+          ]
+        },
+        stop: {
+          title: "Candidate asks to stop",
+          outcome: "A grounded stop starts a runner-owned confirmation if the model missed it. Ambiguity narrows once; only a confirmed stop ends the whole session.",
+          calls: "0–1", action: "confirm → end", budget: "0 follow-ups", owner: "Runner control state",
+          steps: [
+            ["Detect", "Read clause-aware stop intent from candidate words.", "python"],
+            ["Confirm", "Ask stop versus skip/carry-on without inventing consent.", "python"],
+            ["Resolve", "Parse stop, skip, continue or unclear without a model.", "python"],
+            ["Narrow", "An unclear three-way reply gets one yes/no stop question.", "python"],
+            ["Commit", "Confirmed stop sets ended_early and records the close reason.", "storage"]
+          ]
+        }
+      };
+
+      const phases = {
+        warmup: ["Open naturally without scoring small talk.", "fixed_sequence", "No", "STAR, no adaptive stop", "2"],
+        behavioural: ["Build evidence-rich stories about real work.", "adaptive_discussion", "Yes", "STAR + adaptive stop", "4"],
+        technical: ["Test technical experience through concrete examples.", "adaptive_discussion", "Yes", "STAR + adaptive stop", "4"],
+        design: ["Describe reasoning about one hypothetical system.", "long_turn", "No", "Design quotes + one gap probe", "1"],
+        collaboration: ["Explore feedback and operational collaboration.", "adaptive_discussion", "Yes", "STAR + adaptive stop", "2"],
+        closing: ["Collect candidate questions without pretending to represent an employer.", "user_questions", "No", "None; deterministic handler", "1"]
+      };
+
+      const channels = {
+        live: [
+          ["Spoken", "safe interviewer sentence"], ["live_view", "say, question, of, next, finished"], ["CLI", "prints candidate-safe fields"], ["Candidate", "sees no judgement"], ["Next input", "one utterance"]
+        ],
+        durable: [
+          ["Utterance", "verbatim input"], ["Decision", "effective action + guards"], ["JSONL", "append diagnostic event"], ["Snapshots", "session + transcript"], ["Provenance", "code, contract, model"]
+        ],
+        report: [
+          ["Answers", "answer-bearing question state"], ["Observe", "grounded quotes + regex facts"], ["Score", "criterion booleans"], ["Aggregate", "weak and strong rates"], ["Report", "evidence-led coaching"]
+        ]
+      };
+
+      const byId = id => document.getElementById(id);
+
+      function selectComponent(id) {
+        const item = components[id];
+        if (!item) return false;
+        document.querySelectorAll("[data-component]").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.component === id));
+        });
+        byId("component-kind").textContent = item.kind;
+        byId("component-title").textContent = item.title;
+        byId("component-role").textContent = item.role;
+        byId("component-input").textContent = item.input;
+        byId("component-output").textContent = item.output;
+        byId("component-watch").textContent = item.watch;
+        const files = byId("component-files");
+        files.replaceChildren(...item.files.map(([label, href]) => {
+          const link = document.createElement("a");
+          link.className = "chip";
+          link.href = href;
+          link.textContent = label;
+          return link;
+        }));
+        return true;
+      }
+
+      function selectScenario(id) {
+        const item = scenarios[id];
+        if (!item) return false;
+        document.querySelectorAll("[data-scenario]").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.scenario === id));
+        });
+        byId("scenario-title").textContent = item.title;
+        byId("scenario-outcome").textContent = item.outcome;
+        byId("scenario-calls").textContent = item.calls;
+        byId("scenario-action").textContent = item.action;
+        byId("scenario-budget").textContent = item.budget;
+        byId("scenario-owner").textContent = item.owner;
+        const list = byId("scenario-path");
+        list.replaceChildren(...item.steps.map(([name, text, owner], index) => {
+          const li = document.createElement("li");
+          li.className = "path-step";
+          li.dataset.owner = owner;
+          const number = document.createElement("span");
+          number.className = "number";
+          number.textContent = String(index + 1);
+          const copy = document.createElement("span");
+          const strong = document.createElement("strong");
+          strong.textContent = name;
+          const small = document.createElement("small");
+          small.textContent = text;
+          copy.append(strong, document.createElement("br"), small);
+          const tag = document.createElement("small");
+          tag.textContent = owner;
+          li.append(number, copy, tag);
+          return li;
+        }));
+        return true;
+      }
+
+      function selectPhase(id) {
+        const item = phases[id];
+        if (!item) return false;
+        document.querySelectorAll("[data-phase]").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.phase === id));
+        });
+        ["phase-purpose", "phase-type", "phase-scored", "phase-shape", "phase-count"].forEach((target, index) => {
+          byId(target).textContent = item[index];
+        });
+        return true;
+      }
+
+      function selectChannel(id) {
+        const item = channels[id];
+        if (!item) return false;
+        document.querySelectorAll("[data-channel]").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.channel === id));
+        });
+        const pipeline = byId("channel-pipeline");
+        pipeline.replaceChildren(...item.map(([name, text]) => {
+          const node = document.createElement("div");
+          node.className = "pipe-node";
+          const strong = document.createElement("b");
+          strong.textContent = name;
+          const small = document.createElement("small");
+          small.textContent = text;
+          node.append(strong, small);
+          return node;
+        }));
+        return true;
+      }
+
+      function setTheme(theme) {
+        const dark = theme === "dark";
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        const button = byId("theme-toggle");
+        button.setAttribute("aria-pressed", String(dark));
+        button.textContent = dark ? "Light theme" : "Dark theme";
+        return document.documentElement.dataset.theme;
+      }
+
+      document.querySelectorAll("[data-component]").forEach(button => button.addEventListener("click", () => selectComponent(button.dataset.component)));
+      document.querySelectorAll("[data-scenario]").forEach(button => button.addEventListener("click", () => selectScenario(button.dataset.scenario)));
+      document.querySelectorAll("[data-phase]").forEach(button => button.addEventListener("click", () => selectPhase(button.dataset.phase)));
+      document.querySelectorAll("[data-channel]").forEach(button => button.addEventListener("click", () => selectChannel(button.dataset.channel)));
+      byId("theme-toggle").addEventListener("click", () => setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+
+      selectComponent("runner");
+      selectScenario("answer");
+      selectPhase("warmup");
+      selectChannel("live");
+
+      window.MockingbirdArchitecture = Object.freeze({
+        selectComponent,
+        selectScenario,
+        selectPhase,
+        selectChannel,
+        setTheme
+      });
+    })();
+  </script>
+</body>
+</html>
