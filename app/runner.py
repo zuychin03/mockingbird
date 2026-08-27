@@ -94,10 +94,10 @@ CLARIFY_EITHER = "Your choice -- take whichever you can say most about, and tell
 STAR_PACED_TYPES = frozenset({"adaptive_discussion"})
 
 
-# Llama's own questions are normally concise, but the junior live control still produced a
-# 22-word compound request. Twenty words keeps useful model-written probes while retaining a
-# deterministic backstop. See MODEL_EXPERIMENTING_LOG.md for the paired cap and live evidence.
-MAX_SAY_WORDS = 20
+# Llama's retained questions are normally concise. Twenty-five words leaves room for a
+# detailed single-focus probe, while the independent compound and focus guards still reject
+# unsuitable lines and the shortening retry remains a deterministic backstop.
+MAX_SAY_WORDS = 25
 
 
 def _raw_say(raw: dict | None) -> str | None:
