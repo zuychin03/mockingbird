@@ -106,6 +106,16 @@ UNNAMED_FOCUS_MIN_WORDS = 10
 # Llama's retained questions are normally concise. Twenty-five words leaves room for a
 # detailed single-focus probe, while the independent compound and focus guards still reject
 # unsuitable lines and the shortening retry remains a deterministic backstop.
+#
+# This is DELIBERATELY looser than the "at most 15 words" the prompt asks for, and the two
+# numbers must not be reconciled. The prompt is what shapes the line -- the model aims at 15
+# and lands at a median of 11 and a p90 of 16 over 437 stored questions -- while this only
+# catches outliers, and has never fired in production, where the longest line ever spoken is
+# 22 words. Raising the PROMPT to 25 was measured on 110 stored decisions: median moved one
+# word, p90 went 18 to 22, and the compound rate DOUBLED from 5.2% to 10.3%, because the model
+# spends the extra budget joining a second question with "and" rather than being more
+# specific. Lowering this cap to 15 instead would reject the healthy 16-to-22-word band and
+# send it to repair. Instruct tight, backstop loose.
 MAX_SAY_WORDS = 25
 
 
