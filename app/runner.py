@@ -23,7 +23,8 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from . import budget, contract, direction, focus, guards, intent, result_check, session
+from . import (budget, contract, direction, embed, focus, guards, intent,
+               result_check, session)
 from .history import History
 from .provider import Completion, Provider
 
@@ -108,6 +109,11 @@ UNNAMED_FOCUS_MIN_WORDS = 10
 MAX_SAY_WORDS = 25
 
 
+# Distinguishes "caller said nothing" from "caller explicitly disabled semantic comparison",
+# which None has to mean at the call site for `rewords` to fall back.
+_DEFAULT = object()
+
+
 def _raw_say(raw: dict | None) -> str | None:
     """Return the model's speech field without applying guard normalisation."""
     say = raw.get("say") if isinstance(raw, dict) else None
@@ -183,7 +189,8 @@ class Runner:
     def __init__(self, provider: Provider, plan: dict, state: session.SessionState,
                  pool: int | None = None, pace: bool = True,
                  observe_fn: Callable[[str, str, str], Awaitable] | None = None,
-                 max_say_words: int | None = MAX_SAY_WORDS):
+                 max_say_words: int | None = MAX_SAY_WORDS,
+                 similarity: Callable[[str, str], float | None] | None = _DEFAULT):
         self.max_say_words = max_say_words
         # `observe_fn` turns one answer into an Observation. Injected rather than imported so
         # the runner keeps no dependency on the Stage 2 extractor, and so a test can drive the
@@ -213,6 +220,10 @@ class Runner:
         # bounds the closing phase; never reaches the extractor or the rubric.
         self.questions_asked: list[str] = []
         self.said_this_question: list[str] = []
+        # Semantic probe comparison. Returns None whenever the optional embedding model is
+        # absent, and `rewords` falls back to word overlap -- an interview must not depend on
+        # it. Injectable so a test can pin the comparison instead of reaching for a server.
+        self.similarity = embed.similarity if similarity is _DEFAULT else similarity
         # The previous probe on this question and the focus it was charged, for `rewords`.
         self.last_probe: tuple[str, tuple[str, ...]] | None = None
         # Survives a question boundary, unlike `said_this_question`. All four verbatim
@@ -797,7 +808,8 @@ class Runner:
         # unnamed-kept path charges the requested focus for a line that classifies to nothing,
         # so classifying the text again would miss exactly the lines this catches.
         if (g.act in ("probe", "reask") and g.say and self.last_probe
-                and focus.rewords(self.last_probe[0], self.last_probe[1], g.say, asked)):
+                and focus.rewords(self.last_probe[0], self.last_probe[1], g.say, asked,
+                                  self.similarity)):
             g.act, g.say, asked = "advance", "", []
             g.applied.append("redundant-probe->advance")
         elif g.act in ("probe", "reask") and g.say and asked:

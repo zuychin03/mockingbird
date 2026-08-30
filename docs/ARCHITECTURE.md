@@ -161,6 +161,7 @@ The provider port uses two endpoints because the API surfaces are complementary:
 | [`app/session.py`](../app/session.py) | Plan validation, state types and local persistence | Plan and `SessionState` | JSON/JSONL session files |
 | [`app/provenance.py`](../app/provenance.py) | Best-effort reproducibility snapshot | Git, Python, model metadata | Revision, contract and environment fields |
 | [`app/observe.py`](../app/observe.py) | Grounded quote extraction and observation cache | Completed answers and shape | `Observation` objects |
+| [`app/embed.py`](../app/embed.py) | OPTIONAL local sentence similarity for probe de-duplication; returns None when the embedding model is absent | Two probe texts | Cosine similarity or None |
 | [`app/score.py`](../app/score.py) | Deterministic criterion arithmetic | Observations and criteria map | `QuestionScore` and `Report` |
 | [`app/report.py`](../app/report.py) | Evidence-led candidate feedback | Scores, observations, close reasons | Plain-text report |
 | [`app/depth_signals.py`](../app/depth_signals.py) | Regex facts used by focus and observations | Answer text | Depth-signal booleans |
