@@ -28,10 +28,11 @@ _ABBREV = re.compile(r"(?:e\.g\.|i\.e\.|etc\.|vs\.|approx\.|no\.|fig\.|cf\.|"
                      r"inc\.|ltd\.|dept\.|\b[A-Z]\.)", re.I)
 # A fresh interrogative after explicit clause punctuation is a second request even when the
 # model puts both under one final question mark. Requiring both the punctuation and the new
-# question word keeps ordinary noun coordination ("metrics or feedback") and either/or
-# clarification intact.
+# question word, or the captured auxiliary-led "did you" form, keeps ordinary noun
+# coordination ("metrics or feedback") and either/or clarification intact.
 _COORDINATED_REQUEST = re.compile(
-    r"[,;]\s*(?:and|or)\s+(?=(?:what|why|how|when|who|which|where)\b)", re.I)
+    r"[,;]\s*(?:and|or)\s+(?=(?:(?:what|why|how|when|who|which|where)\b|did you\b))",
+    re.I)
 _LABEL = re.compile(r"^\s*([A-Z][A-Z0-9 _/-]{2,})\s*[:\-—]")
 _ALLOW_CAPS = {"API", "SQL", "HTTP", "JSON", "CI", "CD", "AWS", "GCP", "TDD", "SRE", "CPU",
                "GPU", "RAM", "ORM", "REST", "TLS", "DNS", "URL", "UI", "UX", "QA", "PR"}

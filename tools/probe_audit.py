@@ -15,6 +15,8 @@ from app import focus  # noqa: E402
 def _disposition(row: dict, raw: str) -> str:
     guards = row.get("guards") or []
     spoken = row.get("say") or ""
+    if (row.get("speech_attempt") or {}).get("accepted"):
+        return "repaired"
     if not raw or "?" not in raw:
         return "no_raw_question"
     if any(guard in guards for guard in (
@@ -31,6 +33,7 @@ def audit(rows: list[dict]) -> dict[str, object]:
     """Return disposition and shape metrics without judging interview quality."""
     counts = {
         "retained": 0,
+        "repaired": 0,
         "substituted": 0,
         "action_conflicts": 0,
         "other_changed": 0,
@@ -76,6 +79,7 @@ def audit(rows: list[dict]) -> dict[str, object]:
             "disposition": disposition,
             "say_raw": raw_value,
             "say": row.get("say") or "",
+            "speech_attempt": row.get("speech_attempt"),
             "guards": row.get("guards") or [],
             "focus_asked": wanted,
             "focus_got": row.get("focus_got") or [],
@@ -89,6 +93,7 @@ def audit(rows: list[dict]) -> dict[str, object]:
         "raw_question_total": raw_question_total,
         **counts,
         "retention_rate": round(counts["retained"] / denominator, 4),
+        "repair_rate": round(counts["repaired"] / denominator, 4),
         "template_rate": round(counts["substituted"] / denominator, 4),
         "multi_question_raw": multi_question_raw,
         "over_15_words_raw": over_15_words_raw,
@@ -126,7 +131,7 @@ def main(argv: list[str] | None = None) -> dict[str, object]:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(
-        "raw questions={raw_question_total} retained={retained} "
+        "raw questions={raw_question_total} retained={retained} repaired={repaired} "
         "substituted={substituted} conflicts={action_conflicts} "
         "retention={retention_rate:.1%} templates={template_rate:.1%}".format(**result))
     return result

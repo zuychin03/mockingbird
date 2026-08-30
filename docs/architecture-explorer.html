@@ -406,13 +406,13 @@
   <header class="hero">
     <div class="shell hero-grid">
       <div>
-        <p class="eyebrow">Current-state architecture · 26/08/2026</p>
+        <p class="eyebrow">Current-state architecture · 29/08/2026</p>
         <h1>Mockingbird, from answer to evidence.</h1>
-        <p class="lede">A local interview coach where the language model writes and reads bounded text, while Python owns consent, pacing, persistence and every score.</p>
+        <p class="lede">A Llama-only local interview coach where the model writes and reads bounded text, while Python owns consent, pacing, speech acceptance, persistence and every score.</p>
       </div>
       <dl class="snapshot" aria-label="Evidence snapshot">
-        <dt>Branch</dt><dd>exaone-adaptation</dd>
-        <dt>Commit</dt><dd>5e21330</dd>
+        <dt>Branch</dt><dd>stage3-natural-probing</dd>
+        <dt>Base + state</dt><dd>788ac3a + working changes</dd>
         <dt>Runtime</dt><dd>Python 3.12 · standard library</dd>
         <dt>Model host</dt><dd>LM Studio · 127.0.0.1:1234</dd>
       </dl>
@@ -421,7 +421,7 @@
       <div class="metric"><strong>14</strong><span>scripted questions</span></div>
       <div class="metric"><strong>6</strong><span>interview phases</span></div>
       <div class="metric"><strong>6</strong><span>model action choices</span></div>
-      <div class="metric"><strong>262</strong><span>collected tests</span></div>
+      <div class="metric"><strong>319</strong><span>passing tests</span></div>
     </div>
   </header>
 
@@ -442,7 +442,7 @@
       <div class="shell">
         <span class="kicker">01 · Authority boundary</span>
         <h2>The model has a narrow job on purpose.</h2>
-        <p class="section-intro">Mockingbird is not an unconstrained interviewer agent. The model may propose one of six moves and phrase one short sentence. Python decides whether that move is grounded, affordable and safe to commit.</p>
+        <p class="section-intro">Mockingbird is not an unconstrained interviewer agent. Llama may propose one of six moves and phrase one short sentence. Python decides whether that move is grounded, affordable, focused and safe to commit.</p>
 
         <div class="authority-grid">
           <article class="authority-panel model">
@@ -450,6 +450,7 @@
             <ul>
               <li>Proposes <code>act</code>, <code>say</code>, <code>ok</code> and <code>ask</code>.</li>
               <li>Words bounded conversational follow-ups.</li>
+              <li>On repair turns, may return only replacement <code>say</code>.</li>
               <li>Quotes concrete parts of completed answers.</li>
               <li>Summarises already completed questions.</li>
             </ul>
@@ -506,7 +507,7 @@
           <div class="component-board" aria-label="Runtime components">
             <button class="component-button" data-component="cli" data-kind="python" type="button" aria-pressed="false"><b>CLI</b><small>preflight and loop</small></button>
             <button class="component-button" data-component="runner" data-kind="python" type="button" aria-pressed="true"><b>Runner</b><small>effective policy</small></button>
-            <button class="component-button" data-component="contract" data-kind="model" type="button" aria-pressed="false"><b>Contract</b><small>six-action schema</small></button>
+            <button class="component-button" data-component="contract" data-kind="model" type="button" aria-pressed="false"><b>Contract</b><small>turn + speech schemas</small></button>
             <button class="component-button" data-component="intent" data-kind="python" type="button" aria-pressed="false"><b>Intent + direction</b><small>utterance role</small></button>
             <button class="component-button" data-component="guards" data-kind="python" type="button" aria-pressed="false"><b>Guards</b><small>ground and sanitise</small></button>
             <button class="component-button" data-component="focus" data-kind="python" type="button" aria-pressed="false"><b>Focus + budget</b><small>what and how much</small></button>
@@ -536,7 +537,7 @@
       <div class="shell">
         <span class="kicker">03 · Turn-path lab</span>
         <h2>Change the utterance; watch ownership move.</h2>
-        <p class="section-intro">The same entry point takes different paths. Control replies and closing questions avoid a model call; an ordinary answer uses the model as one advisory step inside a larger deterministic transition.</p>
+        <p class="section-intro">The same entry point takes different paths. Pending control replies and closing questions avoid a model call; an ordinary answer uses the model as one advisory step inside a larger deterministic transition.</p>
         <div class="control-row" role="group" aria-label="Candidate scenario">
           <button class="control-button" type="button" data-scenario="answer" aria-pressed="true">Candidate answer</button>
           <button class="control-button" type="button" data-scenario="clarify" aria-pressed="false">Clarification</button>
@@ -550,7 +551,7 @@
           </div>
           <aside class="outcome-panel" aria-live="polite">
             <h3 id="scenario-title">Partial candidate answer</h3>
-            <p id="scenario-outcome">Python selects a missing focus, the model words a proposal, guards validate it, and budget/evidence rules decide whether the question remains open.</p>
+            <p id="scenario-outcome">Python selects a missing focus, Llama proposes a turn, policy fixes action and pacing, then speech is retained, repaired or replaced before commit.</p>
             <div class="outcome-grid">
               <div><span>Model calls</span><strong id="scenario-calls">1–2</strong></div>
               <div><span>Likely action</span><strong id="scenario-action">probe</strong></div>
@@ -603,7 +604,7 @@
         <div class="file-grid" aria-label="Session file layout" style="margin-top:2rem">
           <article class="file-card"><h3><code>session.json</code></h3><p>Plan snapshot, provenance, status, closed-question summaries and semantic close reasons.</p></article>
           <article class="file-card"><h3><code>transcript.json</code></h3><p>Every committed utterance, effective action and interviewer line in turn order.</p></article>
-          <article class="file-card"><h3><code>decisions.jsonl</code></h3><p>Append-only effective decision, guards, focus, budgets, telemetry, prompt and timestamp.</p></article>
+          <article class="file-card"><h3><code>decisions.jsonl</code></h3><p>Append-only effective decision, raw/final speech, repair attempt, guards, focus, budgets, telemetry, prompt and timestamp.</p></article>
         </div>
       </div>
     </section>
@@ -620,6 +621,7 @@
               <li>Grounded quotes before deterministic arithmetic.</li>
               <li>Candidate-safe live projection.</li>
               <li>Local provider port and reproducibility metadata.</li>
+              <li>Action-locked, validated speech repair before templates.</li>
               <li>Explicit runner instead of a general graph framework.</li>
             </ul>
           </article>
@@ -635,12 +637,15 @@
           </article>
         </div>
 
+        <p class="callout"><strong>Latest evidence.</strong> A 14-question junior probe-stress run produced 31 follow-ups: 20 byte-for-byte model questions, three safe compound-request trims, seven templates and one deterministic design-gap probe, with no generic, compound or over-cap spoken question. After correcting a copy-inducing repair prompt, a targeted replay accepted the previously failing measurement probe in 602.6 ms without changing its action. A fresh complete junior/strong pair is still required for the final aggregate repair rate.</p>
+
         <div class="risk-stack">
-          <details class="risk"><summary><span class="severity">High</span>Replay cannot reconstruct every model attempt and volatile runner field</summary><p>The log stores the effective turn and a rendered prompt, but two-call turns do not retain complete immutable envelopes for both attempts, and no restore path replays events into a runner.</p></details>
+          <details class="risk"><summary><span class="severity">High</span>Replay cannot reconstruct every model attempt and volatile runner field</summary><p>Speech-only repairs now have structured diagnostics, but full-turn regeneration and shortening still lack complete immutable envelopes, and no restore path replays events into a runner.</p></details>
           <details class="risk"><summary><span class="severity">High</span>Snapshots are not atomic or command-serialised</summary><p>JSON is rewritten directly and commands have no sequence, idempotency key or expected state version. A future UI or voice transport would expose this mutable boundary.</p></details>
           <details class="risk"><summary><span class="severity">Medium-high</span>Policy is readable but coupled to statement order</summary><p><code>Runner.submit()</code> owns control states, routing, model retries, budgets, evidence pacing and dispatch. Pin precedence pairs as tests before extracting a pure reducer.</p></details>
           <details class="risk"><summary><span class="severity">Medium</span>Normal-turn provider failures have limited recovery</summary><p>Background observation fails open, but a decision or history call can still exit the CLI. Preserve a recoverable state before adding remote or voice interfaces.</p></details>
           <details class="risk"><summary><span class="severity">Medium</span>Design feedback is descriptive, but still model-mediated</summary><p>Keeping design unscored is correct. Quote presence can still be misread, so do not promote those fields without independent evaluation.</p></details>
+          <details class="risk"><summary><span class="severity">Low</span>Final aggregate repair evidence is pending</summary><p>The final prompt and classifier pass the exact failing replay, but the latest full interview predates those corrections. Run a fresh paired control before claiming a final substitution rate.</p></details>
         </div>
 
         <h3 style="margin-top:2.4rem">Safe extension order</h3>
@@ -690,11 +695,11 @@
         },
         contract: {
           kind: "Model contract",
-          title: "Turn contract",
-          role: "Defines the six advisory actions, strict JSON schema and measured system prompt.",
+          title: "Turn and speech contracts",
+          role: "Defines the six-action advisory turn and a separate say-only repair boundary.",
           input: "question, answer, completed-question summary",
-          output: "structured model request",
-          watch: "Changing fields or prompt language invalidates measured comparisons.",
+          output: "structured turn or action-locked replacement speech",
+          watch: "Both prompts and schemas contribute to the persisted contract hash.",
           files: [["app/contract.py", "../app/contract.py"]]
         },
         intent: {
@@ -718,17 +723,17 @@
         focus: {
           kind: "Deterministic pacing",
           title: "Focus and budget",
-          role: "Chooses the next missing request type and caps follow-up demand.",
+          role: "Chooses and validates request type, rotates templates, repairs design tense and caps follow-up demand.",
           input: "answer signals, criteria, used focuses, pool",
-          output: "focus instruction, template and Allowance",
-          watch: "Zero phase caps are hard; clarification has a separate liveness limit.",
+          output: "focus instruction, classification, design-safe template and Allowance",
+          watch: "Spoken questions stay within 25 words; design's displayed cap is hard.",
           files: [["app/focus.py", "../app/focus.py"], ["app/budget.py", "../app/budget.py"]]
         },
         provider: {
           kind: "Model boundary",
           title: "LM Studio provider",
-          role: "One async port for structured completions, enum posteriors, model identity and health.",
-          input: "system/user prompts, schema, model alias",
+          role: "One async port for structured completions, enum posteriors, exact Llama identity and health.",
+          input: "system/user prompts, schema, exact product identifier",
           output: "Completion metrics or ProviderError",
           watch: "127.0.0.1 avoids the measured localhost IPv6 stall.",
           files: [["app/provider.py", "../app/provider.py"]]
@@ -772,18 +777,18 @@
         tools: {
           kind: "Evaluation surface",
           title: "Harnesses and renderers",
-          role: "Drive live, scripted and replay sessions; render transcripts and reports; preserve experiments.",
+          role: "Drive live, scripted and replay sessions; audit retained, repaired and substituted speech; render evidence.",
           input: "plans, fixtures or saved sessions",
-          output: "traces, comparisons and human-readable pages",
+          output: "traces, probe audits, comparisons and human-readable pages",
           watch: "Script drift can mimic a runner failure; choose the harness deliberately.",
-          files: [["tools/README.md", "../tools/README.md"], ["live_candidate.py", "../tools/live_candidate.py"]]
+          files: [["live_candidate.py", "../tools/live_candidate.py"], ["probe_audit.py", "../tools/probe_audit.py"]]
         }
       };
 
       const scenarios = {
         answer: {
           title: "Partial candidate answer",
-          outcome: "Python selects a missing focus, the model words a proposal, guards validate it, and budget/evidence rules decide whether the question remains open.",
+          outcome: "Python selects a missing focus, Llama proposes a turn, policy fixes action and pacing, then speech is retained, repaired or replaced before commit.",
           calls: "1–2", action: "probe", budget: "1 follow-up", owner: "Runner",
           steps: [
             ["Settle", "Fold the previous background observation into STAR evidence.", "python"],
@@ -791,7 +796,8 @@
             ["Focus", "Choose an unused missing evidence/request type.", "python"],
             ["Propose", "Request one strict six-action JSON decision.", "model"],
             ["Guard", "Ground action and sanitise the proposed sentence.", "python"],
-            ["Bound", "Apply retry, evidence stop and follow-up allowance.", "python"],
+            ["Bound", "Apply action-preserving retry, evidence stop and follow-up allowance.", "python"],
+            ["Repair", "Keep design wording hypothetical; repair empty/off-focus probe speech through the say-only schema or use a reviewed template.", "python"],
             ["Commit", "Dispatch action, append decision and checkpoint state.", "storage"],
             ["Overlap", "Start per-answer extraction while the candidate thinks.", "model"]
           ]
@@ -863,7 +869,7 @@
           ["Spoken", "safe interviewer sentence"], ["live_view", "say, question, of, next, finished"], ["CLI", "prints candidate-safe fields"], ["Candidate", "sees no judgement"], ["Next input", "one utterance"]
         ],
         durable: [
-          ["Utterance", "verbatim input"], ["Decision", "effective action + guards"], ["JSONL", "append diagnostic event"], ["Snapshots", "session + transcript"], ["Provenance", "code, contract, model"]
+          ["Utterance", "verbatim input"], ["Decision", "effective action + guards"], ["Speech", "raw + final + repair attempt"], ["JSONL", "append diagnostic event"], ["Snapshots", "session + transcript"], ["Provenance", "code, both contracts, model"]
         ],
         report: [
           ["Answers", "answer-bearing question state"], ["Observe", "grounded quotes + regex facts"], ["Score", "criterion booleans"], ["Aggregate", "weak and strong rates"], ["Report", "evidence-led coaching"]

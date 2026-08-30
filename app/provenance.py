@@ -41,9 +41,13 @@ def code_revision() -> str:
 
 
 def contract_hash() -> str:
-    """The prompt and schema the turn was decided against. Changing either invalidates a
-    comparison across sessions, and neither is visible in the transcript."""
-    blob = contract.SYSTEM + json.dumps(contract.TURN_SCHEMA, sort_keys=True)
+    """Every prompt and schema that can contribute model-written spoken output."""
+    blob = "".join((
+        contract.SYSTEM,
+        json.dumps(contract.TURN_SCHEMA, sort_keys=True),
+        contract.SPEECH_SYSTEM,
+        json.dumps(contract.SPEECH_SCHEMA, sort_keys=True),
+    ))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 

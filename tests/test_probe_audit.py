@@ -60,6 +60,35 @@ def test_probe_audit_reports_all_dispositions_and_shape_metrics():
     assert result["template_rate"] == 0.0
 
 
+def test_probe_audit_distinguishes_an_accepted_speech_repair_from_a_template():
+    rows = [{
+        "turn": 4,
+        "act": "probe",
+        "say_raw": "What happened afterwards?",
+        "say_model": "What happened afterwards?",
+        "say": "Which constraints shaped the incident response?",
+        "guards": ["off-focus->repaired"],
+        "focus_asked": "CONTEXT",
+        "focus_got": ["CONTEXT"],
+        "speech_attempt": {
+            "trigger": "off_focus",
+            "say_raw": "Which constraints shaped the incident response?",
+            "say": "Which constraints shaped the incident response?",
+            "focus": ["CONTEXT"],
+            "accepted": True,
+            "rejection": None,
+            "guards": [],
+        },
+    }]
+
+    result = audit(rows)
+
+    assert result["repaired"] == 1
+    assert result["substituted"] == 0
+    assert result["turns"][0]["disposition"] == "repaired"
+    assert result["turns"][0]["speech_attempt"]["accepted"] is True
+
+
 def test_cli_rejects_old_model_backed_rows_without_raw_provenance(tmp_path, monkeypatch):
     session_id = "old-session"
     session_dir = tmp_path / "data" / "sessions" / session_id
