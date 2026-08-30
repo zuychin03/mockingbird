@@ -18,12 +18,24 @@ three it is good at, and it answers by QUOTING rather than by deciding:
     action      the sentence where they say what THEY did
     result      the sentence where they say how it turned out
 
+One sentence may serve more than one field, and saying so is worth 43 points of `situation`
+recall (19.8% to 65.3% over 101 first-answers). Candidates set the scene and say what they did
+in a single sentence constantly -- "I added a status history table to a live support system
+that previously stored only the current status" -- and while the fields were exclusive,
+`action` took those and `situation` came back empty. Live that starved the `seen` set, so the
+selector kept asking for context the candidate had already given (log: the repeated scale
+question). Rewording `situation` itself was measured and did nothing; exclusivity was the
+whole defect.
+
 Each quote is then checked against the answer text and dropped if it is not there. Section
 7.33's depth-probe contract failed on its own terms, but its verbatim-quote guard produced
 **zero hallucinations**, and that is the part worth keeping.
 
-This runs OFFLINE, after the session ends. It is not on the live path, so its latency does not
-count against NFR-1, and nothing it produces may reach the candidate mid-interview (12.6.1).
+The report path runs this after the session ends. 1c.5's pacing also runs it DURING the
+session, one answer at a time, so the runner can tell whether an answer added a new part --
+`Runner._settle` awaits it off the decision path and its result reaches the focus selector as
+`seen`. Nothing it produces may reach the candidate mid-interview (12.6.1); only the decision
+of what to ask next depends on it.
 """
 
 from __future__ import annotations
@@ -51,7 +63,9 @@ if that part is not there:
 
 Rules:
 - Copy the text exactly as they said it. Do not paraphrase, tidy or shorten.
-- One sentence per field. If a part is genuinely absent, return an empty string for it.
+- One sentence per field. The SAME sentence may supply more than one field -- if they set the
+  scene and say what they did in one sentence, quote it for both.
+- If a part is genuinely absent, return an empty string for it.
 - An empty string is a correct answer. Do not invent a quote to fill a field."""
 
 SCHEMA = {
