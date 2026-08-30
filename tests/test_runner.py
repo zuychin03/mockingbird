@@ -12,6 +12,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import budget, contract, focus, guards, intent, observe, result_check, session  # noqa: E402
@@ -25,15 +27,27 @@ class ScriptedProvider:
     def __init__(self, decisions):
         self.queue = list(decisions)
         self.prompts = []
+        self.systems = []
+        self.schemas = []
 
     async def complete(self, system, user, schema=None, max_tokens=400,
                        enum_field=None, enum_values=None):
         self.prompts.append(user)
+        self.systems.append(system)
+        self.schemas.append(schema)
         if schema is None:
             return Completion(text="Covered one question so far.")
-        d = self.queue.pop(0)
+        # Most historical runner tests script only full turn decisions. A speech repair is
+        # an implementation detail for those cases: return a rejected empty repair without
+        # consuming the next turn. Tests of the repair itself opt in with `speech()`.
+        if schema == contract.SPEECH_SCHEMA and (
+                not self.queue or not self.queue[0].get("_speech_response")):
+            d = {"say": ""}
+        else:
+            d = dict(self.queue.pop(0))
+            d.pop("_speech_response", None)
         return Completion(text=json.dumps(d), prompt_tokens=100, decode_tokens=30,
-                          posterior={d["act"]: 0.9})
+                          posterior={d["act"]: 0.9} if "act" in d else {})
 
 
 PLAN = {
@@ -57,6 +71,10 @@ def run(coro):
 
 def d(act, say="line", ok=True, ask=""):
     return {"act": act, "say": say, "ok": ok, "ask": ask}
+
+
+def speech(say, **extra):
+    return {"say": say, "_speech_response": True, **extra}
 
 
 def last_decision(state):
@@ -865,6 +883,100 @@ def test_compound_speech_is_trimmed_without_hiding_raw_provenance_or_adding_a_tu
     assert "compound-request-trimmed" in decision["guards"]
 
 
+def test_auxiliary_led_compound_speech_keeps_only_the_first_request(
+        tmp_path, monkeypatch):
+    _accept_any_focus(monkeypatch)
+    raw_say = ("What was your role in that process, and did you have any input on how "
+               "the feedback was delivered?")
+    r, state = build([d("probe", raw_say, ok=False)], tmp_path)
+    run(r.ask())
+
+    out = run(r.submit("I helped the senior developer with the review."))
+    decision = last_decision(state)
+
+    assert out.spoken.text == "What was your role in that process?"
+    assert decision["say_raw"] == raw_say
+    assert "compound-request-trimmed" in decision["guards"]
+
+
+def test_empty_probe_speech_is_repaired_without_redeciding_action_or_focus(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    invented = "How did you measure the processing delay?"
+    r, state = build([d("probe", "", ok=False),
+                      speech(invented)], tmp_path)
+    run(r.ask())
+
+    out = run(r.submit("It took about twenty minutes."))
+    decision = last_decision(state)
+
+    assert out.act == "probe"
+    assert out.spoken.text == invented
+    assert decision["focus_got"] == ["MEASURE"]
+    assert decision["say_raw"] == ""
+    assert decision["speech_attempt"]["trigger"] == "empty"
+    assert decision["speech_attempt"]["say_raw"] == invented
+    assert decision["speech_attempt"]["accepted"] is True
+    assert decision["speech_attempt"]["rejection"] is None
+    assert decision["model_calls"] == 2
+    assert "empty-say->repaired" in decision["guards"]
+    assert r.provider.schemas[1] == contract.SPEECH_SCHEMA
+
+
+def test_speech_repair_schema_cannot_change_the_locked_action(tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    r, state = build([d("probe", "", ok=False),
+                      speech("How did you measure the delay?", act="advance")], tmp_path)
+    run(r.ask())
+
+    out = run(r.submit("It took about twenty minutes."))
+    decision = last_decision(state)
+
+    assert out.act == "probe"
+    assert out.spoken.text == "How did you measure the delay?"
+    assert decision["focus_got"] == ["MEASURE"]
+    assert decision["model_calls"] == 2
+    assert decision["speech_attempt"]["accepted"] is True
+    assert "empty-say->repaired" in decision["guards"]
+
+
+def test_empty_probe_speech_repair_rejects_the_wrong_focus(tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    r, state = build([d("probe", "", ok=False),
+                      speech("Why did you choose Redis?")], tmp_path)
+    run(r.ask())
+
+    out = run(r.submit("It took about twenty minutes."))
+    decision = last_decision(state)
+
+    assert out.act == "probe"
+    assert out.spoken.text in focus.TEMPLATE["MEASURE"]
+    assert decision["focus_got"] == ["MEASURE"]
+    assert decision["say_raw"] == ""
+    assert decision["model_calls"] == 2
+    assert decision["speech_attempt"]["accepted"] is False
+    assert decision["speech_attempt"]["rejection"] == "off_focus"
+    assert decision["speech_attempt"]["say_raw"] == "Why did you choose Redis?"
+    assert "empty-say->repair-failed" in decision["guards"]
+    assert "empty-say->template" in decision["guards"]
+
+
+def test_empty_probe_speech_repair_logs_an_empty_retry_before_template_fallback(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "STEPS")
+    r, state = build([d("probe", "", ok=False), speech("")], tmp_path)
+    run(r.ask())
+
+    out = run(r.submit("I changed a few things."))
+    decision = last_decision(state)
+
+    assert out.spoken.text in focus.TEMPLATE["STEPS"]
+    assert decision["speech_attempt"]["accepted"] is False
+    assert decision["speech_attempt"]["rejection"] == "empty"
+    assert "empty-say->repair-failed" in decision["guards"]
+    assert "empty-say->template" in decision["guards"]
+
+
 def test_an_accepted_shortening_retry_replaces_the_raw_speech(tmp_path, monkeypatch):
     _accept_any_focus(monkeypatch)
     long_line = "What happened after the service was deployed into production that evening?"
@@ -979,6 +1091,47 @@ def test_relevant_llama_question_forms_map_to_their_actual_focus():
         assert focus.classify(said) == expected, said
 
 
+@pytest.mark.parametrize(("said", "expected"), [
+    ("What made the experience of working with senior engineers so important to you?",
+     {"REASON"}),
+    ("What was the nature of this production incident?", {"CONTEXT"}),
+    ("What kind of data were you adding?", {"CONTEXT"}),
+    ("What specific changes did you suggest they make instead?", {"STEPS"}),
+])
+def test_captured_llama_probe_forms_map_to_their_actual_focus(said, expected):
+    assert focus.classify(said) == expected
+
+
+def test_bounded_llama_forms_do_not_match_nearby_but_different_requests():
+    assert "REASON" not in focus.classify(
+        "What made the feature important to users?")
+    assert "CONTEXT" not in focus.classify(
+        "What kind of data did you measure?")
+
+
+@pytest.mark.parametrize("said", [
+    "How did you determine the optimal frequency for these emails?",
+    "How did you establish the processing time of twenty minutes?",
+    "How did you determine that two seconds was slow?",
+])
+def test_measurement_establishment_questions_are_classified_as_measure(said):
+    assert focus.classify(said) == {"MEASURE"}
+
+
+def test_a_timeframe_question_is_both_measurement_and_duration():
+    """Kept separate from the `==` cases above rather than relaxing them. DURATION gained
+    `timeframe` so its own template, "Over what sort of timeframe?", could classify, and a
+    question about an OPTIMAL TIMEFRAME genuinely asks both how they knew and how long it
+    took. The runner tolerates an extra label; what it must never do is lose MEASURE."""
+    got = focus.classify("How did you know the optimal timeframe for completing the feature?")
+    assert got == {"MEASURE", "DURATION"}
+
+
+def test_non_measurement_determination_is_not_misclassified_as_measure():
+    assert "MEASURE" not in focus.classify(
+        "How did you determine which framework to use?")
+
+
 def test_llama_focus_words_outside_the_bounded_question_forms_do_not_match():
     assert "OUTCOME" not in focus.classify(
         "What safeguards did you add after the impact review?")
@@ -1027,12 +1180,93 @@ def test_a_specific_failure_mode_question_beats_the_alternative_template(tmp_pat
     assert not any("off-focus" in guard for guard in state.turns[-1].guards)
 
 
-def test_a_line_asking_nothing_new_is_replaced_with_the_template(tmp_path):
-    r, state = build([d("probe", "Tell me about the weather.")], tmp_path)
+def test_an_off_focus_probe_gets_one_model_written_speech_repair(tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "CONTEXT")
+    repaired = "Which constraints shaped the incident response?"
+    r, state = build([d("probe", "What happened afterwards?"),
+                      speech(repaired)], tmp_path)
+    run(r.ask())
+    r.focus_used.add("OUTCOME")
+    prior = "What happened in the end?"
+    r.said_this_session.append(prior)
+    out = run(r.submit("we shipped it"))
+    decision = last_decision(state)
+
+    assert out.spoken.text == repaired
+    assert decision["say_raw"] == "What happened afterwards?"
+    assert decision["say_model"] == "What happened afterwards?"
+    assert decision["focus_got"] == ["CONTEXT"]
+    assert decision["speech_attempt"]["trigger"] == "off_focus"
+    assert decision["speech_attempt"]["accepted"] is True
+    assert "off-focus->repaired" in decision["guards"]
+    assert decision["model_calls"] == 2
+    assert "What happened afterwards?" not in r.provider.systems[1]
+    assert prior not in r.provider.systems[1]
+
+
+def test_speech_repair_accepts_the_requested_focus_with_an_incidental_extra_label(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "STEPS")
+    repaired = "How did you go about learning those forty Vue components?"
+    assert focus.classify(repaired) == {"LESSON", "STEPS"}
+    r, state = build([d("probe", "What was your approach?"),
+                      speech(repaired)], tmp_path)
+    run(r.ask())
+
+    out = run(r.submit("I started from the broken screen."))
+    decision = last_decision(state)
+
+    assert out.spoken.text == repaired
+    assert decision["focus_got"] == ["STEPS"]
+    assert decision["speech_attempt"]["accepted"] is True
+
+
+def test_session_level_fuzzy_similarity_does_not_reject_context_specific_repair(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "STEPS")
+    old = "What did you actually do, step by step?"
+    repaired = "What steps did you take to implement this schema change?"
+    r, state = build([d("probe", "", ok=False), speech(repaired)], tmp_path)
+    run(r.ask())
+    r.said_this_session.append(old)
+
+    out = run(r.submit("I made the field optional."))
+    decision = last_decision(state)
+
+    assert out.spoken.text == repaired
+    assert decision["speech_attempt"]["accepted"] is True
+
+
+def test_speech_repair_still_rejects_an_exact_session_repeat(tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "STEPS")
+    repeated = "What steps did you take to implement this schema change?"
+    r, state = build([d("probe", "", ok=False), speech(repeated)], tmp_path)
+    run(r.ask())
+    r.said_this_session.append(repeated)
+
+    out = run(r.submit("I made the field optional."))
+    decision = last_decision(state)
+
+    assert out.spoken.text in focus.TEMPLATE["STEPS"]
+    assert decision["speech_attempt"]["accepted"] is False
+    assert decision["speech_attempt"]["rejection"] == "repeated"
+
+
+def test_a_rejected_off_focus_speech_repair_falls_back_with_diagnostics(
+        tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "CONTEXT")
+    r, state = build([d("probe", "Tell me about the weather."),
+                      speech("What happened afterwards?")], tmp_path)
     run(r.ask())
     out = run(r.submit("we shipped it"))
-    assert out.spoken.text in [v for vs in focus.TEMPLATE.values() for v in vs]
-    assert any("off-focus" in x for x in state.turns[-1].guards)
+    decision = last_decision(state)
+
+    assert out.spoken.text in focus.TEMPLATE["CONTEXT"]
+    assert decision["speech_attempt"]["accepted"] is False
+    assert decision["speech_attempt"]["rejection"] == "off_focus"
+    assert decision["speech_attempt"]["say_raw"] == "What happened afterwards?"
+    assert "off-focus->repair-failed" in decision["guards"]
+    assert "off-focus->context" in decision["guards"]
 
 
 def test_an_on_focus_line_is_left_alone(tmp_path):
@@ -1193,6 +1427,66 @@ def test_the_skip_line_does_not_promise_a_revisit():
 
 
 # ------------------------------------------- the design follow-up (log 9.7)
+def test_every_design_template_is_future_tense_single_focus_and_within_cap():
+    for expected, variants in focus.DESIGN_TEMPLATE.items():
+        for line in variants:
+            assert line.count("?") == 1, (expected, line)
+            assert len(line.split()) <= 25, (expected, line)
+            assert focus.classify(line) == {expected}, (expected, line)
+            assert " did you " not in line.lower()
+            assert " was the " not in line.lower()
+
+
+def test_design_template_avoids_session_repetition():
+    spoken = {focus.DESIGN_TEMPLATE["CHALLENGE"][0]}
+    assert (focus.design_template("CHALLENGE", spoken)
+            == focus.DESIGN_TEMPLATE["CHALLENGE"][1])
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    (
+        "How did you handle Redis becoming unavailable?",
+        "How would you handle Redis becoming unavailable?",
+    ),
+    (
+        "What did you consider for cross-region consistency?",
+        "What else would you consider for cross-region consistency?",
+    ),
+    (
+        "What else did you consider for handling rate limiting beyond Redis counters?",
+        "What else would you consider for handling rate limiting beyond Redis counters?",
+    ),
+    (
+        "What was the main challenge you faced when implementing the token bucket algorithm?",
+        "What would be the main challenge when implementing the token bucket algorithm?",
+    ),
+    (
+        "What challenge did you face while testing failover?",
+        "What challenge would you expect while testing failover?",
+    ),
+])
+def test_safe_design_past_premises_are_rewritten(raw, expected):
+    assert focus.design_past_premise(raw)
+    assert focus.rewrite_design_past_premise(raw) == expected
+
+
+@pytest.mark.parametrize("line", [
+    "How would you handle Redis becoming unavailable?",
+    "What would be hardest about this design?",
+])
+def test_already_hypothetical_language_needs_no_rewrite(line):
+    assert not focus.design_past_premise(line)
+    assert focus.rewrite_design_past_premise(line) is None
+
+
+@pytest.mark.parametrize("line", [
+    "How did you diagnose the production outage?",
+    "What was the hardest problem you encountered during the migration?",
+])
+def test_past_premise_detection_is_independent_of_phase(line):
+    assert focus.design_past_premise(line)
+
+
 DESIGN_PLAN = {
     "id": "test-design",
     "phases": [{
@@ -1211,6 +1505,165 @@ def design_runner(decisions, tmp_path):
     session.SESSIONS = tmp_path / "sessions"
     state = session.new_session(DESIGN_PLAN)
     return Runner(ScriptedProvider(decisions), DESIGN_PLAN, state), state
+
+
+STAGE3_DESIGN_PLAN = {
+    "id": "stage3-design",
+    "phases": [{
+        "id": "design",
+        "answer_shape": "open",
+        "probe_budget": 2,
+        "scored": False,
+        "observation_shape": "design",
+        "focus_ladder": ["ALTERNATIVE", "CHALLENGE", "MEASURE", "REASON", "STEPS"],
+        "questions": ["Design a rate limiter."],
+    }],
+}
+
+
+def stage3_design_runner(decisions, tmp_path, max_say_words=25):
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(STAGE3_DESIGN_PLAN)
+    runner = Runner(ScriptedProvider(decisions), STAGE3_DESIGN_PLAN, state,
+                    max_say_words=max_say_words)
+    return runner, state
+
+
+def test_design_probe_rewrites_past_premise_without_changing_turn_contract(tmp_path):
+    raw = "How did you handle Redis becoming unavailable?"
+    runner, state = stage3_design_runner([d("probe", raw)], tmp_path)
+    run(runner.ask())
+    before_pool = runner.pool
+
+    out = run(runner.submit(WITH_FAILURE))
+    decision = last_decision(state)
+
+    assert out.act == "probe"
+    assert out.spoken.text == "How would you handle Redis becoming unavailable?"
+    assert decision["say_raw"] == raw
+    assert decision["model_calls"] == 1
+    assert "hypothetical-tense->rewrite" in decision["guards"]
+    assert runner.pool == before_pool
+    assert runner.follow_ups_used == 1
+    assert decision["focus_got"] == ["CHALLENGE"]
+
+
+def test_unrepairable_design_past_premise_uses_future_template(tmp_path):
+    raw = "What was the trade-off you were trying to balance?"
+    runner, state = stage3_design_runner([d("probe", raw)], tmp_path)
+    run(runner.ask())
+
+    out = run(runner.submit(WITH_FAILURE))
+    decision = last_decision(state)
+
+    assert out.act == "probe"
+    assert out.spoken.text in focus.DESIGN_TEMPLATE["ALTERNATIVE"]
+    assert decision["say_raw"] == raw
+    assert decision["model_calls"] == 1
+    assert "hypothetical-tense->template" in decision["guards"]
+
+
+def test_hypothetical_design_probe_is_unchanged(tmp_path):
+    line = "How would you handle Redis becoming unavailable?"
+    runner, state = stage3_design_runner([d("probe", line)], tmp_path)
+    run(runner.ask())
+
+    out = run(runner.submit(WITH_FAILURE))
+
+    assert out.spoken.text == line
+    assert not any("hypothetical-tense" in guard for guard in state.turns[-1].guards)
+
+
+def test_hypothetical_repair_does_not_apply_outside_design(tmp_path):
+    line = "What was the hardest problem you encountered during the migration?"
+    runner, state = build([d("probe", line)], tmp_path)
+    run(runner.ask())
+
+    out = run(runner.submit("The service failed during deployment."))
+
+    assert out.spoken.text == line
+    assert not any("hypothetical-tense" in guard for guard in state.turns[-1].guards)
+
+
+def test_hypothetical_rewrite_over_cap_uses_template_without_extra_call(tmp_path):
+    raw = "What did you consider for consistency?"
+    runner, state = stage3_design_runner([d("probe", raw)], tmp_path, max_say_words=6)
+    run(runner.ask())
+
+    out = run(runner.submit(WITH_FAILURE))
+    decision = last_decision(state)
+
+    assert out.spoken.text in focus.DESIGN_TEMPLATE["ALTERNATIVE"]
+    assert decision["model_calls"] == 1
+    assert "hypothetical-tense->template" in decision["guards"]
+
+
+def test_repeated_hypothetical_rewrite_uses_unspoken_design_template(tmp_path):
+    raw = "How did you handle Redis becoming unavailable?"
+    rewritten = "How would you handle Redis becoming unavailable?"
+    runner, state = stage3_design_runner([d("probe", raw)], tmp_path)
+    run(runner.ask())
+    runner.said_this_session.append(rewritten)
+
+    out = run(runner.submit(WITH_FAILURE))
+
+    assert out.spoken.text == focus.DESIGN_TEMPLATE["ALTERNATIVE"][0]
+    assert "hypothetical-tense->template" in state.turns[-1].guards
+
+
+def test_unrepairable_design_reask_without_focus_uses_design_reask(tmp_path):
+    raw = "What was the hardest problem you encountered during the migration?"
+    runner, state = stage3_design_runner([d("reask", raw)], tmp_path)
+    run(runner.ask())
+
+    out = run(runner.submit("I can't think of one."))
+    decision = last_decision(state)
+
+    assert out.act == "reask"
+    assert out.spoken.text == focus.DESIGN_REASK
+    assert decision["say_raw"] == raw
+    assert decision["model_calls"] == 1
+    assert "hypothetical-tense->template" in decision["guards"]
+
+
+def test_hypothetical_template_fallback_never_draws_from_pool(tmp_path):
+    raw = "What was the trade-off you were trying to balance?"
+    runner, _ = stage3_design_runner([d("probe", raw)], tmp_path)
+    run(runner.ask())
+    before_pool = runner.pool
+
+    run(runner.submit(WITH_FAILURE))
+
+    assert runner.pool == before_pool
+
+
+def test_hypothetical_repair_preserves_raw_speech_after_sentence_trim(tmp_path):
+    raw = "How did you handle Redis becoming unavailable? Tell me more."
+    runner, state = stage3_design_runner([d("probe", raw)], tmp_path)
+    run(runner.ask())
+
+    out = run(runner.submit(WITH_FAILURE))
+    decision = last_decision(state)
+
+    assert out.spoken.text == "How would you handle Redis becoming unavailable?"
+    assert decision["say_raw"] == raw
+    assert "extra-sentences-dropped" in decision["guards"]
+    assert "hypothetical-tense->rewrite" in decision["guards"]
+
+
+def test_hypothetical_repair_cannot_repeat_an_already_used_focus(tmp_path):
+    raw = "How did you handle Redis becoming unavailable?"
+    runner, state = stage3_design_runner([d("probe", raw)], tmp_path)
+    run(runner.ask())
+    runner.focus_used.add("CHALLENGE")
+
+    out = run(runner.submit(WITH_FAILURE))
+    decision = last_decision(state)
+
+    assert out.spoken.text in focus.DESIGN_TEMPLATE["ALTERNATIVE"]
+    assert decision["focus_got"] == ["ALTERNATIVE"]
+    assert "hypothetical-tense->rewrite" in decision["guards"]
+    assert "off-focus->alternative" in decision["guards"]
 
 
 def test_a_design_answer_with_no_failure_mode_is_probed_before_advancing(tmp_path):
@@ -1564,3 +2017,140 @@ def test_a_shortening_retry_may_not_change_the_act():
     src = inspect.getsource(_r.Runner.submit)
     assert "too_long=cap" in src
     assert "g2.act == g.act" in src, "the act-equality guard on the shortening retry is gone"
+
+
+def test_an_unnameable_but_substantive_question_is_kept_not_templated(tmp_path, monkeypatch):
+    """9.53. An empty `fresh` had two causes and the code treated them alike. A question the
+    regex cannot NAME is not the same as a bad question: over two live sessions 16 of 20
+    discarded lines were single, in-cap, non-repeating questions."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "CONTEXT")
+    line = "What was the colleague's reaction when you gave him feedback?"
+    assert not focus.classify(line)
+    r, state = build([d("probe", line)], tmp_path)
+    run(r.ask())
+    out = run(r.submit("I told him the Friday PRs were costing us weekends."))
+    decision = last_decision(state)
+    assert out.spoken.text == line
+    assert "unnamed-focus->kept" in decision["guards"]
+    # The ladder still advances, so the next turn cannot ask the same kind of thing again.
+    assert decision["focus_got"] == ["CONTEXT"]
+
+
+def test_a_terse_unnameable_probe_still_goes_to_repair(tmp_path, monkeypatch):
+    """The floor exists because a bare generic probe is what the repair is FOR. Every good
+    unnameable line measured ran 10 words or more; every generic one ran 8 or fewer."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "STEPS")
+    repaired = "How did you go about learning those forty Vue components?"
+    r, state = build([d("probe", "What was your approach?"), speech(repaired)], tmp_path)
+    run(r.ask())
+    out = run(r.submit("I started from the broken screen."))
+    assert out.spoken.text == repaired
+    assert "unnamed-focus->kept" not in last_decision(state)["guards"]
+
+
+def test_repeating_a_spent_request_type_is_still_refused(tmp_path, monkeypatch):
+    """The other cause of an empty `fresh`, and it must keep behaving as before: a line that
+    classifies to a focus already used is the model asking the same thing twice."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "CONTEXT")
+    line = "How did you measure the improvement you saw after that change?"
+    assert focus.classify(line)
+    r, state = build([d("probe", line)], tmp_path)
+    run(r.ask())
+    r.focus_used |= focus.classify(line)
+    out = run(r.submit("We cut p95 from eight seconds to three hundred milliseconds."))
+    assert "unnamed-focus->kept" not in last_decision(state)["guards"]
+    assert out.spoken.text != line
+
+
+def test_no_template_asserts_an_outcome_the_candidate_has_not_claimed():
+    """9.53. "How did you know it worked?" was the one template that made a CLAIM rather than
+    a request, and it produced two of the three contradictory lines in 72 live turns -- once
+    after "it cost us a sprint later", once before the candidate had said what happened."""
+    for lines in focus.TEMPLATE.values():
+        for line in lines:
+            assert "it worked" not in line.lower(), line
+
+
+def test_every_measure_template_is_premise_free_and_asks_once():
+    for line in focus.TEMPLATE["MEASURE"]:
+        assert line.count("?") == 1, line
+        assert len(line.split()) <= 15, line
+
+
+def test_every_template_line_classifies_as_its_own_focus():
+    """The invariant `DESIGN_TEMPLATE` always held and `TEMPLATE` never did, because a test
+    asserted it for one table and not the other. Nine of thirty failed: the harness spoke a
+    line and recorded a focus as delivered that its own detector would not recognise. These
+    lines are reviewed interviewer questions, so each failure was a false negative in the
+    regex, and low recall is what pushes a turn onto the fallback path."""
+    for table in (focus.TEMPLATE, focus.DESIGN_TEMPLATE):
+        for want, lines in table.items():
+            for line in lines:
+                assert want in focus.classify(line), (want, line)
+
+
+@pytest.mark.parametrize("said", [
+    "What was the setup cost of the new vendor?",
+    "Who was the first person you told?",
+    "What trouble tickets did the team file?",
+    "What was your thinking time on that?",
+    "We ruled out the null hypothesis in the analysis.",
+    "How did you determine the colleague who reviewed it?",
+])
+def test_the_template_widenings_stay_bounded(said):
+    """Every phrase added above came from a template, and each could have been a bare topical
+    word instead. `setup around` rather than `setup` is the load-bearing example: the looser
+    form made a budget question CONTEXT."""
+    assert not focus.classify(said), (said, sorted(focus.classify(said)))
+
+
+@pytest.mark.parametrize("said", [
+    "What was the hardest part about implementing that sliding window rate limiter?",
+    "What was the trickiest bit about building the token bucket?",
+    "What were the surprises when deploying it?",
+])
+def test_a_design_past_premise_without_the_word_you_is_still_detected(said):
+    """Live gate violation. The design phase is hypothetical, so a question presuming the
+    thing was built changes what the candidate is assessed on. Every existing branch needed a
+    second-person pronoun and this line never says "you"."""
+    assert focus.design_past_premise(said), said
+
+
+@pytest.mark.parametrize("said", [
+    "What else would you consider for the token bucket implementation?",
+    "How would you handle a Redis outage?",
+    "What was your reasoning there?",
+])
+def test_a_future_tense_design_probe_is_not_a_past_premise(said):
+    assert not focus.design_past_premise(said), said
+
+
+def test_no_reviewed_design_line_reads_as_a_past_premise():
+    """The detector's fallback is these lines, so flagging one would make the harness replace
+    a safe line with another safe line forever."""
+    for lines in focus.DESIGN_TEMPLATE.values():
+        for line in lines:
+            assert not focus.design_past_premise(line), line
+    assert not focus.design_past_premise(focus.DESIGN_REASK)
+    assert not focus.design_past_premise(focus.DESIGN_FOLLOW_UP)
+
+
+def test_the_live_past_premise_without_you_is_never_spoken(tmp_path):
+    """The exact line the confirming junior control spoke on a hypothetical design question:
+    the candidate had designed a rate limiter and built nothing. Every branch of the detector
+    needed a second-person pronoun and this line never says "you", so nothing fired and the
+    premise reached the candidate. Detection is now broader than the rewriter, because a
+    missed rewrite falls back to a reviewed future-tense line and a missed DETECTION does not."""
+    raw = "What was the hardest part about implementing that sliding window rate limiter?"
+    runner, state = stage3_design_runner([d("probe", raw)], tmp_path)
+    run(runner.ask())
+
+    out = run(runner.submit(WITH_FAILURE))
+    decision = last_decision(state)
+
+    assert out.spoken.text != raw
+    assert "implementing" not in out.spoken.text
+    assert any("hypothetical-tense" in guard for guard in decision["guards"])
+    # Provenance is untouched: the raw line is still recorded and no extra call was spent.
+    assert decision["say_raw"] == raw
+    assert decision["model_calls"] == 1

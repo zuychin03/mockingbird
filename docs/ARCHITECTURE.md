@@ -1,11 +1,11 @@
 # Mockingbird architecture
 
-> Current-state guide for the `exaone-adaptation` branch.
+> Current-state guide for the `stage3-natural-probing` branch.
 >
-> Evidence snapshot: commit `5e21330c43ac69d121fbe129c6bd40097e275ba0`, inspected on
-> 26/08/2026. The working tree also contained pre-existing changes in `app/runner.py` and
-> `tests/test_runner.py`; the behaviour described here includes those changes. Re-check the
-> snapshot block after substantial runtime changes.
+> Evidence snapshot: base commit `788ac3a`, plus the current uncommitted Stage 3 working-tree
+> changes, inspected on 29/08/2026. The behaviour and test counts below describe that complete
+> working state, not a published commit. Re-check this block after integration or further live
+> tuning.
 
 ## 1. Purpose in one page
 
@@ -38,8 +38,10 @@ the model's six-action JSON object is advisory input to that orchestrator.
 - A 14-question, six-phase software-engineering interview plan.
 - Terminal-based text interviews through `python -m app.cli`.
 - LM Studio integration with structured output, enum posteriors, timing and health checks.
-- Model-specific speech profiles for Granite, Yi and EXAONE.
+- Exact-identity, Llama 3.2 3B Instruct runtime with a measured 25-word speech cap.
 - Deterministic consent, refusal, clarification, repetition, speech and budget controls.
+- Focus-aware creative probing, hypothetical-design tense repair and one action-locked
+  speech-only repair before template fallback.
 - Candidate-question routing that keeps questions out of answer evidence.
 - Per-answer background observation extraction for live pacing.
 - Offline grounded extraction, deterministic scoring and plain-text reporting.
@@ -58,17 +60,22 @@ the model's six-action JSON object is advisory input to that orchestrator.
 
 ### 2.1 The model proposes; Python decides
 
-The model returns a schema-constrained object with four required fields:
+The normal turn model returns a schema-constrained object with four required fields:
 
 | Field | Meaning | Final authority |
 |---|---|---|
 | `act` | Proposed action: `advance`, `probe`, `reask`, `clarify`, `skip` or `end` | Python may preserve, downgrade, upgrade or replace it |
 | `say` | Proposed next sentence | Guards may strip, shorten, regenerate or replace it |
-| `ok` | Whether the current reply fully answers the question | Advisory; its influence is model-profile dependent |
+| `ok` | Whether the current reply fully answers the question | Advisory; Python resolves contradictions and pacing |
 | `ask` | Candidate question copied verbatim, otherwise empty | Grounded against the utterance before use |
 
 Python alone owns the consequences of an action. It verifies stop and skip intent, constrains
 follow-ups, decides when evidence is complete, records the transition and updates durable state.
+
+When a final probe is empty or misses the requested focus, a separate speech-repair schema exposes
+only `say`. The second response therefore cannot re-decide `act`, `ok` or `ask`; Python retains the
+already resolved action and accepts the wording only after deterministic length, focus, repetition
+and single-question checks.
 
 ### 2.2 Extract facts, then score them
 
@@ -113,7 +120,7 @@ LM Studio is the only live external process, reached on `http://127.0.0.1:1234`.
 ```text
 Process A: terminal application                    Process B: LM Studio
 -----------------------------------------------   -------------------------------
-app.cli                                            local model alias
+app.cli                                            exact Llama identifier
   preflight ------------------------------------> /api/v0/models
   canary ---------------------------------------> /api/v0/chat/completions
   warm prompt cache ----------------------------> /v1/chat/completions
@@ -132,7 +139,7 @@ The provider port uses two endpoints because the API surfaces are complementary:
 
 - `/v1/chat/completions` supplies structured completion output and token log probabilities.
 - `/api/v0/chat/completions` supplies server timing data for the canary.
-- `/api/v0/models` supplies the loaded model and model catalogue used to resolve aliases.
+- `/api/v0/models` supplies the loaded catalogue used to verify the exact product identifier.
 
 ## 4. Component map
 
@@ -142,12 +149,12 @@ The provider port uses two endpoints because the API surfaces are complementary:
 |---|---|---|---|
 | [`app/cli.py`](../app/cli.py) | Terminal entry point, preflight, warm-up and interview loop | Plan path, stdin, LM Studio | Candidate speech and session paths |
 | [`app/runner.py`](../app/runner.py) | Owns the turn loop, precedence, state transitions and dispatch | Candidate utterance, plan, provider, state | `TurnOutcome`, persisted turn |
-| [`app/contract.py`](../app/contract.py) | Six-action schema, prompt and severity utility | Current question, answer, summary | Structured model request |
-| [`app/provider.py`](../app/provider.py) | LM Studio transport, metrics, posteriors and alias resolution | System/user prompts and schema | `Completion` or `ProviderError` |
+| [`app/contract.py`](../app/contract.py) | Normal turn and speech-only repair schemas, prompts and severity utility | Current question, answer, summary | Structured model request |
+| [`app/provider.py`](../app/provider.py) | LM Studio transport, metrics, posteriors and exact Llama identity | System/user prompts and schema | `Completion` or `ProviderError` |
 | [`app/intent.py`](../app/intent.py) | Clause-aware control parsing | Candidate utterance | stop, continue, skip or unclear |
 | [`app/direction.py`](../app/direction.py) | Separates candidate questions from answers | Candidate utterance | Role decision and optional answer prefix |
 | [`app/guards.py`](../app/guards.py) | Validates model proposal and sanitises speech | Raw model JSON and utterance | `Guarded` effective proposal |
-| [`app/focus.py`](../app/focus.py) | Chooses a missing evidence/request type | Answer, criteria, used focuses | Focus instruction or fallback line |
+| [`app/focus.py`](../app/focus.py) | Chooses and classifies request types; supplies session-distinct and design-safe fallbacks | Answer, criteria, used focuses | Focus instruction, classification or fallback line |
 | [`app/budget.py`](../app/budget.py) | Per-question allowance and shared overflow pool | Phase cap, pool and progress | `Allowance` |
 | [`app/history.py`](../app/history.py) | Maintains a short summary of completed questions | Closed questions and answers | Prompt history |
 | [`app/result_check.py`](../app/result_check.py) | Conservative pacing-only result check | Extracted result quote | Whether text states change/completion |
@@ -164,30 +171,28 @@ The provider port uses two endpoints because the API surfaces are complementary:
 |---|---|
 | [`config/interview_swe_general.json`](../config/interview_swe_general.json) | Current plan, phases, question text, caps, focus ladders and rubric metadata |
 | [`tools/live_candidate.py`](../tools/live_candidate.py) | Turn-at-a-time human-driven harness with disk state; least scripted drift |
-| [`tools/stage1_long.py`](../tools/stage1_long.py) | Scripted 14-question session; use `--pin` when fixed navigation is required |
-| [`tools/stage1_replay.py`](../tools/stage1_replay.py) | Recorded-session replay used to isolate navigation drift |
 | [`tools/stage2_report.py`](../tools/stage2_report.py) | Offline extraction, scoring and report generation |
 | [`tools/render_transcript.py`](../tools/render_transcript.py) | Human-readable transcript page |
 | [`tools/render_report.py`](../tools/render_report.py) | Rendered report output |
-| `tools/tier1_*`, `tools/tier2_*` | Experimental and calibration harnesses; consult [`tools/README.md`](../tools/README.md) before use |
+| [`tools/probe_audit.py`](../tools/probe_audit.py) | Audits session decision records as retained, repaired or substituted speech with transformation diagnostics |
+| Private ignored harnesses | Historical `stage1_*`, `tier1_*` and `tier2_*` experiments kept locally for development evidence |
 
 ## 5. Session start, end to end
 
 `app.cli.run()` establishes the runtime in this order:
 
-1. Create an `LMStudio` provider using the stable model alias.
-2. Query loaded models and resolve the alias to the underlying model key where possible.
+1. Create an `LMStudio` provider for the exact identifier `llama-3.2-3b-instruct`.
+2. Query loaded models and refuse to start unless that exact product model is loaded.
 3. Run the canary unless disabled. It checks prefill time, decode throughput and transport
    overhead separately.
 4. Load and validate the interview plan.
-5. Select the model-specific `Speech` profile.
-6. Warm the real turn system prompt so the first candidate turn is not a cold-cache measurement.
-7. Capture provenance and create the session directory.
-8. Construct `Runner` with an injected per-answer observation function.
-9. Ask the current scripted question.
-10. Repeatedly read one non-empty utterance and call `Runner.submit()`.
-11. Print only candidate-safe `Spoken` fields.
-12. On completion, print status and file locations. Ctrl+C records an abandoned checkpoint.
+5. Warm the real turn system prompt so the first candidate turn is not a cold-cache measurement.
+6. Capture provenance and create the session directory.
+7. Construct `Runner` with the 25-word cap and an injected per-answer observation function.
+8. Ask the current scripted question.
+9. Repeatedly read one non-empty utterance and call `Runner.submit()`.
+10. Print only candidate-safe `Spoken` fields.
+11. On completion, print status and file locations. Ctrl+C records an abandoned checkpoint.
 
 ## 6. One live turn, systematically
 
@@ -241,8 +246,8 @@ action posterior from the enum token position.
 `guards.apply()` performs the following effective pipeline:
 
 1. Invalid or missing JSON becomes a regenerating `probe` fallback.
-2. Invented questions on closing actions are removed; an `advance`/`ok=false` contradiction may
-   become `probe` depending on the speech profile.
+2. Invented questions on closing actions are removed; an `advance`/`ok=false` contradiction becomes
+   `probe` for the measured Llama contract.
 3. Ungrounded `end`, `clarify` and `skip` actions are downgraded.
 4. Candidate-grounded refusal and cannot-answer language upgrades eligible actions to `skip` and
    `reask` respectively.
@@ -253,25 +258,32 @@ action posterior from the enum token position.
 9. Multi-sentence speech keeps the actual question where possible, then applies a hard character
    cap.
 
-### 6.7 Bound retry and speech adaptation
+### 6.7 Bound retries and speech adaptation
 
 There are at most two model calls for a turn.
 
-- A repetition or malformed first response gets one regeneration.
-- For a configured word cap, an overlong or off-focus line gets one targeted retry. The retry is
-  accepted only if it keeps the same action, meets the word cap and fixes the focus miss.
-- A failed retry falls through to deterministic focus substitution or handler fallback.
+- A repeated or malformed first turn response gets one full-turn regeneration. A second semantic
+  repetition advances rather than looping; malformed output keeps the safe probe fallback.
+- An over-25-word first line gets one full-turn shortening retry. It is accepted only when the
+  action is unchanged, speech is present and the result fits the cap.
+- After consent, clarification, budget and pacing decisions are final, a hypothetical design probe
+  with a recognised past premise is rewritten through a finite deterministic transform. An unsafe
+  or repeated transform uses a future-conditional design template and costs no model call.
+- An off-focus line is not automatically discarded. The focus check is empty for two different
+  reasons, and only one of them is a fault: a line that classifies to a request type already
+  spent on this question is the model repeating itself and is refused, while a line the
+  classifier cannot NAME is kept when it is a single question, within the cap, at least ten
+  words and not already spoken. The requested focus is charged either way, so the ladder still
+  advances and no turn can silently ask the same kind of thing twice.
+- A final `probe` whose speech is empty, or off-focus and too terse to keep, gets one
+  speech-only completion through `SPEECH_SCHEMA`. It is accepted only when the line is one
+  direct question, at most 25 words, contains the requested focus and repeats neither the
+  current/rejected line nor prior session speech. A failed attempt falls through to the next
+  unspoken reviewed focus template.
 
-The active profiles are:
-
-| Model family | Exemplars | Substitute focus | Repeated line closes | Trust `ok` | Word cap |
-|---|---:|---:|---:|---:|---:|
-| Default/unknown | yes | yes | yes | yes | none |
-| Granite | yes | yes | yes | no | none |
-| Yi | no | yes | yes | yes | none |
-| EXAONE | yes | yes | yes | no | 15 words |
-
-These are speech/advisory adaptations only. Consent and policy rules do not vary by model.
+The speech-repair prompt deliberately does not quote rejected or previously spoken lines. The first
+live implementation showed that Llama copied negative examples; repetition is now described only as
+a validator rule. `reask` retains its existing deterministic fallback to the scripted question.
 
 ### 6.8 Apply runner-owned policy
 
@@ -285,7 +297,8 @@ After the guards and retry, the runner may still override the proposal:
 5. Complete STAR evidence or two consecutive no-gain answers may advance an adaptive phase.
 6. A design answer about to advance without failure language receives one fixed design probe if its
    own cap still has room.
-7. Off-focus model speech is either retained, retried or replaced according to the model profile.
+7. A design probe is made future-conditional when needed; empty or off-focus probe speech is then
+   repaired through the action-locked schema or replaced with a reviewed template.
 
 ### 6.9 Dispatch, record and continue
 
@@ -308,14 +321,17 @@ direct rewrite rather than an atomic projection.
 
 | Candidate input | Deterministic path | Typical effective outcome |
 |---|---|---|
-| Gives a partial answer | focus -> model -> guards -> budget | `probe` with a bounded question |
+| Gives a partial answer | focus -> model -> guards -> pacing -> speech validation | `probe` with a retained, repaired or reviewed bounded question |
 | Gives no example but remains willing | cannot-answer vocabulary -> guard upgrade | `reask` |
 | Refuses only this question | refusal vocabulary -> guard upgrade | `skip` |
 | Asks what the question means | clarification detector -> runner upgrade | `clarify` without spending probe budget |
 | Asks about the role mid-answer | direction routing; answer prefix may be kept | defer the question and keep assessment channels separate |
 | Requests to stop | stop detector -> confirmation state | `end` only after grounded confirmation |
 | Gives an ambiguous confirmation | narrow once, then preserve session | `clarify`/continue, never guessed end |
-| Model repeats itself | regeneration once, then profile fallback/close | bounded liveness |
+| Model repeats itself | regeneration once, then safe fallback/close | bounded liveness |
+| Probe speech cannot be named by the classifier | kept when it is a single in-cap question of ten words or more | the model's own wording survives a regex that cannot label it |
+| Probe speech repeats a spent request type, or is empty | action-locked speech repair, then template | useful wording without re-deciding the turn |
+| Design probe assumes past experience | finite future-tense rewrite or design template | hypothetical assessment stays hypothetical |
 | LM output is malformed | invalid guard -> one regeneration/fallback | continue with safe probe wording |
 | Background extraction fails | exception swallowed in `_settle()` | live interview continues |
 
@@ -361,7 +377,7 @@ Plan loading validates:
 - focus types and speech already used;
 - answers and candidate questions for the current question;
 - stop-confirmation and skip-offer flags;
-- model-specific speech profile.
+- the sole-Llama 25-word cap and whether the design-gap follow-up has fired.
 
 `SessionState` owns durable-domain state: session identity, status, turns and closed questions.
 
@@ -375,15 +391,17 @@ data/sessions/<session-id>/
 ```
 
 Important decision fields include candidate utterance, effective action and speech, guard names,
-semantic close reason, requested/actual focus, replaced model line, budgets, posterior, usage,
-latency, model-call count, exact rendered prompt and timestamp.
+semantic close reason, requested/actual focus, `say_raw`, replaced `say_model`, `speech_attempt`,
+budgets, posterior, usage, total latency, model-call count, exact rendered normal-turn prompt and
+timestamp. `speech_attempt` retains the repair trigger, its raw and guarded wording, detected focus,
+acceptance or rejection reason, repair guards, usage and repair-call latency.
 
 ### 9.3 Provenance
 
 Each session snapshot attempts to record:
 
 - Git revision and dirty suffix;
-- hash of the system prompt and turn schema;
+- one hash covering both system prompts and both turn/speech schemas;
 - Python and platform versions;
 - resolved model key, path, architecture, quantisation and loaded context length.
 
@@ -430,11 +448,14 @@ and the counting is checkable, but a model still selected which words counted as
 
 | Failure | Current containment | Candidate impact |
 |---|---|---|
-| Invalid model JSON | Convert to probe and allow one regeneration | Safe fallback, possible generic wording |
+| Invalid model JSON | Convert to probe and allow one regeneration | Safe fallback, possible reviewed template |
 | Model proposes ungrounded end/skip | Deterministic grounding downgrades action | Session/question remains open |
 | Ambiguous stop reply | Narrow once; do not guess | One extra control turn |
 | Repeated speech | One regeneration, then bounded fallback/close | No infinite wording loop |
-| Overlong/off-focus EXAONE speech | One targeted retry, then template | Bounded latency and sentence length |
+| Overlong Llama speech | One action-preserving full-turn shortening retry, then focus validation | Bounded latency and 25-word speech |
+| Unnameable but substantive probe speech | Kept, with the requested focus charged | Fewer templates without losing focus rotation |
+| Empty or terse off-focus probe speech | One `say`-only repair, then a reviewed focus template | Action and pacing remain fixed |
+| Past-premised design speech | Finite tense rewrite, then a future-conditional design template | No false claim of prior implementation |
 | Background live observation failure | Swallowed by `_settle()` | Adaptive pacing loses one evidence update |
 | Corrupt observation cache | Ignore and re-extract | Extra offline model work |
 | LM Studio unavailable at preflight | CLI refuses to start | No session begins |
@@ -443,18 +464,19 @@ and the counting is checkable, but a model still selected which words counted as
 
 ## 12. Testing and evaluation architecture
 
-At this snapshot, pytest collects 262 tests:
+At this snapshot, pytest collects and passes 319 tests:
 
 | Module | Collected tests | Main concern |
 |---|---:|---|
-| `test_guards.py` | 58 | Decision grounding and speech hygiene |
+| `test_guards.py` | 61 | Decision grounding and speech hygiene |
 | `test_intent.py` | 26 | Clause-aware stop/skip/continue parsing |
 | `test_nfr.py` | 7 | Architectural and non-functional constraints |
 | `test_observe.py` | 31 | Extraction grounding, cache and observation shapes |
 | `test_persistence.py` | 11 | Plan validation, files and provenance |
-| `test_provider.py` | 9 | Transport, posterior and model identity |
+| `test_probe_audit.py` | 4 | Raw, repaired and substituted speech provenance |
+| `test_provider.py` | 7 | Transport, posterior and exact Llama identity |
 | `test_report.py` | 8 | Feedback selection, thresholds and rendering |
-| `test_runner.py` | 112 | Turn precedence, pacing, routing and state |
+| `test_runner.py` | 164 | Turn precedence, pacing, routing, repair and state |
 
 Use the project's virtual environment and a writable explicit base temp on Windows:
 
@@ -476,15 +498,42 @@ Unit counts are evidence of deterministic coverage, not evidence that a local mo
 full live interview works end to end. The canary and a human-driven smoke session cover different
 failure classes.
 
+### 12.1 Latest behavioural evidence
+
+The full junior probe-stress session `20260829-190818-ec1710` completed all 14 questions in 46
+turns and produced 31 follow-ups: 23 model-derived lines (20 retained byte for byte plus three
+compound-request trims, 74.2%), seven templates (22.6%) and one deterministic design-gap probe
+(3.2%). It spoke no generic “Could you say a bit more about that?”, compound question or
+over-25-word question, and had no action conflict.
+
+That run also exposed a defect in the first speech-repair prompt: all seven attempts were rejected,
+including copies of negative examples. The prompt and classifier were corrected afterwards. The
+targeted replay `20260829-193251-d8cd97` then retained two of three raw questions and accepted one
+speech-only repair: the off-focus line “How did you know it was worth taking more time to discuss?”
+became the focused measurement question “How did you know the optimal timeframe for completing the
+demo?” The effective `probe` action stayed fixed, the turn used two model calls, and the repair call
+took 602.6 ms.
+
+Two junior controls were then run each side of the speech-recovery changes, with a strong control
+for pacing. Pooled over 47 raw questions before and 54 after, byte-for-byte retention barely moved
+(59.6% to 61.1%) while template substitution fell from 12.8% to 1.9% and speech-repair acceptance
+rose from 20% to 67%. The change did not make the model write better questions; it stopped the
+harness discarding the ones it already wrote.
+
+The design-tense path is covered by a runner-level regression test rather than by a live run:
+neither post-change control drew a follow-up on the design question, so that branch was never
+exercised in a session.
+
 ## 13. Current limitations and architecture risks
 
 These are current-code observations, not claims that planned future work has shipped.
 
 ### High: replay and recovery are incomplete
 
-The decision log records the effective turn and exact rendered user prompt, but it does not retain a
-complete immutable envelope for every raw model attempt. Two-call turns aggregate to a call count and
-final completion. There is no session restore function that rebuilds runner state by replaying events.
+The decision log records the effective turn, exact normal-turn user prompt and raw-versus-spoken
+speech. Speech-only repair attempts now have structured diagnostics, but full-turn regeneration and
+shortening attempts still do not retain a complete immutable request/response envelope. There is no
+session restore function that rebuilds runner state by replaying events.
 
 Improvement: define immutable `ModelAttempt` and `TurnEvent` records, make the event stream the source
 of truth, and rebuild projections from it.
@@ -534,12 +583,14 @@ that fixtures and corpus sweeps missed.
 Improvement: maintain a held-out set with multiple authors, preserve model/config provenance and run
 both deterministic tests and human-driven live sessions before expanding to voice or planning.
 
-### Low: documentation can drift faster than the measured code
+### Low: final aggregate speech-repair evidence is pending
 
-The root README still reports 224 tests while the current suite collects 262. Some persistence comments
-describe question-boundary checkpoints while the runner calls the snapshot after each turn.
+The final prompt and focus classifier pass the exact failure replay, but the most recent full junior
+session predates those corrections. Its 74.2% raw retention and seven rejected repair attempts must
+not be presented as the final configuration's aggregate rate.
 
-Improvement: update counts from commands, not memory, and keep architecture claims tied to a revision.
+Improvement: run a fresh paired junior and strong control, audit every raw/repaired/substituted line,
+and record both byte-for-byte retention and accepted repair rates.
 
 ## 14. Safe extension sequence
 
@@ -560,10 +611,11 @@ Improvement: update counts from commands, not memory, and keep architecture clai
 
 ```powershell
 lms server start
-lms load granite-4.1-3b --context-length 8192 --identifier mockingbird-llm -y
+lms load llama-3.2-3b-instruct --context-length 8192 --identifier llama-3.2-3b-instruct -y
 ```
 
-The documented alias is stable, while the provider resolves and records the underlying model key.
+The identifier is a product contract, not an interchangeable alias. Preflight rejects any other
+loaded model rather than applying unmeasured model-specific behaviour.
 
 ### Run a terminal interview
 
@@ -595,7 +647,8 @@ Read in this order:
 
 1. `session.json` for plan, provenance, status and semantic close reasons.
 2. `transcript.json` for the candidate/interviewer conversation.
-3. `decisions.jsonl` for effective policy, guards, focus, model telemetry and prompt.
+3. `decisions.jsonl` for effective policy, guards, focus, `say_raw`, `say_model`, any
+   `speech_attempt`, model telemetry and prompt.
 4. Cached observations and report output for the offline assessment path.
 
 Never use only the model's proposed action to explain what happened. The effective action, guards and
@@ -611,7 +664,7 @@ close reason are the state transition.
 | Guard | Deterministic validation or speech rewrite applied to a model proposal |
 | Observation | Grounded quote or fact about candidate text |
 | Close reason | Semantic explanation of why a question/session ended |
-| Speech profile | Model-specific wording/advisory settings; never consent policy |
+| Speech repair | One action-locked `say`-only attempt to replace empty or off-focus probe wording |
 | Live view | The only data structure intended for candidate-visible state |
 | Overflow pool | Shared reserve used after a question's own positive cap |
 | Script drift | A fixed replay answer no longer matching an adaptive runner's current question |
@@ -625,9 +678,10 @@ When this guide and the code disagree, inspect in this order:
 2. `app/guards.py` and `app/intent.py` for control grounding.
 3. `app/session.py` and the current plan for executable configuration and persistence.
 4. `app/observe.py`, `app/score.py` and `app/report.py` for assessment.
-5. `tools/README.md` for harness suitability.
+5. `tools/live_candidate.py` and `tools/probe_audit.py` for current live and speech-audit contracts.
 6. Tests for intended invariants.
-7. The research log and plan for why a choice exists, not as proof that it is still implemented.
+7. The private `internal_docs/MODEL_EXPERIMENTING_LOG.md` and Stage 3 plan for why a choice exists,
+   not as proof that it is still implemented.
 
 The companion [`architecture-explorer.html`](architecture-explorer.html) presents the same system as
 interactive component, turn-path, phase and data-lineage views.

@@ -93,6 +93,14 @@ CLARIFY_EITHER = "Your choice -- take whichever you can say most about, and tell
 # phase is for.
 STAR_PACED_TYPES = frozenset({"adaptive_discussion"})
 
+# Below this, a question the focus regex cannot name is almost always a bare generic probe
+# rather than a substantive one. Measured over two live sessions: every unnameable line worth
+# keeping ran 10 words or more ("What was the colleague's reaction when you gave him
+# feedback?"), and every generic probe ran 8 or fewer ("What was your approach?", "What
+# happened next?"). Terse unnameable lines still go to the repair, which is where a generic
+# probe has something to gain.
+UNNAMED_FOCUS_MIN_WORDS = 10
+
 
 # Llama's retained questions are normally concise. Twenty-five words leaves room for a
 # detailed single-focus probe, while the independent compound and focus guards still reject
@@ -283,6 +291,68 @@ class Runner:
             enum_field="act", enum_values=contract.ACTIONS)
         return out, out.json()
 
+    async def _repair_speech(self, utterance: str, want: str, rejected: str,
+                             trigger: str) -> tuple[str | None, dict, list[str]]:
+        """Ask only for replacement speech, then accept it under the existing guards.
+
+        The synthetic decision below is deliberately constructed by the harness. The model
+        response cannot carry an action, `ok` judgement or candidate question through this
+        boundary, even if a non-conforming provider returns extra JSON properties.
+        """
+        cap = self.max_say_words
+        system = contract.SPEECH_SYSTEM
+        system += ("\n\nRequired focus: %s. The question must ask only about that."
+                   % focus.FOCUS[want])
+        if cap:
+            system += "\nUse at most %d words." % cap
+        # Do not quote negative examples here. In the first live run Llama copied the
+        # rejected line on two retries and copied a previous session question into an
+        # unrelated scenario once. Repetition is cheaper and more reliable to reject below.
+
+        q = self.current
+        user = contract.render(q["question"], utterance, self.history.render())
+        out = await self.provider.complete(
+            system, user, schema=contract.SPEECH_SCHEMA, max_tokens=100)
+        raw = out.json()
+        raw_say = _raw_say(raw)
+        valid = isinstance(raw, dict) and isinstance(raw_say, str)
+        synthetic = ({"act": "probe", "say": raw_say, "ok": False, "ask": ""}
+                     if valid else None)
+        checked = guards.apply(
+            synthetic, utterance,
+            self.said_this_question + ([rejected] if rejected else []))
+        got = sorted(focus.classify(checked.say))
+
+        rejection: str | None = None
+        if not valid:
+            rejection = "invalid"
+        elif not raw_say.strip() or not checked.say:
+            rejection = "empty"
+        elif (raw_say.count("?") != 1
+              or "compound-request-trimmed" in checked.applied
+              or "extra-sentences-dropped" in checked.applied):
+            rejection = "multi_request"
+        elif checked.needs_regeneration or checked.say in self.said_this_session:
+            rejection = "repeated"
+        elif cap and len(checked.say.split()) > cap:
+            rejection = "over_length"
+        elif want not in got:
+            rejection = "off_focus"
+
+        attempt = {
+            "trigger": trigger,
+            "say_raw": raw_say,
+            "say": checked.say,
+            "focus": got,
+            "accepted": rejection is None,
+            "rejection": rejection,
+            "guards": checked.applied,
+            "prompt_tokens": out.prompt_tokens,
+            "decode_tokens": out.decode_tokens,
+            "wall_ms": round(out.wall_ms, 1),
+        }
+        return (checked.say if rejection is None else None), attempt, checked.applied
+
     def _user_questions_turn(self, utterance: str, q: dict) -> TurnOutcome:
         """The closing phase. Costs no model call and produces no score.
 
@@ -440,6 +510,9 @@ class Runner:
         say_raw = _raw_say(raw)
         g = guards.apply(raw, utterance, self.said_this_question)
 
+        calls = 1
+        speech_attempt: dict | None = None
+
         # Guard 3 asks for one regeneration with the previous lines fed back. One retry
         # only: a second identical answer is the model's position, not a slip.
         #
@@ -448,8 +521,7 @@ class Runner:
         # "say something materially different" is another instruction this model does not
         # take. So the retry's failure is now acted on rather than discarded: the question
         # has had this probe, and the follow-up is charged and converted (log 8.18).
-        calls = 1
-        if g.needs_regeneration:
+        if calls == 1 and g.needs_regeneration:
             first = g.applied
             out, raw = await self._decide(utterance, self.said_this_question, want)
             say_raw = _raw_say(raw)
@@ -599,16 +671,66 @@ class Runner:
             g.say = focus.DESIGN_FOLLOW_UP
             g.applied.append("design-gap->probe")
 
+        # A system-design question is hypothetical. Llama sometimes writes a useful probe
+        # with a past-experience premise ("How did you handle...?"), which changes what the
+        # candidate is being assessed on. Repair only the finite reviewed grammar here,
+        # after action and pacing are final but before focus validation. The raw line, model
+        # call count, action and budget remain untouched for auditability.
+        if (hard_cap and g.act in ("probe", "reask") and g.say
+                and focus.design_past_premise(g.say)):
+            repaired = focus.rewrite_design_past_premise(g.say)
+            repair_ok = bool(
+                repaired
+                and repaired.count("?") == 1
+                and (not self.max_say_words
+                     or len(repaired.split()) <= self.max_say_words)
+                and repaired not in self.said_this_session
+            )
+            if repair_ok:
+                g.say = repaired
+                g.applied.append("hypothetical-tense->rewrite")
+            else:
+                g.say = (focus.design_template(want, set(self.said_this_session))
+                         if want else focus.DESIGN_REASK)
+                g.applied.append("hypothetical-tense->template")
+
+        # Empty model speech is repaired late, after action and pacing gates are final. The
+        # second call exposes only `say`, so it cannot change the probe decision. Reask keeps
+        # its established behaviour: an empty line repeats the scripted question.
+        say_model = None
+        if (want and g.act == "probe" and not g.say and not g.needs_regeneration
+                and calls == 1):
+            say_model = ""
+            repaired, speech_attempt, repair_guards = await self._repair_speech(
+                utterance, want, "", "empty")
+            calls = 2
+            if repaired:
+                g.say = repaired
+                g.applied += ["empty-say->repaired"] + repair_guards
+            else:
+                g.applied.append("empty-say->repair-failed")
+
+        # A rejected repair gets the reviewed focus line. It remains visibly
+        # harness-authored in both the guard list and the structured attempt diagnostic.
+        if (want and g.act == "probe" and not g.say
+                and "empty-say->repair-failed" in g.applied):
+            template_fn = focus.design_template if hard_cap else focus.template
+            g.say = template_fn(want, set(self.said_this_session))
+            g.applied.append("empty-say->template")
+
         asked: list[str] = []
         # Validate what came back against what was asked for, and record the focus either
         # way -- a question must not be able to spend two turns on one request type.
         # The deterministic design line needs no validation or substitution, but it still
         # spends CHALLENGE. Leaving it unrecorded let the very next model turn ask what breaks
         # again while the decision log incorrectly claimed that no focus had been delivered.
-        say_model = None
         if "design-gap->probe" in g.applied:
             self.focus_used.add("CHALLENGE")
             asked = ["CHALLENGE"]
+        elif "empty-say->template" in g.applied:
+            self.focus_used.add(want)
+            asked = [want]
+            say_model = ""
         elif want and g.act in ("probe", "reask") and g.say:
             # The objective is a DISTINCT request, not obedience. If the model ignored the
             # requested focus but asked about some other unused one, that is a good turn and
@@ -616,19 +738,53 @@ class Runner:
             # Substituting on strict compliance was measured first and put 70% of lines on
             # ten canned sentences, which trades repetition within a question for the same
             # template across questions (log 8.19).
-            fresh = focus.classify(g.say) - self.focus_used
+            classified = focus.classify(g.say)
+            fresh = classified - self.focus_used
             # A fresh request can still be too long to speak naturally. The live Llama control
             # produced one 22-word compound request; the cap sent it to a focused template.
-            if self.max_say_words and len(g.say.split()) > self.max_say_words:
+            over_cap = bool(self.max_say_words
+                            and len(g.say.split()) > self.max_say_words)
+            if over_cap:
                 fresh = set()
             if fresh:
                 got = fresh
                 self.focus_used |= fresh
-            else:
+            elif (not classified and not over_cap
+                  and g.say.count("?") == 1
+                  and len(g.say.split()) >= UNNAMED_FOCUS_MIN_WORDS
+                  and g.say not in self.said_this_session):
+                # An empty `fresh` has TWO causes and the code treated them alike. A line that
+                # classifies to a SPENT type is the model repeating a request it has already
+                # made, and must not stand. A line that classifies to NOTHING is one the regex
+                # cannot NAME, which is a different thing from a bad question: over two live
+                # sessions, 16 of the 20 discarded lines were single, in-cap, non-repeating
+                # questions, among them "What was the colleague's reaction when you gave him
+                # feedback?" and a volume-of-alerts question that IS about scale and simply
+                # misses CONTEXT's wording. Their worst similarity to anything already spoken
+                # was 0.59 against guard 3's 0.60 limit, so repetition is separately covered.
+                #
+                # Keep the model's words and charge the REQUESTED focus, so the ladder still
+                # advances and the turn cannot silently ask the same kind of thing twice.
                 got = {want}
+                self.focus_used.add(want)
+                g.applied.append("unnamed-focus->kept")
+            else:
                 say_model = g.say
-                g.say = focus.template(want, set(self.said_this_session))
-                g.applied.append("off-focus->%s" % want.lower())
+                repaired = None
+                if g.act == "probe" and calls == 1:
+                    repaired, speech_attempt, repair_guards = await self._repair_speech(
+                        utterance, want, g.say, "off_focus")
+                    calls = 2
+                    if repaired:
+                        g.say = repaired
+                        g.applied += ["off-focus->repaired"] + repair_guards
+                    else:
+                        g.applied.append("off-focus->repair-failed")
+                if not repaired:
+                    template_fn = focus.design_template if hard_cap else focus.template
+                    g.say = template_fn(want, set(self.said_this_session))
+                    g.applied.append("off-focus->%s" % want.lower())
+                got = {want}
                 self.focus_used.add(want)
             asked = sorted(got)
 
@@ -636,7 +792,7 @@ class Runner:
         outcome = self._dispatch(g, utterance, out,
                                  wall_ms=(time.perf_counter() - t0) * 1000, calls=calls,
                                  want=want, asked=asked, say_model=say_model,
-                                 say_raw=say_raw)
+                                 say_raw=say_raw, speech_attempt=speech_attempt)
         if not outcome.closed_question:
             self._observe_later(utterance)
         return outcome
@@ -647,7 +803,8 @@ class Runner:
                   want: str | None = None,
                   asked: list[str] | None = None,
                   say_model: str | None = None,
-                  say_raw: str | None = None) -> TurnOutcome:
+                  say_raw: str | None = None,
+                  speech_attempt: dict | None = None) -> TurnOutcome:
         q = self.current
         # Captured before any handler runs: `_close_question` moves the index, and the line
         # this returns belongs to the question being closed, not to the one after it.
@@ -684,6 +841,10 @@ class Runner:
             # Unlike `say_model`, this is present even when a non-focus guard rewrites or
             # drops the line. Deterministic turns make no model call and record null.
             "say_raw": say_raw,
+            # A bounded second call that was allowed to supply speech only. Rejected output
+            # and its precise reason remain available instead of disappearing behind the
+            # focused template used as the final fallback.
+            "speech_attempt": speech_attempt,
             "follow_ups_used": self.follow_ups_used,
             "pool_left": self.pool,
             # Logged every turn, never branched on. The threshold gets set from real data

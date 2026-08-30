@@ -49,6 +49,14 @@ something went wrong, not because it seemed prudent:
 - closing actions do not speak the model's line
 - prompt fragments are stripped out of speech
 
+Natural probing adds two bounded speech controls after those guards. Hypothetical design
+questions are kept in future tense, and an empty or off-focus probe gets one speech-only repair
+attempt. That second contract exposes only `say`, so it cannot change the chosen action, the
+model's completeness judgement, candidate-question routing, pacing or budget. Python accepts the
+repair only when it is one direct question, no more than 25 words, asks for the requested focus and
+does not repeat the rejected line, the current question or earlier session speech. Otherwise a
+reviewed focus template is used.
+
 Control replies — stop, skip, carry on — are parsed by `app/intent.py`, which matches whole
 tokens, scopes negation to its clause, and answers `UNCLEAR` when it genuinely cannot tell.
 Ambiguity never ends a session.
@@ -94,14 +102,16 @@ python tools/probe_audit.py --session SESSION_ID `
 
 The audit measures speech transformation, not interview quality or model accuracy. It rejects
 sessions captured before raw model speech provenance was added rather than mixing incompatible
-records.
+records. It reports retained, repaired and template-substituted questions separately. Each repair
+also persists its trigger, raw attempt, accepted line, detected focus and rejection reason in
+`speech_attempt`.
 
 ## Layout
 
 ```
 app/
   runner.py        the loop: one decision per turn, dispatch over pure functions
-  contract.py      the turn schema and system prompt
+  contract.py      the normal turn and speech-only repair schemas and prompts
   guards.py        the five guards
   intent.py        stop / skip / carry-on parsing
   direction.py     is this an answer, or a question aimed at the interviewer
@@ -117,11 +127,18 @@ tests/             deterministic unit and integration coverage
 
 ## Why Llama
 
-Mockingbird was built measurement-first. [MODEL_EXPERIMENTING_LOG.md](MODEL_EXPERIMENTING_LOG.md)
-records the symmetric fixture screens, full interview controls, speech audits and rejected
-alternatives that led to selecting Llama as the sole runtime.
+Mockingbird was built measurement-first. The private development log
+`internal_docs/MODEL_EXPERIMENTING_LOG.md` records the symmetric fixture screens, full interview
+controls, speech audits and rejected alternatives that led to selecting Llama as the sole runtime.
+It remains local and intentionally ignored by Git.
 
 ## Status
 
-The text interview, the rubric scoring and the report are built and tested. A job-description
-planner and a voice mode are designed and not built.
+The text interview, rubric scoring, report and Stage 3 natural-probing controls are implemented.
+The current automated suite passes 319 tests. A full 14-question junior run produced 23 of 31
+follow-ups from model speech (20 retained byte for byte and three safely trimmed to one request),
+used seven templates and one deterministic design-gap probe, with no generic, compound or
+over-25-word spoken question. A later targeted replay proved the final speech-repair path can
+retain a corrected Llama question without changing its action. One fresh paired full-interview run
+is still required to measure the final aggregate substitution rate after that last classifier
+correction. A job-description planner and voice mode are designed and not built.

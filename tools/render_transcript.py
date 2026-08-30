@@ -31,6 +31,15 @@ _ids = _a.session or [d.name for d in sorted(
 # Hand-written where a session has been read and characterised; anything else renders with
 # its id, so the tool still works on a session recorded five minutes ago.
 KNOWN = {
+    # The Stage 3 speech-recovery pair, 30/08/2026. Answered live turn by turn, not replayed.
+    "20260830-012638-cea75e": (
+        "Junior-to-mid profile",
+        "Fourteen questions in forty turns. Thirty model-authored follow-ups, no canned "
+        "template spoken, and four of five speech repairs accepted."),
+    "20260830-013613-0982d1": (
+        "Strong profile",
+        "The same interviewer against complete answers: fourteen questions in fourteen "
+        "turns, no probes and no reasks. The pacing is the candidate's, not a setting."),
     "20260823-103441-e9f616": (
         "Data engineer",
         "Six years, owns a claims ingestion pipeline. Answers with figures and says how "

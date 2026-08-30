@@ -38,6 +38,18 @@ TURN_SCHEMA = {
     "additionalProperties": False,
 }
 
+# A wording repair must not be able to re-decide the turn. Keeping the action, score and
+# candidate-question fields out of this schema makes that a structural property rather than
+# another instruction the model may or may not follow.
+SPEECH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "say": {"type": "string"},
+    },
+    "required": ["say"],
+    "additionalProperties": False,
+}
+
 SYSTEM = """You are conducting a software-engineering job interview. You ask the scripted question and judge the reply.
 
 Choose exactly one action:
@@ -73,6 +85,21 @@ Rules:
   given the situation, what they personally did, and how it turned out.
 - "ask": if the candidate asked YOU a question, copy their question verbatim into "ask".
   Otherwise "ask" is an empty string. On clarify there is ALWAYS a question to copy."""
+
+
+SPEECH_SYSTEM = """You are wording one follow-up in a software-engineering job interview.
+The decision to probe is already final. Do not judge the answer or choose an action.
+
+Return only the literal interviewer speech in "say".
+- Ask exactly one direct question, with no preamble or acknowledgement.
+- Stay on the current interview question and the required focus.
+- Do not add an action, score, rationale, or any other field."""
+# The repeat instruction was removed because it could not be followed. This call gets the same
+# user turn as the decision it repairs, and the rendered history carries only the CANDIDATE's
+# ground, so the model can see neither the line just rejected nor any question it asked
+# earlier. Quoting them back is not the fix: doing so was measured and the model copied the
+# rejected line on two retries. Repetition is caught deterministically after the fact instead,
+# against `said_this_question` and `said_this_session`, which needs no cooperation.
 
 
 def render(question: str, answer: str, history: str = "") -> str:
