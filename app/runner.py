@@ -504,7 +504,8 @@ class Runner:
         # (log 8.18).
         want = focus.next_focus(utterance, self.focus_used,
                                 (self.current or {}).get("rubric_criteria") or [],
-                                (self.current or {}).get("focus_ladder") or [])
+                                (self.current or {}).get("focus_ladder") or [],
+                                self.seen)
         t0 = time.perf_counter()
         out, raw = await self._decide(utterance, [], want)
         say_raw = _raw_say(raw)

@@ -321,8 +321,19 @@ def classify(say: str) -> set[str]:
 UNSCORED_LADDER = ["CONTEXT", "ROLE", "REASON", "STEPS", "OUTCOME"]
 
 
+# Which observation part satisfies a criterion, so a criterion an earlier answer already
+# supplied is not asked for again. Parts are extracted off the live path, so `seen` covers the
+# answers BEFORE this one; the current utterance is the signal layer's job and it runs first.
+SATISFIED_BY = {
+    "sets_context": "situation",
+    "describes_action": "action",
+    "states_outcome": "result",
+}
+
+
 def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None,
-               ladder: list[str] | None = None) -> str | None:
+               ladder: list[str] | None = None,
+               seen: set[str] | None = None) -> str | None:
     """The request type to ask for next. Never returns one already used on this question.
 
     `ladder` comes from the phase (`focus_ladder` in the plan), because a generic order does
@@ -350,8 +361,11 @@ def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None
         # nine, and `collaboration` leaves it out altogether.
         #
         # Same set of criteria, asked in the order the ladder already specifies.
+        # A criterion with no observation part maps to None, which is never in `seen`, so
+        # the deterministic text checks stay askable.
         wanted = {FROM_CRITERION[c] for c in criteria
-                  if FROM_CRITERION.get(c) and FROM_CRITERION[c] not in used}
+                  if FROM_CRITERION.get(c) and FROM_CRITERION[c] not in used
+                  and SATISFIED_BY.get(c) not in (seen or set())}
         if wanted:
             for focus in list(ladder) + LADDER:
                 if focus in wanted:

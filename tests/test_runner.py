@@ -2195,3 +2195,43 @@ def test_a_depth_signal_still_outranks_the_ladder():
     # Credit to "we" with the candidate's own part unstated asks for ROLE.
     answer = "We got the p95 down to about three hundred milliseconds."
     assert focus.next_focus(answer, set(), criteria, ladder) in {"ROLE", "MEASURE"}
+
+
+def test_a_criterion_already_supplied_is_not_asked_again():
+    """The criteria loop asked whether a focus had been ASKED on this question and never
+    whether an earlier answer had SUPPLIED it, so a candidate who opened with the scale could
+    still be asked for the scale. `sets_context` is satisfied by a `situation` quote, which
+    the runner has tracked in `self.seen` since 1c.5 without ever consulting it here."""
+    criteria = ["sets_context", "describes_action"]
+    ladder = ["CONTEXT", "STEPS"]
+    answer = "It was a fifteen-year-old billing service with no tests."
+    assert focus.next_focus(answer, set(), criteria, ladder, set()) == "CONTEXT"
+    assert focus.next_focus(answer, set(), criteria, ladder, {"situation"}) == "STEPS"
+
+
+def test_a_criterion_with_no_observation_part_is_always_askable():
+    """ROLE and MEASURE come from deterministic text checks rather than extracted quotes, so
+    they have no part in `seen` and must never be skipped by it."""
+    criteria = ["first_person", "specific_detail"]
+    ladder = ["ROLE", "MEASURE"]
+    answer = "We shipped it behind a flag and it held."
+    got = focus.next_focus(answer, set(), criteria, ladder,
+                           {"situation", "action", "result"})
+    assert got in {"ROLE", "MEASURE"}
+
+
+def test_every_criterion_satisfied_falls_through_to_the_ladder():
+    """Nothing scored is outstanding, so the turn is not skipped -- the ladder still supplies
+    a request, which is what it is for."""
+    criteria = ["sets_context", "describes_action", "states_outcome"]
+    ladder = ["CHALLENGE", "LESSON"]
+    answer = "We cut p95 from eight seconds to three hundred milliseconds."
+    got = focus.next_focus(answer, set(), criteria, ladder,
+                           {"situation", "action", "result"})
+    assert got is not None
+    assert got not in {"CONTEXT", "STEPS", "OUTCOME"}
+
+
+def test_seen_defaults_to_empty_so_existing_callers_are_unchanged():
+    criteria = ["sets_context"]
+    assert focus.next_focus("It was a billing service.", set(), criteria, ["CONTEXT"]) == "CONTEXT"
