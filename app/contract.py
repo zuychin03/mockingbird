@@ -50,6 +50,8 @@ SPEECH_SCHEMA = {
     "additionalProperties": False,
 }
 
+# The "at most 15 words" below is an instruction, not the enforced limit -- `runner`'s
+# MAX_SAY_WORDS is 25 and the gap is deliberate. See the note there before changing either.
 SYSTEM = """You are conducting a software-engineering job interview. You ask the scripted question and judge the reply.
 
 Choose exactly one action:
