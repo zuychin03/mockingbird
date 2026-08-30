@@ -486,3 +486,70 @@ def instruction(focus: str) -> str:
     """The one line appended to the system prompt for this turn."""
     return ("\n\nFor THIS turn, if you probe or reask, ask about %s. Ask only that, in one "
             "short question." % FOCUS[focus])
+
+
+# Focus pairs this model renders alike. MEASURE comes out as "how did you know X" and REASON
+# as "what made you decide X"; for the same X those are one question, and the rotation cannot
+# see it because the labels genuinely differ. The same species as the OUTCOME/REASON finding
+# in the ladder log: the label is right and the rendering collapses.
+CONFUSABLE = (frozenset({"MEASURE", "REASON"}),)
+
+# Closed-class words. What survives is what the question is ABOUT, which is the part that has
+# to change for a follow-up to be a new question rather than a rewording.
+_FRAME = frozenset("""
+a an the this that those these there here it its their his her your my our
+i you he she we they them him us me
+is are was were be been being am do does did done doing have has had having
+can could will would shall should may might must
+how what why when where which who whom whose
+of on in at to for with about from by as into onto upon over under after before during
+and or but not no nor so if then than because while
+make makes made making take takes took taken get gets got go goes went gone
+say says said tell tells told know knew known think thought thinks
+decide decided decides choose chose chosen choosing determine determined determines
+mean means meant use used uses using need needed needs want wanted wants
+specific specifically particular particularly
+""".split())
+
+_NUMBER_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+    "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10", "eleven": "11",
+    "twelve": "12", "fifteen": "15", "twenty": "20", "thirty": "30", "forty": "40",
+    "fifty": "50", "sixty": "60", "hundred": "100", "thousand": "1000",
+}
+
+
+def _subject_words(say: str) -> set[str]:
+    """Content words, number words as digits and plurals stemmed, so "fifteen minutes" and
+    "15-minute" compare equal and "TTLs" matches "TTL"."""
+    out = set()
+    for word in re.split(r"[^a-z0-9]+", (say or "").lower()):
+        if not word or word in _FRAME:
+            continue
+        word = _NUMBER_WORDS.get(word, word)
+        for suffix in ("ies", "es", "s"):
+            if len(word) > 3 and word.endswith(suffix):
+                word = word[:-len(suffix)] + ("y" if suffix == "ies" else "")
+                break
+        if len(word) > 1 and word not in _FRAME:
+            out.add(word)
+    return out
+
+
+def rewords(prev_say: str, prev_focus, say: str, asked) -> bool:
+    """Is this probe the previous one asked again about the same thing?
+
+    Both conditions are needed. A confusable pair alone is not repetition -- "how did you know
+    splitting on the last space was enough" followed by "what made you keep the full name
+    column" is a proper follow-up, and it changes the object. A shared object alone is not
+    repetition either; "what did you change" then "what was the impact" share theirs and are
+    two different questions. Only the two together were redundant across the stored sessions.
+    """
+    if not (prev_say and say and prev_focus and asked):
+        return False
+    both = set(prev_focus) | set(asked)
+    if not any(pair <= both for pair in CONFUSABLE):
+        return False
+    if set(prev_focus) & set(asked):
+        return False
+    return bool(_subject_words(prev_say) & _subject_words(say))

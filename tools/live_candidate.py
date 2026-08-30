@@ -51,6 +51,7 @@ def save(r: Runner) -> None:
         "seen": sorted(r.seen),
         "stalls": r.stalls,
         "said_this_session": r.said_this_session,
+        "last_probe": list(r.last_probe) if r.last_probe else None,
         "design_followed_up": r.design_followed_up,
         "clarify_extra": r.clarify_extra,
         "skip_offered": r.skip_offered,
@@ -88,6 +89,9 @@ def restore(p, plan) -> Runner:
     r = Runner(p, plan, state, pool=d["pool"], observe_fn=extractor(p))
     r.index = d["index"]
     r.follow_ups_used = d["follow_ups_used"]
+    # Tuples do not survive JSON; `rewords` compares membership, so rebuild the shape.
+    lp = d.get("last_probe")
+    r.last_probe = (lp[0], tuple(lp[1])) if lp else None
     r.clarifies_used = d["clarifies_used"]
     r.focus_used = set(d.get("focus_used", []))
     r.seen = set(d.get("seen", []))

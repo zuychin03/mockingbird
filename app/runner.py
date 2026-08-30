@@ -213,6 +213,8 @@ class Runner:
         # bounds the closing phase; never reaches the extractor or the rubric.
         self.questions_asked: list[str] = []
         self.said_this_question: list[str] = []
+        # The previous probe on this question and the focus it was charged, for `rewords`.
+        self.last_probe: tuple[str, tuple[str, ...]] | None = None
         # Survives a question boundary, unlike `said_this_question`. All four verbatim
         # repeats in 9.7 were on different questions, so a per-question record could not
         # have seen any of them.
@@ -789,6 +791,18 @@ class Runner:
                 self.focus_used.add(want)
             asked = sorted(got)
 
+        # Rotation stops a focus being spent twice; it cannot stop two DIFFERENT focuses being
+        # rendered as the same question. Checked here rather than before the pool draw because
+        # the charged focus is the one that matters and it is not settled until now: the
+        # unnamed-kept path charges the requested focus for a line that classifies to nothing,
+        # so classifying the text again would miss exactly the lines this catches.
+        if (g.act in ("probe", "reask") and g.say and self.last_probe
+                and focus.rewords(self.last_probe[0], self.last_probe[1], g.say, asked)):
+            g.act, g.say, asked = "advance", "", []
+            g.applied.append("redundant-probe->advance")
+        elif g.act in ("probe", "reask") and g.say and asked:
+            self.last_probe = (g.say, tuple(asked))
+
         self.answers_this_question.append(utterance)
         outcome = self._dispatch(g, utterance, out,
                                  wall_ms=(time.perf_counter() - t0) * 1000, calls=calls,
@@ -942,4 +956,5 @@ class Runner:
         self.focus_used = set()
         self.questions_asked = []
         self.said_this_question = []
+        self.last_probe = None
         self.answers_this_question = []
