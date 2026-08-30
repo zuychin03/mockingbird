@@ -133,8 +133,11 @@ def test_the_live_harness_saves_every_field_the_runner_carries():
     # `_pending` is an in-flight extraction task and MUST NOT cross a process boundary --
     # `settle()` is what makes its result durable, as `seen` and `stalls`.
     # `max_say_words` is fixed Llama product configuration, not turn state.
+    # `similarity` is a capability handle like `observe_fn`, not turn state: it is rebuilt from
+    # whether the optional embedding model answers, which is a property of the machine rather
+    # than of the interview, and persisting a function reference across a process is meaningless.
     rebuilt = {"provider", "plan", "state", "questions", "history", "pace",
-               "observe_fn", "_pending", "max_say_words"}
+               "observe_fn", "_pending", "max_say_words", "similarity"}
     missing = attrs - rebuilt - saved
     assert not missing, "live_candidate.save() does not persist: %s" % sorted(missing)
 

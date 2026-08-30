@@ -514,6 +514,10 @@ def instruction(focus: str) -> str:
 # in the ladder log: the label is right and the rendering collapses.
 CONFUSABLE = (frozenset({"MEASURE", "REASON"}),)
 
+# Mirrors `embed.SIMILAR`, kept here so this module stays importable without the optional
+# embedding path and so the threshold reads next to the rule that applies it.
+SIMILAR_ENOUGH = 0.33
+
 # Closed-class words. What survives is what the question is ABOUT, which is the part that has
 # to change for a follow-up to be a new question rather than a rewording.
 _FRAME = frozenset("""
@@ -556,14 +560,19 @@ def _subject_words(say: str) -> set[str]:
     return out
 
 
-def rewords(prev_say: str, prev_focus, say: str, asked) -> bool:
+def rewords(prev_say: str, prev_focus, say: str, asked, similarity=None) -> bool:
     """Is this probe the previous one asked again about the same thing?
 
-    Both conditions are needed. A confusable pair alone is not repetition -- "how did you know
-    splitting on the last space was enough" followed by "what made you keep the full name
-    column" is a proper follow-up, and it changes the object. A shared object alone is not
-    repetition either; "what did you change" then "what was the impact" share theirs and are
-    two different questions. Only the two together were redundant across the stored sessions.
+    Two conditions, and the confusable pair is always one of them. A confusable pair ALONE is
+    not repetition -- measured over the stored sessions it is 42% false positives -- and a
+    shared object alone is not either, since "what did you change" then "what was the impact"
+    share theirs and are two questions.
+
+    What answers "about the same thing" has two implementations. Word overlap is exact, free
+    and always available, and it misses the case where the second probe renames the subject
+    ("which parts of the codebase" then "those paths"). `similarity` is the semantic test that
+    catches those; it is optional, and when it is absent this degrades to word overlap rather
+    than to nothing.
     """
     if not (prev_say and say and prev_focus and asked):
         return False
@@ -572,4 +581,7 @@ def rewords(prev_say: str, prev_focus, say: str, asked) -> bool:
         return False
     if set(prev_focus) & set(asked):
         return False
-    return bool(_subject_words(prev_say) & _subject_words(say))
+    if _subject_words(prev_say) & _subject_words(say):
+        return True
+    score = similarity(prev_say, say) if similarity else None
+    return score is not None and score >= SIMILAR_ENOUGH

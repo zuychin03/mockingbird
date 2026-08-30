@@ -2336,3 +2336,36 @@ def test_the_widened_determine_family_is_measure(said):
 ])
 def test_the_widened_determine_family_still_excludes_selection(said):
     assert "MEASURE" not in focus.classify(said), (said, sorted(focus.classify(said)))
+
+
+def test_semantic_similarity_catches_a_reword_that_shares_no_word():
+    """The case word overlap cannot reach: "which parts of the codebase" and "those paths" are
+    one question with no token in common. Every deterministic proxy for this was measured and
+    rejected, which is why the optional embedding path exists."""
+    prev = ("How did you know which parts of the codebase were most relevant to understand "
+            "its overall behavior?")
+    now = "What made you decide to focus on those paths?"
+    assert not focus.rewords(prev, ["MEASURE"], now, ["REASON"])
+    assert focus.rewords(prev, ["MEASURE"], now, ["REASON"], lambda a, b: 0.42)
+
+
+def test_semantic_similarity_below_the_threshold_is_not_a_reword():
+    prev = "How did you determine the threshold for invalidating cache entries?"
+    now = "What made you realize that checking the warehouse system was usually the issue?"
+    assert not focus.rewords(prev, ["MEASURE"], now, ["REASON"], lambda a, b: 0.15)
+
+
+def test_an_unavailable_embedding_model_degrades_to_word_overlap():
+    """An interview must not behave differently in kind because a second model is absent."""
+    shares = ("How did you determine that a 15-minute TTL on product data was sufficient?",
+              "What made you choose fifteen minutes as a threshold for TTLs?")
+    assert focus.rewords(shares[0], ["MEASURE"], shares[1], ["REASON"], lambda a, b: None)
+    assert focus.rewords(shares[0], ["MEASURE"], shares[1], ["REASON"], None)
+
+
+def test_similarity_never_overrides_the_confusable_gate():
+    """Similarity alone is not repetition. STEPS then OUTCOME score high because they are about
+    one change, and they are two different questions."""
+    prev = "What specific changes did you make to improve performance?"
+    now = "What was the impact of these changes on performance or scalability?"
+    assert not focus.rewords(prev, ["STEPS"], now, ["OUTCOME"], lambda a, b: 0.99)
