@@ -88,12 +88,10 @@ _PATTERNS = {
                # The `determine` family reached six rejected lines over two live sessions and
                # cleared D1's three-example bar; four of them are recovered here.
                #
-               # The adjective slot stays `(optimal|processing)` and is NOT widened to a bare
-               # `\w+`, which also matched "how did you determine the RIGHT TIME to give him
-               # that feedback" -- a timing judgement rather than a measurement. The opening
-               # accepts "how you determined" because the harness's own hedge-strip rewrites
-               # "Can you walk me through how you determined X?" into that form, which the
-               # old clause could not match: a defect in our own pipeline, not a new family.
+               # The opening accepts "how you determined" because the harness's own hedge-strip
+               # rewrites "Can you walk me through how you determined X?" into that form,
+               # which the old clause could not match: a defect in our own pipeline, not a
+               # new family.
                #
                # A generic `determine\b` with a `(?!which|what|who)` lookahead was measured
                # and REJECTED. It catches two more lines and takes seven false positives with
@@ -101,12 +99,34 @@ _PATTERNS = {
                # did you determine the colleague who reviewed it"). It read clean against 128
                # stored lines because the corpus holds no such shape, which is section 5's
                # lesson: a 719-utterance sweep found one, seven adversarial sentences found
-               # seven.
+               # seven. So the measurable head noun stays load-bearing and only the modifier
+               # slot moves.
+               #
+               # The enumerated adjective slot was fitted to the six lines available when it
+               # was written and did not survive a seventh -- "the AVERAGE TURNAROUND time"
+               # failed while containing the head noun. Any few words are allowed before the
+               # noun now, bounded instead by what separates the two families structurally: a
+               # measurable noun followed by an INFINITIVE is a judgement about when or
+               # whether to act ("the right time TO give him that feedback"), while a
+               # measurement continues with of, for or across. Ten positives, nineteen
+               # adversarial negatives clean, and 13 verdicts changed across 495 stored lines,
+               # all of them real measurement questions.
+               #
+               # `determine that ...` no longer requires a time unit: establishing a
+               # PROPOSITION is a measurement question whatever the proposition is about, and
+               # the hazard shapes all take "the", "which" or "who" rather than "that".
+               #
+               # `percentage` was measured for the noun list and REJECTED, leaving one stored
+               # line ("the correct percentage of undercounted orders") unclassified. The
+               # infinitive bound only reaches an infinitive ADJACENT to the noun, and
+               # "percentage of the team to reassign" puts one out of its range -- a percentage
+               # of PEOPLE is ordinary English in a way that a rate or a latency of people is
+               # not, so it is the one candidate noun that reopens the selection hazard.
                r"percentile|baseline|how (?:did you |you )(?:determined?|establish(?:ed)?) "
-               r"(?:the )?(?:(?:optimal|processing) )*"
-               r"(?:frequency|time|impact|threshold|duration)\b|"
-               r"how (?:did you |you )(?:determined?|establish(?:ed)?) that [^?]*\b"
-               r"(?:milliseconds?|seconds?|minutes?|hours?|days?)\b|"
+               r"(?:the |a |an )?(?:[\w-]+ ){0,4}?"
+               r"(?:frequency|time|impact|threshold|duration|rate|latency|throughput)\b"
+               r"(?! to\b)|"
+               r"how (?:did you |you )(?:determined?|establish(?:ed)?) that\b|"
                r"how did you know (?:the )?(?:(?:optimal|expected) )?timeframe\b|"
                # TEMPLATE. Bounded by the epistemic infinitive: "looking at" alone is a
                # question about documents or dashboards, "looking at to tell/know" is a
