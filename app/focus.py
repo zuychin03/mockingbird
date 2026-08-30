@@ -341,10 +341,26 @@ def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None
         for name, focus in FROM_SIGNAL:
             if signals(utterance).get(name) and focus not in used:
                 return focus
-        for c in criteria:
-            focus = FROM_CRITERION.get(c)
-            if focus and focus not in used:
-                return focus
+        # The criteria say WHAT the answer is scored on; the ladder says what an interviewer
+        # asks FIRST. Both already existed and the criteria loop returned in ITS order, so
+        # the ladder's conversational tuning was unreachable whenever any criterion was
+        # unmet. `sets_context` leads every scored phase, so CONTEXT won almost every
+        # fallback turn -- 13 of 38 requests in one live interview, which spoke "What was the
+        # scale of ...?" four times -- while the same phase's ladder ranks CONTEXT eighth of
+        # nine, and `collaboration` leaves it out altogether.
+        #
+        # Same set of criteria, asked in the order the ladder already specifies.
+        wanted = {FROM_CRITERION[c] for c in criteria
+                  if FROM_CRITERION.get(c) and FROM_CRITERION[c] not in used}
+        if wanted:
+            for focus in list(ladder) + LADDER:
+                if focus in wanted:
+                    return focus
+            # A criterion the ladder does not rank at all is still owed an ask.
+            for c in criteria:
+                focus = FROM_CRITERION.get(c)
+                if focus in wanted:
+                    return focus
     for focus in list(ladder) + LADDER:
         if focus not in used:
             return focus

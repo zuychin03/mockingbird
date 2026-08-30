@@ -2154,3 +2154,44 @@ def test_the_live_past_premise_without_you_is_never_spoken(tmp_path):
     # Provenance is untouched: the raw line is still recorded and no extra call was spent.
     assert decision["say_raw"] == raw
     assert decision["model_calls"] == 1
+
+
+def test_the_ladder_orders_the_scored_criteria():
+    """Two orderings existed and the wrong one won. `rubric_criteria` says WHAT is scored and
+    leads with `sets_context` in every scored phase; `focus_ladder` says what to ask FIRST and
+    ranks CONTEXT eighth of nine. The criteria loop returned in its own order, so the ladder
+    was unreachable whenever a criterion was unmet, and one live interview asked "What was the
+    scale of ...?" four times."""
+    criteria = ["sets_context", "describes_action", "states_outcome",
+                "first_person", "specific_detail"]
+    ladder = ["STEPS", "REASON", "OUTCOME", "ROLE", "CHALLENGE",
+              "LESSON", "MEASURE", "CONTEXT", "DURATION"]
+    answer = "We split the users table live and I wrote the backfill myself."
+    assert focus.next_focus(answer, set(), criteria, ladder) == "STEPS"
+
+
+def test_context_is_still_asked_once_the_ladder_is_spent():
+    """Reordering must not DROP a scored criterion, only defer it."""
+    criteria = ["sets_context", "describes_action", "states_outcome"]
+    ladder = ["STEPS", "OUTCOME"]
+    answer = "We split the users table live and I wrote the backfill myself."
+    got = focus.next_focus(answer, {"STEPS", "OUTCOME"}, criteria, ladder)
+    assert got == "CONTEXT"
+
+
+def test_a_criterion_the_ladder_omits_is_still_reachable():
+    """`collaboration` leaves CONTEXT out of its ladder entirely, and `sets_context` is still
+    one of the things it is scored on."""
+    criteria = ["sets_context"]
+    ladder = ["STEPS", "OUTCOME", "ROLE"]
+    answer = "I told him the Friday deploys were costing the team weekends."
+    assert focus.next_focus(answer, set(), criteria, ladder) == "CONTEXT"
+
+
+def test_a_depth_signal_still_outranks_the_ladder():
+    """Signals read what THIS answer is missing and must keep priority over both orderings."""
+    criteria = ["sets_context", "describes_action"]
+    ladder = ["STEPS", "REASON"]
+    # Credit to "we" with the candidate's own part unstated asks for ROLE.
+    answer = "We got the p95 down to about three hundred milliseconds."
+    assert focus.next_focus(answer, set(), criteria, ladder) in {"ROLE", "MEASURE"}
