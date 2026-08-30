@@ -228,12 +228,24 @@ These states cost no model call and cannot silently convert a bare affirmative i
 `focus.next_focus()` chooses what a probe should ask about. Its precedence is:
 
 1. Missing signals in the current answer.
-2. The phase's declared rubric criteria.
+2. The phase's declared rubric criteria, still outstanding, asked in the ladder's order.
 3. The phase-specific focus ladder.
 4. A global fallback ladder.
 
 Used focuses are excluded, preventing the same request type from consuming multiple turns. If the
 candidate explicitly has no example, focus steering is disabled and rephrasing is left to `reask`.
+
+Two orderings exist and step 2 follows the second. `rubric_criteria` is the order an answer is
+SCORED in and leads with `sets_context` in every scored phase; `focus_ladder` is the order an
+interviewer ASKS in and ranks `CONTEXT` low or omits it. Selecting in scoring order made the
+ladder unreachable whenever a criterion was unmet, so `CONTEXT` won nearly every fallback turn.
+
+A criterion is outstanding only if its focus is unused AND the observation part that satisfies it
+is not in `seen` (`SATISFIED_BY` in `app/focus.py`): `sets_context` by `situation`,
+`describes_action` by `action`, `states_outcome` by `result`. This is what stops the interviewer
+asking for evidence an earlier answer already supplied. Criteria with no extracted part, such as
+`first_person`, are never skipped by it. Parts are extracted off the live path, so `seen` reflects
+the answers before the current one; the current utterance is covered by step 1, which runs first.
 
 ### 6.5 Ask the model for one constrained proposal
 
