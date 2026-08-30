@@ -2235,3 +2235,67 @@ def test_every_criterion_satisfied_falls_through_to_the_ladder():
 def test_seen_defaults_to_empty_so_existing_callers_are_unchanged():
     criteria = ["sets_context"]
     assert focus.next_focus("It was a billing service.", set(), criteria, ["CONTEXT"]) == "CONTEXT"
+
+
+def test_a_confusable_focus_pair_about_the_same_thing_is_a_reword():
+    """MEASURE renders as "how did you know X" and REASON as "what made you decide X"; for one
+    X those are the same question, and the rotation cannot see it because the labels differ."""
+    assert focus.rewords(
+        "How did you determine that a 15-minute TTL on product data was sufficient?",
+        ["MEASURE"],
+        "What made you choose fifteen minutes as a threshold for TTLs?",
+        ["REASON"])
+
+
+def test_a_confusable_pair_that_changes_the_object_is_a_real_follow_up():
+    """The live pair this must not block: both are MEASURE then REASON, and the second asks
+    about a different thing, so it is the follow-up an interviewer would actually ask."""
+    assert not focus.rewords(
+        "How did you know that splitting on the last space would be sufficient to backfill "
+        "the existing data?",
+        ["MEASURE"],
+        "What made you decide to keep the original full name column instead of dropping it?",
+        ["REASON"])
+
+
+def test_a_shared_object_alone_is_not_a_reword():
+    """STEPS then OUTCOME share their object constantly and are two different questions."""
+    assert not focus.rewords(
+        "What specific changes did you make to improve performance?", ["STEPS"],
+        "What was the impact of these changes on performance or scalability?", ["OUTCOME"])
+
+
+def test_the_same_focus_twice_is_left_to_the_rotation():
+    """Rotation already forbids spending one focus twice; this guard must not also claim it,
+    or a repeat would be reported under the wrong name."""
+    assert not focus.rewords(
+        "How did you know the queue was keeping up?", ["MEASURE"],
+        "How did you know the error rate was acceptable?", ["MEASURE"])
+
+
+def test_number_words_and_plurals_normalise_before_comparing():
+    assert focus._subject_words("fifteen minutes") & focus._subject_words("a 15-minute TTL")
+    assert focus._subject_words("those TTLs") & focus._subject_words("the TTL")
+
+
+def test_reword_needs_both_sides_present():
+    assert not focus.rewords("", ["MEASURE"], "What made you decide that?", ["REASON"])
+    assert not focus.rewords("How did you know?", [], "What made you decide that?", ["REASON"])
+
+
+def test_runner_advances_rather_than_asking_a_reworded_probe(tmp_path, monkeypatch):
+    """The response is advance, not repair. Routing rejected lines to the repair was measured
+    worse: it fails often and the failures become templates."""
+    focuses = iter(["MEASURE", "REASON"])
+    monkeypatch.setattr(focus, "next_focus", lambda *args: next(focuses))
+    first = "How did you determine that a 15-minute TTL on product data was sufficient?"
+    second = "What made you choose fifteen minutes as a threshold for TTLs?"
+    r, state = build([d("probe", first, ok=False), d("probe", second, ok=False)], tmp_path)
+    run(r.ask())
+    run(r.submit("I cached the product catalogue with a fifteen minute TTL."))
+    out = run(r.submit("It felt like a round number."))
+    decision = last_decision(state)
+    assert "redundant-probe->advance" in decision["guards"]
+    assert decision["say"] == ""
+    # The focus is not charged either: nothing was asked, so nothing was delivered.
+    assert decision["focus_got"] == []
