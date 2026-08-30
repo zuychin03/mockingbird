@@ -2299,3 +2299,40 @@ def test_runner_advances_rather_than_asking_a_reworded_probe(tmp_path, monkeypat
     assert decision["say"] == ""
     # The focus is not charged either: nothing was asked, so nothing was delivered.
     assert decision["focus_got"] == []
+
+
+@pytest.mark.parametrize("said", [
+    # The enumerated adjective slot was fitted to the lines available and did not survive a
+    # seventh: this one carries the head noun and still failed, sending a good repair to a
+    # template on the live strong control.
+    "How did you determine the average turnaround time of two days for refunds?",
+    "How did you determine the median response time across those endpoints?",
+    "How did you establish the acceptable error rate for the rollout?",
+    "How did you determine the refill rate for the token bucket?",
+    # `determine that ...` no longer needs a time unit: establishing a proposition is a
+    # measurement question whatever the proposition is about.
+    "How did you determine that the issue was with the email provider's API?",
+    "How did you determine that the backlog was growing?",
+])
+def test_the_widened_determine_family_is_measure(said):
+    assert focus.classify(said) == {"MEASURE"}, (said, sorted(focus.classify(said)))
+
+
+@pytest.mark.parametrize("said", [
+    # A measurable noun followed by an infinitive is a judgement about when or whether to act,
+    # not a measurement. This is what lets the modifier slot be widened at all.
+    "How did you determine the right time to give him that feedback?",
+    "How did you determine the best time to raise it with your manager?",
+    # The person/object hazard the generic `determine\b` was rejected for.
+    "How did you determine which framework to use?",
+    "How did you determine the colleague who reviewed it?",
+    "How did you determine the right person to talk to?",
+    "How did you determine the best candidate for that role?",
+    "How did you determine the team that owned the service?",
+    "How did you determine who should review it?",
+    "How did you determine the appropriate escalation path?",
+    "How did you establish the working relationship with that team?",
+    "How did you determine the vendor you went with?",
+])
+def test_the_widened_determine_family_still_excludes_selection(said):
+    assert "MEASURE" not in focus.classify(said), (said, sorted(focus.classify(said)))
