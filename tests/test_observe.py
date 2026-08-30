@@ -355,3 +355,34 @@ def test_a_cached_observation_survives_the_round_trip_intact():
         assert a.addresses_question == b.addresses_question
         assert a.text == b.text
         assert a.first_person == b.first_person
+
+
+def test_one_sentence_may_serve_two_fields():
+    """Candidates set the scene and say what they did in a single sentence constantly. While
+    the fields were treated as exclusive the model gave that sentence to `action` and returned
+    an empty `situation`, which starved the live `seen` set and made the selector ask for
+    context the candidate had already given. Nothing in the grounding may re-impose that."""
+    shared = "We split a claims table in two while it was live, about 200 million rows"
+    o = obs(situation=shared, action=shared)
+    assert o.situation and o.action
+    assert not o.dropped_quotes
+
+
+def test_the_prompt_permits_a_shared_sentence():
+    """Pinned as text because the recall is a property of the instruction, not of the code:
+    rewording `situation` itself was measured and moved nothing, while permitting overlap moved
+    it 43 points."""
+    assert "SAME sentence may supply more than one field" in observe.SYSTEM
+
+
+def test_changing_the_extraction_prompt_invalidates_the_cache():
+    """A stale cache would serve pre-change observations and make a real improvement look like
+    a no-op, which is indistinguishable from the change not working."""
+    items = [("q.1", "Tell me about a schema change.", [ANSWER], "star")]
+    before = observe.fingerprint(items)
+    original = observe.SYSTEM
+    try:
+        observe.SYSTEM = original + "\n- An extra rule."
+        assert observe.fingerprint(items) != before
+    finally:
+        observe.SYSTEM = original
