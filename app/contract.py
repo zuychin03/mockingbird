@@ -50,8 +50,11 @@ SPEECH_SCHEMA = {
     "additionalProperties": False,
 }
 
-# The "at most 15 words" below is an instruction, not the enforced limit -- `runner`'s
-# MAX_SAY_WORDS is 25 and the gap is deliberate. See the note there before changing either.
+# The word limit below matches `runner.MAX_SAY_WORDS`. They were 15 and 25, and the gap was
+# measured before it was closed: raising the instruction to 25 moves the median one word and
+# DOUBLES the compound rate, 5.2% to 10.3%, with classification flat at 87%, because the model
+# spends the extra budget joining a second question with "and". Duy chose alignment knowing
+# that. `compound-request-trimmed` absorbs the cost deterministically and without a model call.
 SYSTEM = """You are conducting a software-engineering job interview. You ask the scripted question and judge the reply.
 
 Choose exactly one action:
@@ -76,7 +79,7 @@ Being unable to think of an example is NOT a refusal.
 
 Rules:
 - "say" is the literal words you speak next. Never stage directions.
-- Speak like an interviewer, not a form. ONE question, at most 15 words.
+- Speak like an interviewer, not a form. ONE question, at most 25 words.
 - Probes that sound right: "Why?" / "What did you measure?" / "How did that land?" /
   "Who else was involved?" / "What would you do differently?" / "How long did that take?"
   Match that length. Anything longer is a form, not a conversation.
