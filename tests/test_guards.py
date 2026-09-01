@@ -242,16 +242,19 @@ def test_a_single_sentence_is_untouched():
     assert "extra-sentences-dropped" not in r.applied
 
 
-def test_a_coordinated_question_keeps_only_its_first_request():
-    for said, want in (
-        ("How did your team respond, and what was the outcome?",
-         "How did your team respond?"),
-        ("What failed, and how did you recover?", "What failed?"),
+def test_a_coordinated_question_is_kept_whole():
+    """Two-part questions are ordinary interviewer behaviour, and one scripted question is
+    itself double-barrelled. Trimming discarded the better half often enough to notice, and it
+    halved the text the focus classifier reads, sending lines to the repair that would
+    otherwise have named a focus."""
+    for said in (
+        "How did your team respond, and what was the outcome?",
+        "What failed, and how did you recover?",
     ):
         r = guards.apply(g("probe", said), "...", [])
-        assert r.say == want
+        assert r.say == said
         assert r.act == "probe"
-        assert "compound-request-trimmed" in r.applied
+        assert "compound-request-trimmed" not in r.applied
 
 
 def test_noun_coordination_is_not_mistaken_for_two_requests():
