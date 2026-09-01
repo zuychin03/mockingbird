@@ -943,7 +943,10 @@ def test_speech_repair_schema_cannot_change_the_locked_action(tmp_path, monkeypa
     assert "empty-say->repaired" in decision["guards"]
 
 
-def test_empty_probe_speech_repair_rejects_the_wrong_focus(tmp_path, monkeypatch):
+def test_a_repair_on_a_different_but_unspent_focus_is_accepted(tmp_path, monkeypatch):
+    """The repair used to demand the exact requested focus while the decision path it serves
+    accepts any FRESH one. That was stricter than the rule it repairs, and it cost 12 of 54
+    off-focus rejections -- usable questions replaced by canned lines."""
     monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
     r, state = build([d("probe", "", ok=False),
                       speech("Why did you choose Redis?")], tmp_path)
@@ -953,14 +956,31 @@ def test_empty_probe_speech_repair_rejects_the_wrong_focus(tmp_path, monkeypatch
     decision = last_decision(state)
 
     assert out.act == "probe"
+    assert out.spoken.text == "Why did you choose Redis?"
+    # charged what it ASKS, not what was requested -- otherwise the rotation loses track
+    assert decision["focus_got"] == ["REASON"]
+    assert decision["speech_attempt"]["accepted"] is True
+    assert "empty-say->repaired" in decision["guards"]
+
+
+def test_a_repair_on_an_already_spent_focus_is_still_rejected(tmp_path, monkeypatch):
+    """"Any fresh focus" is the whole relaxation. A repair that lands on a focus the question
+    has already had is the repetition the rotation exists to stop."""
+    focuses = iter(["REASON", "MEASURE"])
+    monkeypatch.setattr(focus, "next_focus", lambda *args: next(focuses))
+    # Lexically distinct from the repair below, so this isolates the FOCUS rule from the
+    # separate string-repetition guard.
+    r, state = build([d("probe", "What drove that architectural decision?", ok=False),
+                      d("probe", "", ok=False),
+                      speech("Why did you choose Redis?")], tmp_path)
+    run(r.ask())
+    run(r.submit("Because it was already running."))
+    out = run(r.submit("It took about twenty minutes."))
+    decision = last_decision(state)
+
     assert out.spoken.text in focus.TEMPLATE["MEASURE"]
-    assert decision["focus_got"] == ["MEASURE"]
-    assert decision["say_raw"] == ""
-    assert decision["model_calls"] == 2
     assert decision["speech_attempt"]["accepted"] is False
     assert decision["speech_attempt"]["rejection"] == "off_focus"
-    assert decision["speech_attempt"]["say_raw"] == "Why did you choose Redis?"
-    assert "empty-say->repair-failed" in decision["guards"]
     assert "empty-say->template" in decision["guards"]
 
 
@@ -1220,7 +1240,8 @@ def test_speech_repair_accepts_the_requested_focus_with_an_incidental_extra_labe
     decision = last_decision(state)
 
     assert out.spoken.text == repaired
-    assert decision["focus_got"] == ["STEPS"]
+    # Both labels are charged, as the decision path charges every fresh label it classifies.
+    assert decision["focus_got"] == ["LESSON", "STEPS"]
     assert decision["speech_attempt"]["accepted"] is True
 
 
@@ -1255,7 +1276,7 @@ def test_speech_repair_still_rejects_an_exact_session_repeat(tmp_path, monkeypat
     assert decision["speech_attempt"]["rejection"] == "repeated"
 
 
-def test_a_rejected_off_focus_speech_repair_falls_back_with_diagnostics(
+def test_an_off_focus_repair_on_an_unspent_focus_is_spoken(
         tmp_path, monkeypatch):
     monkeypatch.setattr(focus, "next_focus", lambda *args: "CONTEXT")
     r, state = build([d("probe", "Tell me about the weather."),
@@ -1264,12 +1285,13 @@ def test_a_rejected_off_focus_speech_repair_falls_back_with_diagnostics(
     out = run(r.submit("we shipped it"))
     decision = last_decision(state)
 
-    assert out.spoken.text in focus.TEMPLATE["CONTEXT"]
-    assert decision["speech_attempt"]["accepted"] is False
-    assert decision["speech_attempt"]["rejection"] == "off_focus"
-    assert decision["speech_attempt"]["say_raw"] == "What happened afterwards?"
-    assert "off-focus->repair-failed" in decision["guards"]
-    assert "off-focus->context" in decision["guards"]
+    # CONTEXT was requested and the model asked OUTCOME instead. It does that persistently --
+    # CONTEXT repairs failed most often precisely because asking a second time returns another
+    # OUTCOME question -- and an unspent OUTCOME question is still a good turn.
+    assert out.spoken.text == "What happened afterwards?"
+    assert decision["speech_attempt"]["accepted"] is True
+    assert decision["focus_got"] == ["OUTCOME"]
+    assert "off-focus->repaired" in decision["guards"]
 
 
 def test_an_on_focus_line_is_left_alone(tmp_path):
@@ -2431,3 +2453,78 @@ def test_an_unavailable_similarity_mid_session_is_treated_as_a_match(tmp_path, m
     run(r.submit("We shipped it and watched the dashboard."))
     run(r.submit("I looked at latency across the rollout."))
     assert "spent-focus->kept-distinct" not in last_decision(state)["guards"]
+
+
+def test_a_character_repeat_the_embedding_calls_distinct_is_kept(tmp_path, monkeypatch):
+    """Guard 3 compares characters, and short interview questions are mostly scaffolding:
+    "What was the outcome of that approval process?" scores 0.65 against "What was the scale of
+    that?". Of the spoken pairs it would call repeats, 57% are different questions, and each one
+    was driving a full re-decide at +1,201 ms that then discarded the question 37% of the time."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    first = "What was the outcome of that approval process?"
+    second = "What was the scale of that?"
+    r, state = build([d("probe", first, ok=False), d("probe", second, ok=False)], tmp_path,
+                     similarity=lambda a, b: 0.19)
+    run(r.ask())
+    run(r.submit("We got sign-off from the platform team."))
+    out = run(r.submit("It was about eight million rows."))
+    decision = last_decision(state)
+    assert "char-repeat->kept-distinct" in decision["guards"]
+    assert "regenerated" not in decision["guards"]
+    assert decision["model_calls"] == 1
+    assert out.spoken.text == second
+
+
+def test_a_character_repeat_the_embedding_agrees_with_still_regenerates(tmp_path, monkeypatch):
+    """The character test still gates this. The embedding only vetoes it."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    r, state = build([d("probe", "What was the outcome of that approval process?", ok=False),
+                      d("probe", "What was the outcome of that approval?", ok=False),
+                      d("probe", "How many rows were involved?", ok=False)], tmp_path,
+                     similarity=lambda a, b: 0.90)
+    run(r.ask())
+    run(r.submit("We got sign-off from the platform team."))
+    run(r.submit("It was about eight million rows."))
+    assert "regenerated" in last_decision(state)["guards"]
+
+
+def test_without_an_embedding_a_character_repeat_regenerates_as_before(tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    r, state = build([d("probe", "What was the outcome of that approval process?", ok=False),
+                      d("probe", "What was the scale of that?", ok=False),
+                      d("probe", "How many rows were involved?", ok=False)], tmp_path)
+    run(r.ask())
+    run(r.submit("We got sign-off from the platform team."))
+    run(r.submit("It was about eight million rows."))
+    assert "regenerated" in last_decision(state)["guards"]
+
+
+def test_a_regeneration_records_the_line_that_tripped_it(tmp_path, monkeypatch):
+    """`say_raw` is overwritten by the retry, so without this the only record of what guard 3
+    rejected is gone -- which is why its false-positive rate had to be inferred from spoken
+    pairs rather than read off the firings."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    tripped = "What was the outcome of that approval process?"
+    r, state = build([d("probe", tripped, ok=False),
+                      d("probe", "What was the outcome of that approval?", ok=False),
+                      d("probe", "How many rows were involved?", ok=False)], tmp_path,
+                     similarity=lambda a, b: 0.90)
+    run(r.ask())
+    run(r.submit("We got sign-off from the platform team."))
+    run(r.submit("It was about eight million rows."))
+    decision = last_decision(state)
+    assert "regenerated" in decision["guards"]
+    assert decision["regenerated_from"] == "What was the outcome of that approval?"
+
+
+def test_an_invalid_reply_still_regenerates_even_when_distinct(tmp_path, monkeypatch):
+    """`needs_regeneration` has two causes. An unparseable reply must still retry -- NFR-6
+    degrades rather than skipping ahead -- and only the REPEAT cause is vetoed here."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    r, state = build([{"act": "nonsense", "say": "", "ok": False, "ask": ""},
+                      d("probe", "How many rows were involved?", ok=False)], tmp_path,
+                     similarity=lambda a, b: 0.01)
+    run(r.ask())
+    out = run(r.submit("It was about eight million rows."))
+    assert "char-repeat->kept-distinct" not in last_decision(state)["guards"]
+    assert out.act == "probe"

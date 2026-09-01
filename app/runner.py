@@ -367,7 +367,14 @@ class Runner:
             rejection = "repeated"
         elif cap and len(checked.say.split()) > cap:
             rejection = "over_length"
-        elif want not in got:
+        elif want not in got and not (set(got) - self.focus_used):
+            # A FRESH request, not obedience -- the same rule the decision path applies four
+            # hundred lines below, and this was stricter than the thing it repairs. Requiring
+            # the exact focus cost 12 of 54 off-focus rejections, each a usable question
+            # replaced by a canned line: "What was the impact of the resolved issue on your
+            # team and the business?" rejected because CONTEXT was requested and it asks
+            # OUTCOME. It also explains why CONTEXT repairs fail most -- the model does not
+            # write CONTEXT questions, so asking a second time returns another OUTCOME one.
             rejection = "off_focus"
 
         attempt = {
@@ -544,6 +551,10 @@ class Runner:
 
         calls = 1
         speech_attempt: dict | None = None
+        # The line that TRIPPED guard 3. Without it the retry's `say_raw` overwrites the only
+        # record of what was rejected, which is why the false-positive rate above had to be
+        # inferred from spoken pairs rather than read off the firings themselves.
+        regenerated_from: str | None = None
 
         # Guard 3 asks for one regeneration with the previous lines fed back. One retry
         # only: a second identical answer is the model's position, not a slip.
@@ -553,8 +564,27 @@ class Runner:
         # "say something materially different" is another instruction this model does not
         # take. So the retry's failure is now acted on rather than discarded: the question
         # has had this probe, and the follow-up is charged and converted (log 8.18).
+        # Guard 3 compares CHARACTERS, and short interview questions are mostly scaffolding:
+        # "What was the outcome of that approval process?" scores 0.65 against "What was the
+        # scale of that?", and "How did you know that?" scores 0.63 against "How did that
+        # land?". Of the spoken pairs it would call repeats, the embedding says 57% are
+        # different questions. Regeneration is also the most expensive thing in a turn --
+        # +1,201 ms against the speech repair's +686, because it is a full decision call --
+        # and it succeeds 30% of the time, so an over-firing guard was driving the costliest
+        # retry to discard questions that were fine.
+        #
+        # The character test still gates this; the embedding only vetoes it. Without the model
+        # `_distinct_from_asked` returns False and the old behaviour stands.
+        if (calls == 1 and g.needs_regeneration and g.say
+                and "repeated-say->regenerate" in g.applied
+                and "invalid->probe" not in g.applied
+                and self._distinct_from_asked(g.say)):
+            g.needs_regeneration = False
+            g.applied.append("char-repeat->kept-distinct")
+
         if calls == 1 and g.needs_regeneration:
             first = g.applied
+            regenerated_from = say_raw
             out, raw = await self._decide(utterance, self.said_this_question, want)
             say_raw = _raw_say(raw)
             g = guards.apply(raw, utterance, self.said_this_question)
@@ -601,7 +631,8 @@ class Runner:
             self.confirm_narrowed = False
             g = guards.Guarded("clarify", CONFIRM_LINE, False, "", ["stop-detected->confirm"])
             self.answers_this_question.append(utterance)
-            return self._dispatch(g, utterance, out, say_raw=say_raw)
+            return self._dispatch(g, utterance, out, say_raw=say_raw,
+                                  regenerated_from=regenerated_from)
 
         # Rec 2's shape, one role later. Guard 2b only ever DOWNGRADES an ungrounded
         # `clarify`; nothing upgraded the reverse case, so a candidate who asked what the
@@ -643,7 +674,8 @@ class Runner:
                 g = guards.Guarded("clarify", SKIP_OFFER, False, "",
                                    g.applied + ["clarify-limit->skip-offer"])
             self.answers_this_question.append(utterance)
-            return self._dispatch(g, utterance, out, say_raw=say_raw)
+            return self._dispatch(g, utterance, out, say_raw=say_raw,
+                                  regenerated_from=regenerated_from)
 
         # The per-question cap is the primary control and applies to probe and reask alike:
         # Stage 1 charged reask to the allowance without ever checking it against one, so a
@@ -730,6 +762,9 @@ class Runner:
         # second call exposes only `say`, so it cannot change the probe decision. Reask keeps
         # its established behaviour: an empty line repeats the scripted question.
         say_model = None
+        # Advancing instead of repairing here was built and measured against this path, and
+        # dropped: it saves one call on roughly one turn a session, and the repair it skips now
+        # succeeds about nine times in ten, so it would trade a good question for ~686 ms.
         if (want and g.act == "probe" and not g.say and not g.needs_regeneration
                 and calls == 1):
             say_model = ""
@@ -834,8 +869,14 @@ class Runner:
                     template_fn = focus.design_template if hard_cap else focus.template
                     g.say = template_fn(want, set(self.said_this_session))
                     g.applied.append("off-focus->%s" % want.lower())
-                got = {want}
-                self.focus_used.add(want)
+                # A repair may now come back on a DIFFERENT but unspent focus, so charge what
+                # the line actually asks rather than what was requested. Charging `want` for a
+                # line that asks something else is how the rotation loses track of what the
+                # question has covered, and it is the template -- not the repair -- that is
+                # genuinely the requested focus.
+                repaired_fresh = (focus.classify(g.say) - self.focus_used) if repaired else set()
+                got = repaired_fresh or {want}
+                self.focus_used |= got
             asked = sorted(got)
 
         # Rotation stops a focus being spent twice; it cannot stop two DIFFERENT focuses being
@@ -855,7 +896,8 @@ class Runner:
         outcome = self._dispatch(g, utterance, out,
                                  wall_ms=(time.perf_counter() - t0) * 1000, calls=calls,
                                  want=want, asked=asked, say_model=say_model,
-                                 say_raw=say_raw, speech_attempt=speech_attempt)
+                                 say_raw=say_raw, speech_attempt=speech_attempt,
+                                 regenerated_from=regenerated_from)
         if not outcome.closed_question:
             self._observe_later(utterance)
         return outcome
@@ -867,7 +909,8 @@ class Runner:
                   asked: list[str] | None = None,
                   say_model: str | None = None,
                   say_raw: str | None = None,
-                  speech_attempt: dict | None = None) -> TurnOutcome:
+                  speech_attempt: dict | None = None,
+                  regenerated_from: str | None = None) -> TurnOutcome:
         q = self.current
         # Captured before any handler runs: `_close_question` moves the index, and the line
         # this returns belongs to the question being closed, not to the one after it.
@@ -904,6 +947,8 @@ class Runner:
             # Unlike `say_model`, this is present even when a non-focus guard rewrites or
             # drops the line. Deterministic turns make no model call and record null.
             "say_raw": say_raw,
+            # The line guard 3 rejected as a repeat, before the retry replaced it.
+            "regenerated_from": regenerated_from,
             # A bounded second call that was allowed to supply speech only. Rejected output
             # and its precise reason remain available instead of disappearing behind the
             # focused template used as the final fallback.
