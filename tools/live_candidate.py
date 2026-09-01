@@ -34,7 +34,8 @@ from tools._console import utf8  # noqa: E402
 
 utf8()
 
-from app import contract, observe, provenance, provider as prov, session as sess  # noqa: E402
+from app import (contract, embed, observe, provenance, provider as prov,
+                 session as sess)  # noqa: E402
 from app.runner import Runner  # noqa: E402
 
 STATE = ROOT / "data" / "live_session.json"
@@ -86,7 +87,8 @@ def restore(p, plan) -> Runner:
                               started_at="", status=d["status"])
     state.turns = [sess.Turn(**t) for t in d["turns"]]
     state.questions = [sess.QuestionState(**q) for q in d["questions"]]
-    r = Runner(p, plan, state, pool=d["pool"], observe_fn=extractor(p))
+    r = Runner(p, plan, state, pool=d["pool"], observe_fn=extractor(p),
+               similarity=embed.similarity)
     r.index = d["index"]
     r.follow_ups_used = d["follow_ups_used"]
     # Tuples do not survive JSON; `rewords` compares membership, so rebuild the shape.
@@ -147,7 +149,7 @@ async def main() -> int:
             return 1
         state = sess.new_session(plan, provenance.snapshot(model))
         print("model %s" % model["id"])
-        r = Runner(p, plan, state, observe_fn=extractor(p))
+        r = Runner(p, plan, state, observe_fn=extractor(p), similarity=embed.similarity)
         await p.warmup(contract.SYSTEM, contract.render(r.current["question"], "", ""))
         spoken = await r.ask()
         save(r)

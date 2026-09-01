@@ -23,8 +23,7 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from . import (budget, contract, direction, embed, focus, guards, intent,
-               result_check, session)
+from . import budget, contract, direction, focus, guards, intent, result_check, session
 from .history import History
 from .provider import Completion, Provider
 
@@ -117,11 +116,6 @@ UNNAMED_FOCUS_MIN_WORDS = 10
 MAX_SAY_WORDS = 25
 
 
-# Distinguishes "caller said nothing" from "caller explicitly disabled semantic comparison",
-# which None has to mean at the call site for `rewords` to fall back.
-_DEFAULT = object()
-
-
 def _raw_say(raw: dict | None) -> str | None:
     """Return the model's speech field without applying guard normalisation."""
     say = raw.get("say") if isinstance(raw, dict) else None
@@ -198,7 +192,7 @@ class Runner:
                  pool: int | None = None, pace: bool = True,
                  observe_fn: Callable[[str, str, str], Awaitable] | None = None,
                  max_say_words: int | None = MAX_SAY_WORDS,
-                 similarity: Callable[[str, str], float | None] | None = _DEFAULT):
+                 similarity: Callable[[str, str], float | None] | None = None):
         self.max_say_words = max_say_words
         # `observe_fn` turns one answer into an Observation. Injected rather than imported so
         # the runner keeps no dependency on the Stage 2 extractor, and so a test can drive the
@@ -228,10 +222,11 @@ class Runner:
         # bounds the closing phase; never reaches the extractor or the rubric.
         self.questions_asked: list[str] = []
         self.said_this_question: list[str] = []
-        # Semantic probe comparison. Returns None whenever the optional embedding model is
-        # absent, and `rewords` falls back to word overlap -- an interview must not depend on
-        # it. Injectable so a test can pin the comparison instead of reaching for a server.
-        self.similarity = embed.similarity if similarity is _DEFAULT else similarity
+        # Semantic probe comparison, supplied by the caller. Defaults to OFF so that nothing
+        # reaches for the optional embedding server unless it was asked for: a unit test that
+        # depended on a model being loaded would pass or fail by accident. `tools/live_candidate`
+        # passes `embed.similarity`, which itself returns None when the model is absent.
+        self.similarity = similarity
         # The previous probe on this question and the focus it was charged, for `rewords`.
         self.last_probe: tuple[str, tuple[str, ...]] | None = None
         # Survives a question boundary, unlike `said_this_question`. All four verbatim
@@ -311,6 +306,21 @@ class Runner:
             system, user, schema=contract.TURN_SCHEMA, max_tokens=400,
             enum_field="act", enum_values=contract.ACTIONS)
         return out, out.json()
+
+    def _distinct_from_asked(self, say: str) -> bool:
+        """Does this line ask something nothing already spoken on this question asked?
+
+        Conservative in both directions that matter: no embedding model means False, so the
+        caller repairs exactly as before, and a similarity that cannot be computed for one pair
+        is treated as a match rather than assumed distinct.
+        """
+        if not self.similarity:
+            return False
+        for prior in self.said_this_question:
+            score = self.similarity(say, prior)
+            if score is None or score >= focus.SIMILAR_ENOUGH:
+                return False
+        return True
 
     async def _repair_speech(self, utterance: str, want: str, rejected: str,
                              trigger: str) -> tuple[str | None, dict, list[str]]:
@@ -790,6 +800,24 @@ class Runner:
                 got = {want}
                 self.focus_used.add(want)
                 g.applied.append("unnamed-focus->kept")
+            elif (classified and not over_cap and g.say.count("?") == 1
+                  and self._distinct_from_asked(g.say)):
+                # The remaining `fresh`-empty case: the line classifies, but only to focuses
+                # already spent on this question. Rotation rejects it, and rotation is a PROXY
+                # for "do not ask the same thing twice" -- the label, not the question. Of 38
+                # such repairs across the stored sessions, 11 were asking something genuinely
+                # different from anything already said ("How did you know that approach would
+                # work for the price data?" at 0.18 similarity, after a MEASURE line about
+                # queue thresholds). Those were replaced by a repair that usually fails and
+                # then a template, so a specific question became a canned one and cost ~785 ms.
+                #
+                # The proxy is only overridden where the direct test is available and passes.
+                # `_distinct_from_asked` returns False without the embedding model, so this
+                # degrades to the old behaviour rather than to a weaker rule. The rotation
+                # invariant survives on its own terms: the three reworded REASON lines its test
+                # is built from pair at 0.37-0.61, well above the threshold, and stay rejected.
+                got = classified
+                g.applied.append("spent-focus->kept-distinct")
             else:
                 say_model = g.say
                 repaired = None

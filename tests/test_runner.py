@@ -59,10 +59,13 @@ PLAN = {
 }
 
 
-def build(decisions, tmp_path):
+def build(decisions, tmp_path, similarity=None):
+    """`similarity` defaults to None so the suite never reaches for the optional embedding
+    server. A unit test that depended on a model being loaded would pass or fail by accident,
+    and the paths that use it are exercised with an explicit stub instead."""
     session.SESSIONS = tmp_path / "sessions"
     state = session.new_session(PLAN)
-    return Runner(ScriptedProvider(decisions), PLAN, state), state
+    return (Runner(ScriptedProvider(decisions), PLAN, state, similarity=similarity), state)
 
 
 def run(coro):
@@ -1501,10 +1504,11 @@ NO_FAILURE = ("I'd use a token bucket per API key in Redis, with a refill rate a
 WITH_FAILURE = NO_FAILURE + " If Redis is unavailable I'd fail open rather than reject."
 
 
-def design_runner(decisions, tmp_path):
+def design_runner(decisions, tmp_path, similarity=None):
     session.SESSIONS = tmp_path / "sessions"
     state = session.new_session(DESIGN_PLAN)
-    return Runner(ScriptedProvider(decisions), DESIGN_PLAN, state), state
+    return (Runner(ScriptedProvider(decisions), DESIGN_PLAN, state,
+                   similarity=similarity), state)
 
 
 STAGE3_DESIGN_PLAN = {
@@ -2369,3 +2373,61 @@ def test_similarity_never_overrides_the_confusable_gate():
     prev = "What specific changes did you make to improve performance?"
     now = "What was the impact of these changes on performance or scalability?"
     assert not focus.rewords(prev, ["STEPS"], now, ["OUTCOME"], lambda a, b: 0.99)
+
+
+def test_a_spent_focus_line_asking_something_new_is_kept(tmp_path, monkeypatch):
+    """Rotation rejects a line whose focus is already spent, and rotation is a PROXY for "do
+    not ask the same thing twice" -- the label, not the question. Across the stored sessions 11
+    of 38 such repairs were asking something genuinely different, and each was replaced by a
+    repair that usually fails and then a template."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    first = "How did you measure that?"
+    second = "What specific metrics did you watch during the p95 test?"
+    r, state = build([d("probe", first, ok=False), d("probe", second, ok=False)], tmp_path,
+                     similarity=lambda a, b: 0.18)
+    run(r.ask())
+    run(r.submit("We shipped it and watched the dashboard."))
+    out = run(r.submit("I looked at latency across the rollout."))
+    decision = last_decision(state)
+    assert out.spoken.text == second
+    assert "spent-focus->kept-distinct" in decision["guards"]
+    assert decision["model_calls"] == 1
+
+
+def test_a_spent_focus_line_asking_the_same_thing_still_repairs(tmp_path, monkeypatch):
+    """The invariant survives on its own terms. The three reworded REASON lines the rotation
+    test is built from pair at 0.37-0.61 against the live model, well above the threshold."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    r, state = build([d("probe", "How did you measure that?", ok=False),
+                      d("probe", "How did you know that number?", ok=False),
+                      speech("What did the rollout tell you?")], tmp_path,
+                     similarity=lambda a, b: 0.80)
+    run(r.ask())
+    run(r.submit("We shipped it and watched the dashboard."))
+    run(r.submit("I looked at latency across the rollout."))
+    assert "spent-focus->kept-distinct" not in last_decision(state)["guards"]
+
+
+def test_without_an_embedding_model_a_spent_focus_line_repairs_as_before(tmp_path, monkeypatch):
+    """The proxy is only overridden where the direct test is available. No model means the old
+    behaviour, not a weaker rule."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    r, state = build([d("probe", "How did you measure that?", ok=False),
+                      d("probe", "What specific metrics did you watch?", ok=False)], tmp_path)
+    run(r.ask())
+    run(r.submit("We shipped it and watched the dashboard."))
+    run(r.submit("I looked at latency across the rollout."))
+    assert "spent-focus->kept-distinct" not in last_decision(state)["guards"]
+
+
+def test_an_unavailable_similarity_mid_session_is_treated_as_a_match(tmp_path, monkeypatch):
+    """`similarity` returning None means the comparison could not be made, which must not read
+    as "distinct" -- that would turn a dead model into a silently weaker rotation."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    r, state = build([d("probe", "How did you measure that?", ok=False),
+                      d("probe", "What specific metrics did you watch?", ok=False)], tmp_path,
+                     similarity=lambda a, b: None)
+    run(r.ask())
+    run(r.submit("We shipped it and watched the dashboard."))
+    run(r.submit("I looked at latency across the rollout."))
+    assert "spent-focus->kept-distinct" not in last_decision(state)["guards"]
