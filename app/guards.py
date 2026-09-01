@@ -550,9 +550,14 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
                 say, changed = direct(say)
                 if changed and "hedge-stripped" not in applied:
                     applied.append("hedge-stripped")
-        say, compound = _one_request(say)
-        if compound:
-            applied.append("compound-request-trimmed")
+        # Compound questions are KEPT. A two-part question is ordinary interviewer behaviour --
+        # one of the scripted questions is itself double-barrelled -- and trimming cost more
+        # than it bought: keeping only the first clause discarded the better half often enough
+        # to notice ("What's your experience with Redis?" surviving while "how would you handle
+        # rate limiting?" was cut), and it halved the text the focus classifier reads, so a line
+        # that WOULD have named a focus stopped naming one and fell through to the repair.
+        # Measured over 150 stored decisions, trimming was the only difference between 0 repairs
+        # and 2. `_one_request` is kept because `direct()` and the tests still use the shape.
         cut = _truncate(say)
         if cut != say:
             applied.append("say-truncated")

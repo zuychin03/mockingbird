@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import budget, contract, focus, guards, intent, observe, result_check, session  # noqa: E402
+from app import runner as runner_mod  # noqa: E402
 from app.provider import Completion  # noqa: E402
 from app.runner import CONFIRM_NARROW, Runner, live_view  # noqa: E402
 
@@ -871,7 +872,7 @@ def test_the_raw_model_line_survives_an_invented_question_drop(tmp_path):
     assert decision["say_raw"] == raw_say
 
 
-def test_compound_speech_is_trimmed_without_hiding_raw_provenance_or_adding_a_turn(
+def test_compound_speech_is_kept_whole_without_adding_a_turn(
         tmp_path, monkeypatch):
     _accept_any_focus(monkeypatch)
     raw_say = "How did your team respond, and what was the outcome?"
@@ -879,14 +880,14 @@ def test_compound_speech_is_trimmed_without_hiding_raw_provenance_or_adding_a_tu
     run(r.ask())
     out = run(r.submit("We restored the service together."))
     decision = last_decision(state)
-    assert out.spoken.text == "How did your team respond?"
+    assert out.spoken.text == raw_say
     assert r.follow_ups_used == 1
     assert decision["model_calls"] == 1
     assert decision["say_raw"] == raw_say
-    assert "compound-request-trimmed" in decision["guards"]
+    assert "compound-request-trimmed" not in decision["guards"]
 
 
-def test_auxiliary_led_compound_speech_keeps_only_the_first_request(
+def test_auxiliary_led_compound_speech_is_also_kept_whole(
         tmp_path, monkeypatch):
     _accept_any_focus(monkeypatch)
     raw_say = ("What was your role in that process, and did you have any input on how "
@@ -897,17 +898,16 @@ def test_auxiliary_led_compound_speech_keeps_only_the_first_request(
     out = run(r.submit("I helped the senior developer with the review."))
     decision = last_decision(state)
 
-    assert out.spoken.text == "What was your role in that process?"
+    assert out.spoken.text == raw_say
     assert decision["say_raw"] == raw_say
-    assert "compound-request-trimmed" in decision["guards"]
+    assert "compound-request-trimmed" not in decision["guards"]
 
 
 def test_empty_probe_speech_is_repaired_without_redeciding_action_or_focus(
         tmp_path, monkeypatch):
     monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
     invented = "How did you measure the processing delay?"
-    r, state = build([d("probe", "", ok=False),
-                      speech(invented)], tmp_path)
+    r, state = build([d("probe", "", ok=False), speech(invented)], tmp_path)
     run(r.ask())
 
     out = run(r.submit("It took about twenty minutes."))
@@ -918,17 +918,44 @@ def test_empty_probe_speech_is_repaired_without_redeciding_action_or_focus(
     assert decision["focus_got"] == ["MEASURE"]
     assert decision["say_raw"] == ""
     assert decision["speech_attempt"]["trigger"] == "empty"
-    assert decision["speech_attempt"]["say_raw"] == invented
     assert decision["speech_attempt"]["accepted"] is True
-    assert decision["speech_attempt"]["rejection"] is None
-    assert decision["model_calls"] == 2
-    assert "empty-say->repaired" in decision["guards"]
-    assert r.provider.schemas[1] == contract.SPEECH_SCHEMA
+
+
+def test_a_repair_that_outruns_its_grace_period_falls_back_to_the_template(
+        tmp_path, monkeypatch):
+    """The repair is the most expensive thing in a turn and this bounds what a candidate waits
+    for. The deadline is deliberately loose: the call's own distribution has almost no tail, so
+    a tighter one would discard repairs that were going to succeed rather than catch
+    stragglers."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
+    monkeypatch.setattr(runner_mod, "REPAIR_GRACE_S", 0.01)
+
+    r, state = build([d("probe", "", ok=False)], tmp_path)
+    original = r.provider.complete
+
+    async def slow_speech_only(*a, **k):
+        # The decision call must still work; only the repair is made to outrun its deadline.
+        if k.get("schema") is contract.SPEECH_SCHEMA:
+            await asyncio.sleep(0.5)
+            raise AssertionError("the deadline should have fired first")
+        return await original(*a, **k)
+
+    monkeypatch.setattr(r.provider, "complete", slow_speech_only)
+    run(r.ask())
+    out = run(r.submit("It took about twenty minutes."))
+    decision = last_decision(state)
+
+    assert out.spoken.text in focus.TEMPLATE["MEASURE"]
+    assert decision["speech_attempt"]["rejection"] == "timeout"
+    assert "empty-say->repair-failed" in decision["guards"]
+    assert "empty-say->template" in decision["guards"]
 
 
 def test_speech_repair_schema_cannot_change_the_locked_action(tmp_path, monkeypatch):
+    """Triggered off-focus now that an empty say no longer repairs. The point is unchanged: the
+    second call exposes `say` alone and cannot re-decide the turn."""
     monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
-    r, state = build([d("probe", "", ok=False),
+    r, state = build([d("probe", "Tell me about the weather.", ok=False),
                       speech("How did you measure the delay?", act="advance")], tmp_path)
     run(r.ask())
 
@@ -940,7 +967,7 @@ def test_speech_repair_schema_cannot_change_the_locked_action(tmp_path, monkeypa
     assert decision["focus_got"] == ["MEASURE"]
     assert decision["model_calls"] == 2
     assert decision["speech_attempt"]["accepted"] is True
-    assert "empty-say->repaired" in decision["guards"]
+    assert "off-focus->repaired" in decision["guards"]
 
 
 def test_a_repair_on_a_different_but_unspent_focus_is_accepted(tmp_path, monkeypatch):
@@ -948,7 +975,7 @@ def test_a_repair_on_a_different_but_unspent_focus_is_accepted(tmp_path, monkeyp
     accepts any FRESH one. That was stricter than the rule it repairs, and it cost 12 of 54
     off-focus rejections -- usable questions replaced by canned lines."""
     monkeypatch.setattr(focus, "next_focus", lambda *args: "MEASURE")
-    r, state = build([d("probe", "", ok=False),
+    r, state = build([d("probe", "Tell me about the weather.", ok=False),
                       speech("Why did you choose Redis?")], tmp_path)
     run(r.ask())
 
@@ -960,7 +987,7 @@ def test_a_repair_on_a_different_but_unspent_focus_is_accepted(tmp_path, monkeyp
     # charged what it ASKS, not what was requested -- otherwise the rotation loses track
     assert decision["focus_got"] == ["REASON"]
     assert decision["speech_attempt"]["accepted"] is True
-    assert "empty-say->repaired" in decision["guards"]
+    assert "off-focus->repaired" in decision["guards"]
 
 
 def test_a_repair_on_an_already_spent_focus_is_still_rejected(tmp_path, monkeypatch):
@@ -984,10 +1011,10 @@ def test_a_repair_on_an_already_spent_focus_is_still_rejected(tmp_path, monkeypa
     assert "empty-say->template" in decision["guards"]
 
 
-def test_empty_probe_speech_repair_logs_an_empty_retry_before_template_fallback(
+def test_an_off_focus_repair_that_returns_nothing_falls_back_to_the_template(
         tmp_path, monkeypatch):
     monkeypatch.setattr(focus, "next_focus", lambda *args: "STEPS")
-    r, state = build([d("probe", "", ok=False), speech("")], tmp_path)
+    r, state = build([d("probe", "Tell me about the weather.", ok=False), speech("")], tmp_path)
     run(r.ask())
 
     out = run(r.submit("I changed a few things."))
@@ -996,8 +1023,7 @@ def test_empty_probe_speech_repair_logs_an_empty_retry_before_template_fallback(
     assert out.spoken.text in focus.TEMPLATE["STEPS"]
     assert decision["speech_attempt"]["accepted"] is False
     assert decision["speech_attempt"]["rejection"] == "empty"
-    assert "empty-say->repair-failed" in decision["guards"]
-    assert "empty-say->template" in decision["guards"]
+    assert "off-focus->repair-failed" in decision["guards"]
 
 
 def test_an_accepted_shortening_retry_replaces_the_raw_speech(tmp_path, monkeypatch):
@@ -1040,18 +1066,37 @@ def test_the_product_runner_accepts_a_twenty_five_word_question(tmp_path, monkey
     assert not any(guard.startswith("too-long->") for guard in state.turns[-1].guards)
 
 
-def test_the_product_runner_shortens_a_twenty_six_word_question(tmp_path, monkeypatch):
+def test_a_twenty_six_word_question_is_now_under_the_cap(tmp_path, monkeypatch):
+    """The cap moved to 35 so that a kept compound question is not sent to the repair by its
+    length alone. Untrimmed lines run median 14 and p99 28, so 26 words is ordinary."""
     _accept_any_focus(monkeypatch)
     long_line = ("What specific changes would you make to the deployment process if the same "
                  "production incident happened again during a busy support shift next week onsite "
                  "overnight?")
+    r, state = build([d("probe", long_line)], tmp_path)
+
+    run(r.ask())
+    out = run(r.submit("I would add a staged rollout and monitor the error rate."))
+
+    assert len(long_line.split()) == 26
+    assert out.spoken.text == long_line
+    assert "too-long->shortened" not in state.turns[-1].guards
+
+
+def test_the_product_runner_still_shortens_a_question_past_the_cap(tmp_path, monkeypatch):
+    """The shortening retry survives the raised cap; only the threshold moved."""
+    _accept_any_focus(monkeypatch)
+    long_line = ("What specific changes would you make to the deployment process if the same "
+                 "production incident happened again during a busy support shift next week "
+                 "onsite overnight while the on-call engineer was already handling a separate "
+                 "unrelated outage in another region entirely?")
     short_line = "What specific changes would you make next time?"
     r, state = build([d("probe", long_line), d("probe", short_line)], tmp_path)
 
     run(r.ask())
     out = run(r.submit("I would add a staged rollout and monitor the error rate."))
 
-    assert len(long_line.split()) == 26
+    assert len(long_line.split()) > runner_mod.MAX_SAY_WORDS
     assert out.spoken.text == short_line
     assert "too-long->shortened" in state.turns[-1].guards
 

@@ -111,9 +111,31 @@ UNNAMED_FOCUS_MIN_WORDS = 10
 # longest-ever 22 across 437 stored questions -- so the instruction was what shaped the line,
 # and raising it to 25 moved the median one word while DOUBLING the compound rate, 5.2% to
 # 10.3%, classification flat. The model spends the extra budget on a second question joined
-# with "and". That cost is absorbed by `compound-request-trimmed`, which is deterministic and
-# free; it is a known trade, not an oversight.
-MAX_SAY_WORDS = 25
+# with "and". Compound questions are now KEPT rather than trimmed, so the cap is what bounds
+# them, and 25 would have rejected 1.9% of untrimmed lines. At 35 it rejects 0.1% -- untrimmed
+# lines run median 14, p99 28, max 39 -- so every real two-part question is admitted while a
+# runaway line is still bounded. 40 would reject nothing at all and make the cap dead.
+#
+# The prompt still asks for 25 and that divergence is deliberate: the instruction is what
+# shapes the line and the cap only catches outliers. Raising the INSTRUCTION was measured
+# separately and doubles the compound rate for one word of median.
+MAX_SAY_WORDS = 35
+
+
+# How long the speech repair may take before the turn stops waiting and speaks the reviewed
+# template instead. The repair is the most expensive thing in a turn -- ~686 ms added, measured
+# over 765 stored turns -- and this bounds what a candidate can be left waiting for.
+#
+# Set from the call's own distribution over 114 stored attempts: median 859 ms, p95 1,262,
+# max 1,444. There is almost NO tail to cut, so a tighter deadline would not catch stragglers,
+# it would only discard repairs that were going to succeed -- 900 ms would lose 22 of them
+# against this value's 4. It is a bound for when the GPU is heat-soaked, where 20% swings are
+# measured, not a routine saving.
+#
+# The underlying HTTP call runs in a worker thread and is NOT cancelled by the timeout; the
+# generation finishes and its result is discarded. This bounds the candidate's wait, which is
+# what it is for, not the machine's work.
+REPAIR_GRACE_S = 1.3
 
 
 def _raw_say(raw: dict | None) -> str | None:
@@ -342,8 +364,16 @@ class Runner:
 
         q = self.current
         user = contract.render(q["question"], utterance, self.history.render())
-        out = await self.provider.complete(
-            system, user, schema=contract.SPEECH_SCHEMA, max_tokens=100)
+        try:
+            out = await asyncio.wait_for(
+                self.provider.complete(system, user, schema=contract.SPEECH_SCHEMA,
+                                       max_tokens=100),
+                timeout=REPAIR_GRACE_S)
+        except (asyncio.TimeoutError, TimeoutError):
+            return None, {"trigger": trigger, "say_raw": None, "say": "", "focus": [],
+                          "accepted": False, "rejection": "timeout", "guards": [],
+                          "prompt_tokens": None, "decode_tokens": None,
+                          "wall_ms": round(REPAIR_GRACE_S * 1000, 1)}, []
         raw = out.json()
         raw_say = _raw_say(raw)
         valid = isinstance(raw, dict) and isinstance(raw_say, str)
@@ -762,9 +792,6 @@ class Runner:
         # second call exposes only `say`, so it cannot change the probe decision. Reask keeps
         # its established behaviour: an empty line repeats the scripted question.
         say_model = None
-        # Advancing instead of repairing here was built and measured against this path, and
-        # dropped: it saves one call on roughly one turn a session, and the repair it skips now
-        # succeeds about nine times in ten, so it would trade a good question for ~686 ms.
         if (want and g.act == "probe" and not g.say and not g.needs_regeneration
                 and calls == 1):
             say_model = ""
