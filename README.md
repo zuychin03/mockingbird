@@ -53,9 +53,29 @@ Natural probing adds two bounded speech controls after those guards. Hypothetica
 questions are kept in future tense, and an empty or off-focus probe gets one speech-only repair
 attempt. That second contract exposes only `say`, so it cannot change the chosen action, the
 model's completeness judgement, candidate-question routing, pacing or budget. Python accepts the
-repair only when it is one direct question, no more than 25 words, asks for the requested focus and
-does not repeat the rejected line, the current question or earlier session speech. Otherwise a
-reviewed focus template is used.
+repair when it is a direct question within the word cap, asks about a focus this question has not
+already spent, and does not repeat the rejected line, the current question or earlier session
+speech. Otherwise a reviewed focus template is used.
+
+The repair asks for a focus but does not insist on it, because the decision path it serves does
+not either: a question that arrives on a different unspent focus is a good turn, and demanding
+the exact one discarded usable questions in favour of canned lines. The repair also runs under a
+deadline; past it the turn stops waiting and speaks the template, which bounds what a candidate
+can be left waiting for on a slow machine.
+
+Two more controls compare meaning rather than spelling, and both are skipped when the optional
+embedding model is absent:
+
+- a probe that re-asks the previous one in different words is dropped and the question advances,
+  because focus rotation compares LABELS and cannot see "how did you know X" and "what made you
+  decide X" as one question
+- a line the repetition guard flags is kept anyway when the embedding disagrees, because that
+  guard compares characters and short interview questions are mostly shared scaffolding
+
+Compound questions are kept rather than trimmed. A two-part question is ordinary interviewer
+behaviour, one of the scripted questions is itself double-barrelled, and trimming to the first
+clause discarded the better half often enough to notice while halving the text the focus
+classifier had to read.
 
 Control replies — stop, skip, carry on — are parsed by `app/intent.py`, which matches whole
 tokens, scopes negation to its clause, and answers `UNCLEAR` when it genuinely cannot tell.
@@ -76,6 +96,22 @@ Needs Python 3.12 and [LM Studio](https://lmstudio.ai/) with a local model loade
 lms server start
 lms load llama-3.2-3b-instruct --context-length 8192 --identifier llama-3.2-3b-instruct -y
 ```
+
+One small embedding model is optional and worth loading. Two of the speech controls compare
+what a probe MEANS rather than how it is spelled, and without it they fall back to comparing
+words, which is quieter and weaker rather than an error:
+
+```bash
+lms get -y https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF
+lms load text-embedding-all-minilm-l6-v2-embedding -y
+```
+
+`lms get` needs the full Hugging Face URL; a bare model name searches LM Studio's own catalogue
+and fails. The model was chosen by measuring six candidates on labelled probe pairs from real
+sessions rather than by leaderboard: all-MiniLM-L6-v2 at 22M parameters beat nomic-embed-v1.5,
+mxbai-embed-large and embeddinggemma-300m, because those are tuned for matching a short query to
+a long document while this compares two questions of the same shape. It costs 25MB on disk and
+about 164MiB of VRAM.
 
 Then, for an interview in the terminal:
 
@@ -118,6 +154,7 @@ app/
   focus.py         picks what to ask ABOUT; the model only words it
   budget.py        per-question cap plus a shared session pool
   observe.py       quote extraction, with grounding
+  embed.py         OPTIONAL local sentence similarity; returns None when absent
   score.py         the rubric, as arithmetic
   report.py        the feedback, and the rules about how it is worded
   session.py       plan validation and persistence
@@ -134,11 +171,19 @@ It remains local and intentionally ignored by Git.
 
 ## Status
 
-The text interview, rubric scoring, report and Stage 3 natural-probing controls are implemented.
-The current automated suite passes 319 tests. A full 14-question junior run produced 23 of 31
-follow-ups from model speech (20 retained byte for byte and three safely trimmed to one request),
-used seven templates and one deterministic design-gap probe, with no generic, compound or
-over-25-word spoken question. A later targeted replay proved the final speech-repair path can
-retain a corrected Llama question without changing its action. One fresh paired full-interview run
-is still required to measure the final aggregate substitution rate after that last classifier
-correction. A job-description planner and voice mode are designed and not built.
+The text interview, rubric scoring, report and the Stage 3 natural-probing wave are implemented,
+with 390 automated tests passing.
+
+The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
+closed all 14 questions in 25 turns and a strong one in 16, with no reask, family crossing,
+invalid output, repeated focus or unknowable question in either, and no pool draws. Creative
+retention across the pair was 90.9% among the questions that reached the candidate, with
+byte-for-byte retention reported separately at 61.5% because the two measure different things.
+
+Two cautions on those numbers, both learned by getting them wrong first. A single session cannot
+resolve a retention difference smaller than roughly fifteen points, because extraction is
+non-deterministic on this GPU path — two runs of one build measured 50.0% and 65.2%. And timing
+comparisons between sessions are worthless unless the arms are interleaved: the same build has
+measured 20% apart depending on how warm the GPU was.
+
+A job-description planner and voice mode are designed and not built.
