@@ -96,9 +96,3 @@ def similarity(first: str, second: str) -> float | None:
     nb = sum(x * x for x in b) ** 0.5
     return dot / (na * nb) if na and nb else None
 
-
-def reset() -> None:
-    """Drop the cache and the availability verdict. For tests."""
-    _CACHE.clear()
-    global _AVAILABLE
-    _AVAILABLE = None

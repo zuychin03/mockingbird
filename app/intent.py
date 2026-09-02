@@ -92,8 +92,6 @@ STOP_REQUEST = [
     # rearrange?" because there the phrase ends its clause (9.38).
     "not a good time", "rearrange",
 ]
-STOP_STRONG = STOP_EXPLICIT + STOP_REQUEST
-
 # A request frame is still not enough on its own, because the verb can take an object:
 # "I want to stop being the only front-end person" is an answer, not a request to leave.
 # So a STOP_REQUEST phrase counts only where it ENDS its clause or is followed by a word

@@ -102,11 +102,12 @@ STAR_PACED_TYPES = frozenset({"adaptive_discussion"})
 UNNAMED_FOCUS_MIN_WORDS = 10
 
 
-# Llama's retained questions are normally concise. Twenty-five words leaves room for a
-# detailed single-focus probe, while the independent compound and focus guards still reject
-# unsuitable lines and the shortening retry remains a deterministic backstop.
+# Retained questions are normally concise. The cap leaves room for a detailed probe, or for
+# a two-part one now that compounds are kept, while the focus guard still rejects unsuitable
+# lines and the shortening retry remains a deterministic backstop.
 #
-# The prompt now asks for the same 25. It asked for 15 until 31/08, and the gap was measured
+# The CAP and the PROMPT deliberately differ: the prompt asks for 25 words and the cap
+# tolerates 35, so an accepted compound is not sent to the repair by its length alone. It asked for 15 until 31/08, and the gap was measured
 # before it was closed: the cap had never fired in production -- median 11 words, p90 16 and a
 # longest-ever 22 across 437 stored questions -- so the instruction was what shaped the line,
 # and raising it to 25 moved the median one word while DOUBLING the compound rate, 5.2% to

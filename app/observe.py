@@ -126,8 +126,6 @@ QUOTE_MATCH = 0.85
 # Below this a quote is a fragment, not evidence, and coverage stops discriminating.
 MIN_QUOTE_WORDS = 4
 
-_SENT = re.compile(r"[^.!?]+[.!?]?")
-
 
 @dataclass
 class Observation:
