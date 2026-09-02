@@ -44,48 +44,13 @@ BANK = ROOT / "config" / "question_bank.json"
 
 
 def save_state(d: review.Draft) -> None:
-    STATE.parent.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps({
-        "plan": d.plan,
-        "gaps": list(d.gaps),
-        "edited_from": d.edited_from,
-        "spec": None if d.spec is None else {
-            "role": d.spec.role, "seniority": d.spec.seniority,
-            "requirements": [[r.name, r.evidence] for r in d.spec.requirements],
-            "dropped": [[r.name, r.evidence] for r in d.spec.dropped]},
-        # Every question this draft added, whatever its status. Approving one takes it out
-        # of `bank.proposed` and it is not in config/ either, so persisting only proposals
-        # lost it the moment it was approved. They stay here rather than in the shipped bank
-        # because that file is read by every future plan, and an approval belongs to this
-        # review until someone saves it.
-        "draft_questions": [{"id": q.id, "text": q.text,
-                             "competencies": list(q.competencies), "shape": q.shape,
-                             "source": q.source, "status": q.status}
-                            for q in d.bank.questions if q.generated],
-    }, indent=1), encoding="utf-8", newline="\n")
+    review.write_draft(d, STATE)
 
 
 def load_state() -> review.Draft:
     if not STATE.exists():
-        raise SystemExit("no draft in progress. Start one with --jd <file>")
-    raw = json.loads(STATE.read_text(encoding="utf-8"))
-    b = bank_mod.load(BANK)
-    for item in raw.get("draft_questions", []):
-        if any(q.id == item["id"] for q in b.questions):
-            continue
-        b = bank_mod.with_question(b, bank_mod.Question(
-            id=item["id"], text=item["text"], competencies=tuple(item["competencies"]),
-            shape=item["shape"], source=item["source"], status=item["status"]))
-    spec = None
-    if raw.get("spec"):
-        s = raw["spec"]
-        spec = planner.JobSpec(
-            role=s["role"], seniority=s["seniority"],
-            requirements=tuple(planner.Requirement(n, e) for n, e in s["requirements"]),
-            dropped=tuple(planner.Requirement(n, e) for n, e in s["dropped"]))
-    return review.Draft(plan=raw["plan"], bank=b, spec=spec,
-                        gaps=tuple(raw.get("gaps", [])),
-                        edited_from=raw.get("edited_from", {}))
+        raise SystemExit("no draft in progress. Start one with --jd <file> or --stock <kind>")
+    return review.read_draft(STATE, bank_mod.load(BANK))
 
 
 def show(d: review.Draft) -> None:

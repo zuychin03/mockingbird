@@ -49,3 +49,8 @@ tools/calibrate.py
 tools/audition.html
 tools/tts_bench.py
 tools/tier1_posterior_granite.json
+
+# Stage 4's UI. The source is tracked; the install and the build artefact are not.
+ui/node_modules/
+ui/build/
+ui/.svelte-kit/

@@ -182,3 +182,59 @@ def save(draft: Draft, plan_path: str | Path, bank_path: str | Path | None = Non
     tmp.replace(plan_path)
     if bank_path is not None:
         bank_mod.save(draft.bank, bank_path)
+
+
+# A draft outlives the process that made it: the terminal tool runs one command per process,
+# and the web surface holds none of it in memory between requests. Both read and write THIS,
+# rather than each carrying its own copy of the shape -- two serialisations of one structure
+# drift, and the one that drifts is whichever is exercised less.
+def to_json(draft: Draft) -> dict:
+    return {
+        "plan": draft.plan,
+        "gaps": list(draft.gaps),
+        "edited_from": draft.edited_from,
+        "spec": None if draft.spec is None else {
+            "role": draft.spec.role, "seniority": draft.spec.seniority,
+            "requirements": [[r.name, r.evidence] for r in draft.spec.requirements],
+            "dropped": [[r.name, r.evidence] for r in draft.spec.dropped]},
+        # Every question this draft added, whatever its status. Approving one takes it out of
+        # `bank.proposed`, and it is not in config/ either, so persisting only the proposals
+        # lost an approval the moment it happened. They stay here rather than in the shipped
+        # bank because that file is read by every future plan, and an approval belongs to this
+        # review until someone saves it.
+        "draft_questions": [{"id": q.id, "text": q.text,
+                             "competencies": list(q.competencies), "shape": q.shape,
+                             "source": q.source, "status": q.status}
+                            for q in draft.bank.questions if q.generated],
+    }
+
+
+def from_json(raw: dict, bank: Bank) -> Draft:
+    from .planner import JobSpec, Requirement
+
+    b = bank
+    for item in raw.get("draft_questions", []):
+        if any(q.id == item["id"] for q in b.questions):
+            continue
+        b = bank_mod.with_question(b, Question(
+            id=item["id"], text=item["text"], competencies=tuple(item["competencies"]),
+            shape=item["shape"], source=item["source"], status=item["status"]))
+    spec = None
+    if raw.get("spec"):
+        s = raw["spec"]
+        spec = JobSpec(role=s["role"], seniority=s["seniority"],
+                       requirements=tuple(Requirement(n, e) for n, e in s["requirements"]),
+                       dropped=tuple(Requirement(n, e) for n, e in s["dropped"]))
+    return Draft(plan=raw["plan"], bank=b, spec=spec,
+                 gaps=tuple(raw.get("gaps", [])),
+                 edited_from=raw.get("edited_from", {}))
+
+
+def write_draft(draft: Draft, path: str | Path) -> None:
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(to_json(draft), indent=1), encoding="utf-8", newline="\n")
+
+
+def read_draft(path: str | Path, bank: Bank) -> Draft:
+    return from_json(json.loads(Path(path).read_text(encoding="utf-8")), bank)
