@@ -235,21 +235,66 @@ class Assembled:
         return tuple(q for ph in self.plan["phases"] for q in ph.get("questions", []))
 
 
+def _per_question(phase: dict) -> int:
+    """What one question in this phase costs: its prep, one answer at the midpoint of the
+    phase's own bounds, and one probe per unit of budget at half an answer."""
+    lo, hi = phase.get("min_answer_secs", 0), phase.get("max_answer_secs", 0)
+    answer = (lo + hi) // 2
+    return phase.get("prep_secs", 0) + answer + phase.get("probe_budget", 0) * (answer // 2)
+
+
+def _estimate_counts(plan: dict, counts: dict[str, int]) -> int:
+    """Length for a hypothetical number of questions per phase. Needed because the capacity
+    decision happens BEFORE selection: estimating from the questions present at that moment
+    measured the template's supply, not the target, so a phase that would later be topped up
+    was costed as though it stayed short and no trimming happened at all."""
+    return sum(_per_question(ph) * counts.get(ph["id"], 0) for ph in plan["phases"])
+
+
 def _estimate(plan: dict) -> int:
     """Rough wall time. A question costs its prep, one answer at the midpoint of the phase's
     own bounds, and one probe per unit of budget at half an answer. Reported as an estimate
     because nothing here is measured -- the recorded sessions are text, and a typed answer is
     not a spoken one."""
-    total = 0
-    for ph in plan["phases"]:
-        lo, hi = ph.get("min_answer_secs", 0), ph.get("max_answer_secs", 0)
-        answer = (lo + hi) // 2
-        per = ph.get("prep_secs", 0) + answer + ph.get("probe_budget", 0) * (answer // 2)
-        total += per * len(ph.get("questions", []))
-    return total
+    return _estimate_counts(plan, {ph["id"]: len(ph.get("questions", []))
+                                   for ph in plan["phases"]})
 
 
-def assemble(spec: JobSpec, bank: Bank, *, template: str | Path = TEMPLATE) -> Assembled:
+def _capacity(plan: dict, minutes: int | None,
+              shape: dict[str, int] | None = None) -> dict[str, int]:
+    """How many questions each phase should hold to land near a target length.
+
+    Scaled from the template rather than computed from nothing: the template's shape is a
+    reviewed judgement about how much of an interview is behavioural against technical, and a
+    shorter interview should be the same interview with less of it, not a different one.
+
+    Every phase keeps at least one question. A scored phase with none gives the rubric a
+    denominator of zero, and the warmup and closing are the disclosure and the sign-off.
+    """
+    capacity = {ph["id"]: (shape or {}).get(ph["id"], len(ph.get("questions", [])))
+                for ph in plan["phases"]}
+    if minutes is None:
+        return capacity
+    # The floor is one question per surviving phase. Below it the request cannot be met, and
+    # silently returning a longer interview than was asked for is the kind of quiet degrading
+    # this codebase refuses elsewhere -- `answer_shape` is validated rather than defaulted for
+    # the same reason.
+    shortest = _estimate_counts(plan, {ph["id"]: 1 for ph in plan["phases"]})
+    if minutes * 60 < shortest:
+        raise ValueError("%d minutes is shorter than this plan can be: one question per phase "
+                         "already runs about %d minutes"
+                         % (minutes, round(shortest / 60)))
+    full = _estimate_counts(plan, capacity)
+    target = minutes * 60
+    if target >= full:
+        return capacity
+    scale = target / full
+    return {pid: max(1, round(n * scale)) for pid, n in capacity.items()}
+
+
+def _select(role: str, seniority: str, ranked: list[Requirement], bank: Bank,
+            template: str | Path, minutes: int | None, source_note: str,
+            shape: dict[str, int] | None = None) -> Assembled:
     """FR-2: a JobSpec and a bank become a plan `session.load_plan` accepts.
 
     Selection is ranked: the competencies the JD leaned on hardest get their question first,
@@ -257,7 +302,16 @@ def assemble(spec: JobSpec, bank: Bank, *, template: str | Path = TEMPLATE) -> A
     so a proposal cannot enter a plan before someone has approved it.
     """
     plan = json.loads(Path(template).read_text(encoding="utf-8"))
-    capacity = {ph["id"]: len(ph.get("questions", [])) for ph in plan["phases"]}
+    if shape:
+        # Drop a phase before anything else, so it never competes for a question it will not
+        # keep and never appears in the length estimate.
+        plan["phases"] = [ph for ph in plan["phases"] if shape.get(ph["id"], 0) > 0]
+        for ph in plan["phases"]:
+            have = ph.get("questions", [])
+            want = shape[ph["id"]]
+            # The template cannot supply more than it holds; the top-up fills the rest.
+            ph["questions"] = have[:want]
+    capacity = _capacity(plan, minutes, shape)
 
     chosen: dict[str, list[str]] = {pid: [] for pid in SELECTABLE}
     used: set[str] = set()
@@ -268,7 +322,7 @@ def assemble(spec: JobSpec, bank: Bank, *, template: str | Path = TEMPLATE) -> A
     covered: list[str] = []
     gaps: list[str] = []
 
-    for req in spec.requirements:
+    for req in ranked:
         phase = bank.phase_for(req.name)
         if phase not in chosen:
             gaps.append(req.name)
@@ -319,11 +373,76 @@ def assemble(spec: JobSpec, bank: Bank, *, template: str | Path = TEMPLATE) -> A
         ph["questions"] = filled
         spoken.update(q.lower() for q in ph["questions"])
 
-    plan["id"] = "generated.%s" % (spec.role or "role").lower().replace(" ", "_")[:40]
-    plan["label"] = "%s (%s)" % (spec.role or "Interview", spec.seniority)
-    plan["notes"] = ("Generated from a job description. Phase configuration is the reviewed "
-                     "template; only the questions were selected. Covered: %s. Not covered: "
-                     "%s." % (", ".join(covered) or "nothing",
-                              ", ".join(gaps) or "nothing"))
+    # A phase trimmed for length keeps its own questions, so the trim never leaves a phase
+    # holding text that was chosen for a longer interview it is no longer part of.
+    for ph in plan["phases"]:
+        want = capacity.get(ph["id"], len(ph.get("questions", [])))
+        ph["questions"] = ph.get("questions", [])[:want]
+
+    plan["id"] = "generated.%s" % (role or "role").lower().replace(" ", "_")[:40]
+    plan["label"] = "%s (%s)" % (role or "Interview", seniority)
+    plan["notes"] = ("%s Phase configuration is the reviewed template; only the questions were "
+                     "selected. Covered: %s. Not covered: %s."
+                     % (source_note, ", ".join(covered) or "nothing",
+                        ", ".join(gaps) or "nothing"))
     return Assembled(plan=plan, covered=tuple(covered), gaps=tuple(gaps),
                      estimated_secs=_estimate(plan))
+
+
+def assemble(spec: JobSpec, bank: Bank, *, template: str | Path = TEMPLATE,
+             minutes: int | None = None) -> Assembled:
+    """FR-2: a JobSpec and a bank become a plan `session.load_plan` accepts."""
+    return _select(spec.role, spec.seniority, list(spec.requirements), bank, template,
+                   minutes, "Generated from a job description.")
+
+
+# FR-4's three stock plans. Each carries a ranked competency list AND a phase shape, because
+# the ranking alone does not produce three different interviews: every plan keeps the same
+# phases, so a "technical" one still held two behavioural questions and a "behavioural" one
+# two technical. Measured on the first version -- behavioural and technical shared 7 of 8
+# questions, which made the choice cosmetic.
+#
+# `questions` is the number of questions that phase holds; 0 drops the phase entirely rather
+# than leaving it empty, because a scored phase with no questions gives the rubric a
+# denominator of zero. Dropping `design` is safe in a way dropping a scored phase is not: it
+# is observed and described, never scored (9.6).
+#
+# `mixed` is not the union of the other two. It alternates so that trimming for length takes
+# from both halves evenly -- a mixed interview cut to twenty minutes should still be mixed.
+STOCK: dict[str, dict] = {
+    "behavioural": {
+        "ranked": ("collaboration", "ownership", "incident_response", "mentoring",
+                   "learning", "technical_judgement"),
+        "shape": {"warmup": 2, "behavioural_core": 5, "technical_experience": 1,
+                  "design": 0, "collaboration": 3, "closing": 1},
+    },
+    "technical": {
+        "ranked": ("data_modelling", "performance", "system_design", "testing_quality",
+                   "incident_response", "technical_judgement"),
+        "shape": {"warmup": 1, "behavioural_core": 1, "technical_experience": 6,
+                  "design": 2, "collaboration": 1, "closing": 1},
+    },
+    "mixed": {
+        "ranked": ("collaboration", "data_modelling", "ownership", "performance",
+                   "system_design", "mentoring", "testing_quality", "learning"),
+        "shape": {"warmup": 2, "behavioural_core": 3, "technical_experience": 3,
+                  "design": 1, "collaboration": 2, "closing": 1},
+    },
+}
+
+
+def stock_plan(kind: str, bank: Bank, *, minutes: int | None = None,
+               template: str | Path = TEMPLATE) -> Assembled:
+    """FR-4: an interview with no job description behind it.
+
+    The same selection as the JD path, with a fixed ranked list standing in for what a
+    description would have asked for. Nothing is invented for it: a stock competency carries
+    no evidence, because there is no employer text to cite and a fabricated citation is
+    exactly what the JD path drops.
+    """
+    if kind not in STOCK:
+        raise KeyError("unknown stock plan %r; known: %s" % (kind, ", ".join(sorted(STOCK))))
+    ranked = [Requirement(name=n, evidence="") for n in STOCK[kind]["ranked"]]
+    return _select(kind.capitalize() + " interview", "mid", ranked, bank, template, minutes,
+                   "Stock %s plan, no job description." % kind,
+                   shape=STOCK[kind]["shape"])
