@@ -1,0 +1,329 @@
+{
+  "version": 1,
+  "notes": "Curated interview questions, tagged against a CLOSED competency vocabulary. The vocabulary is closed for the same reason rubric_criteria is validated at load: a planner that may invent a competency name produces tags the bank can never match, and the failure is silent. Warmup and closing questions are deliberately absent -- they are structural, identical in every plan, and carry no competency. A question carries BOTH a source (where the text came from, immutable) and a status (whether it may be asked). Generation writes source=generated status=proposed; approval flips the status and never the source, because FR-2 requires a generated question to stay marked as one. `phase_affinity` says which phase of the plan a competency belongs to. It is data rather than logic because the mapping is a judgement someone should be able to read and disagree with, and because the design phase is not scored -- putting a competency there decides that it will be described rather than graded.",
+  "competencies": {
+    "incident_response": "diagnosing and resolving production failures, and what changed afterwards",
+    "performance": "finding and fixing a scalability or latency problem, with measurement",
+    "data_modelling": "schema and data-model change, especially against live data",
+    "system_design": "designing a component or service against stated constraints",
+    "testing_quality": "deciding something is correct and ready, and how that is known",
+    "collaboration": "working through disagreement, feedback and shared decisions",
+    "ownership": "supporting what they built after it shipped",
+    "learning": "getting productive in an unfamiliar system quickly",
+    "technical_judgement": "choosing between options and revisiting the choice later",
+    "mentoring": "raising the people around them"
+  },
+  "phase_affinity": {
+    "incident_response": "behavioural_core",
+    "ownership": "behavioural_core",
+    "learning": "behavioural_core",
+    "technical_judgement": "behavioural_core",
+    "performance": "technical_experience",
+    "data_modelling": "technical_experience",
+    "testing_quality": "technical_experience",
+    "collaboration": "collaboration",
+    "mentoring": "collaboration",
+    "system_design": "design"
+  },
+  "questions": [
+    {
+      "id": "bank.incident.1",
+      "text": "Describe a production incident you were responsible for resolving.",
+      "competencies": [
+        "incident_response",
+        "ownership"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.incident.2",
+      "text": "Tell me about a time you found the cause of something only after your first explanation turned out to be wrong.",
+      "competencies": [
+        "incident_response",
+        "technical_judgement"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.incident.3",
+      "text": "Describe a failure that reached users before anyone on the team noticed it.",
+      "competencies": [
+        "incident_response",
+        "ownership"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.perf.1",
+      "text": "Walk me through a performance or scalability problem you've hit. What did you measure, and what did you change?",
+      "competencies": [
+        "performance"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.perf.2",
+      "text": "Tell me about a time you made something faster and could show by how much.",
+      "competencies": [
+        "performance",
+        "testing_quality"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.perf.3",
+      "text": "Describe a time you decided a performance problem was not worth fixing.",
+      "competencies": [
+        "performance",
+        "technical_judgement"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.data.1",
+      "text": "Tell me about a schema or data-model change you've made to a system that was already live.",
+      "competencies": [
+        "data_modelling"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.data.2",
+      "text": "Describe a data model you inherited and had to work against rather than change.",
+      "competencies": [
+        "data_modelling",
+        "technical_judgement"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.data.3",
+      "text": "Tell me about a migration or backfill you ran, and how you knew it had worked.",
+      "competencies": [
+        "data_modelling",
+        "testing_quality"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.design.1",
+      "text": "Walk me through how you'd design a rate limiter for a public API. Take a minute first if you want.",
+      "competencies": [
+        "system_design"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.design.2",
+      "text": "How would you design a service that has to keep working when the database it depends on is unavailable? Take a minute first if you want.",
+      "competencies": [
+        "system_design"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.design.3",
+      "text": "Suppose you had to move a nightly batch job to run continuously instead. How would you approach it? Take a minute first if you want.",
+      "competencies": [
+        "system_design",
+        "data_modelling"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.quality.1",
+      "text": "Describe how you decide a change is ready to ship. Use a recent example.",
+      "competencies": [
+        "testing_quality"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.quality.2",
+      "text": "Tell me about a bug that your tests should have caught and didn't.",
+      "competencies": [
+        "testing_quality",
+        "technical_judgement"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.quality.3",
+      "text": "Describe a time you shipped something deliberately without full test coverage.",
+      "competencies": [
+        "testing_quality",
+        "technical_judgement"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.collab.1",
+      "text": "Tell me about a time you disagreed with a technical decision on your team.",
+      "competencies": [
+        "collaboration",
+        "technical_judgement"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.collab.2",
+      "text": "Tell me about a time you gave difficult feedback to a colleague.",
+      "competencies": [
+        "collaboration",
+        "mentoring"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.collab.3",
+      "text": "Describe a decision your team made that you disagreed with and went along with anyway.",
+      "competencies": [
+        "collaboration",
+        "technical_judgement"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.own.1",
+      "text": "Describe how you've handled being on-call, or supporting something you built.",
+      "competencies": [
+        "ownership",
+        "incident_response"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.own.2",
+      "text": "Tell me about something you shipped that didn't work out the way you expected.",
+      "competencies": [
+        "ownership",
+        "technical_judgement"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.own.3",
+      "text": "Tell me about a piece of work you finished that nobody asked you to do.",
+      "competencies": [
+        "ownership"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.learn.1",
+      "text": "Tell me about a time you had to learn an unfamiliar codebase quickly.",
+      "competencies": [
+        "learning"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.learn.2",
+      "text": "Describe something technical you had to learn recently because the work required it.",
+      "competencies": [
+        "learning"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.judge.1",
+      "text": "Tell me about a technical decision you made that you'd make differently now.",
+      "competencies": [
+        "technical_judgement"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.judge.2",
+      "text": "Describe a time you chose the slower, more careful approach and had to justify it.",
+      "competencies": [
+        "technical_judgement",
+        "collaboration"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.judge.3",
+      "text": "Tell me about a time you removed something rather than adding to it.",
+      "competencies": [
+        "technical_judgement",
+        "ownership"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.mentor.1",
+      "text": "Describe a time you helped someone else get unstuck on work that wasn't yours.",
+      "competencies": [
+        "mentoring",
+        "collaboration"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "bank.mentor.2",
+      "text": "Tell me about a review comment you left that changed how someone worked.",
+      "competencies": [
+        "mentoring",
+        "collaboration"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    }
+  ]
+}
