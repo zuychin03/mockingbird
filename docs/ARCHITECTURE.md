@@ -35,7 +35,7 @@ the model's six-action JSON object is advisory input to that orchestrator.
 
 ### What is implemented
 
-- A 14-question, six-phase software-engineering interview plan.
+- A 14-question, six-phase software-engineering interview plan, and a planner that produces one from a job description or from a stock template at a chosen length.
 - Terminal-based text interviews through `python -m app.cli`.
 - LM Studio integration with structured output, enum posteriors, timing and health checks.
 - Exact-identity, Qwen3-4B-Instruct-2507 runtime with a measured 35-word speech cap.
@@ -46,13 +46,15 @@ the model's six-action JSON object is advisory input to that orchestrator.
 - Per-answer background observation extraction for live pacing.
 - Offline grounded extraction, deterministic scoring and plain-text reporting.
 - Append-only decision records, transcript/session snapshots and provenance.
-- Replay, calibration, transcript and report harnesses under `tools/`.
+- A curated question bank over a closed competency vocabulary, model-generated questions
+  that stay unaskable until a person approves them, and a plan review surface.
+- Replay, calibration, transcript, planning and report harnesses under `tools/`.
 
 ### What is not implemented
 
 - Voice input, TTS integration, barge-in, acoustic metrics and browser audio.
-- A job-description-to-interview-plan generator.
 - A production web interface or remote service.
+- A retrieval detour for answering the candidate's own questions mid-session.
 - Durable command serialization, idempotency or atomic event replay.
 - A general agent framework. This is intentionally not planned as the next step.
 
@@ -109,7 +111,20 @@ Only `runner.live_view()` is intended for the candidate-facing channel. It conta
 question progress and completion status. It excludes `ok`, posteriors, guard names, score fields and
 other assessment signals that could change how a candidate answers.
 
-### 2.4 Local-first and standard-library-only runtime
+### 2.4 A question is asked only if a person wrote or approved it
+
+FR-2 allows the model to write questions and FR-6 requires every scripted question to be asked
+verbatim. Both hold only while the text has been read by someone, so a question carries a
+`source` -- where the text came from, which never changes -- and a `status`, which is whether
+it may be asked at all. Generation produces `proposed`, only approval changes status, and both
+selection and review refuse anything unapproved. Approving never rewrites `source`, so a
+generated question stays marked as one for good.
+
+The competency vocabulary is closed for the same reason `rubric_criteria` is validated at
+load: a planner free to invent a name produces a tag nothing matches, and the failure is
+silent -- a competency the description asked for simply never appears in the plan.
+
+### 2.5 Local-first and standard-library-only runtime
 
 The runtime requires Python 3.12 but has no third-party runtime dependencies. It uses `asyncio`,
 `urllib`, `json`, dataclasses and local files. Pytest and research/audio dependencies are optional.
@@ -156,6 +171,9 @@ The provider port uses two endpoints because the API surfaces are complementary:
 | [`app/guards.py`](../app/guards.py) | Validates model proposal and sanitises speech | Raw model JSON and utterance | `Guarded` effective proposal |
 | [`app/focus.py`](../app/focus.py) | Chooses and classifies request types; supplies session-distinct and design-safe fallbacks | Answer, criteria, used focuses | Focus instruction, classification or fallback line |
 | [`app/budget.py`](../app/budget.py) | Per-question allowance and shared overflow pool | Phase cap, pool and progress | `Allowance` |
+| [`app/bank.py`](../app/bank.py) | Curated questions over a closed competency vocabulary; the approved/proposed gate | Bank file | `Bank`, or a load error naming what is wrong |
+| [`app/planner.py`](../app/planner.py) | Reads a description into cited competencies; selects, generates and assembles a plan | Description text or a stock kind, and a `Bank` | `JobSpec`, a proposed `Question`, or an `Assembled` plan |
+| [`app/review.py`](../app/review.py) | The operations a person performs on a plan before it runs | `Draft` and one edit | A revalidated `Draft` |
 | [`app/history.py`](../app/history.py) | Maintains a short summary of completed questions | Closed questions and answers | Prompt history |
 | [`app/result_check.py`](../app/result_check.py) | Conservative pacing-only result check | Extracted result quote | Whether text states change/completion |
 | [`app/session.py`](../app/session.py) | Plan validation, state types and local persistence | Plan and `SessionState` | JSON/JSONL session files |
@@ -170,7 +188,9 @@ The provider port uses two endpoints because the API surfaces are complementary:
 
 | Area | Role |
 |---|---|
-| [`config/interview_swe_general.json`](../config/interview_swe_general.json) | Current plan, phases, question text, caps, focus ladders and rubric metadata |
+| [`config/interview_swe_general.json`](../config/interview_swe_general.json) | Current plan, phases, question text, caps, focus ladders and rubric metadata. Also the template every generated plan takes its phase configuration from |
+| [`config/question_bank.json`](../config/question_bank.json) | Curated questions, the closed competency vocabulary and the phase each competency belongs to |
+| [`tools/plan_review.py`](../tools/plan_review.py) | Terminal surface for planning and review; a command per action with disk state, so each step is its own process |
 | [`tools/live_candidate.py`](../tools/live_candidate.py) | Turn-at-a-time human-driven harness with disk state; least scripted drift |
 | [`tools/stage2_report.py`](../tools/stage2_report.py) | Offline extraction, scoring and report generation |
 | [`tools/render_transcript.py`](../tools/render_transcript.py) | Human-readable transcript page |
