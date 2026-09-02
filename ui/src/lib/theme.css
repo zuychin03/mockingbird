@@ -1,0 +1,329 @@
+/* Mockingbird's design tokens. An engineering review packet and its sealed live room.
+ *
+ * Two grounds, deliberately: the session is a sealed carbon room, everything else is the
+ * review packet. That is not decoration -- it is the product's one inviolable rule made
+ * visible, so a candidate can tell at a glance whether they are in the room where nothing
+ * judges them or in the room where the judging is written down.
+ *
+ * Colour has exactly two jobs here and no others. Tally red means on air, or means this needs
+ * your decision. Cue amber means proposed and not yet approved. Nothing else is coloured, and
+ * nothing signals quality: a green tick beside an answer would be an assessment leaking into
+ * a surface that must not carry one.
+ */
+
+@font-face {
+  font-family: 'Archivo';
+  src: url('/fonts/archivo.woff2') format('woff2-variations');
+  font-weight: 400 700;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Public Sans';
+  src: url('/fonts/public-sans.woff2') format('woff2-variations');
+  font-weight: 400 600;
+  font-display: swap;
+  font-style: normal;
+}
+@font-face {
+  font-family: 'Azeret Mono';
+  src: url('/fonts/azeret-mono.woff2') format('woff2-variations');
+  font-weight: 400 500;
+  font-display: swap;
+  font-style: normal;
+}
+
+:root {
+  --studio-900: #0b1216;
+  --studio-800: #111c22;
+  --studio-750: #18262d;
+  --studio-700: #263941;
+  --studio-600: #3a5058;
+
+  /* Paper is cool enough to read as a working drawing, not a lifestyle page. */
+  --paper-000: #ffffff;
+  --paper-050: #f8f8f4;
+  --paper-100: #eff0eb;
+  --paper-200: #e5e7e1;
+  --paper-300: #d1d6d0;
+  --paper-400: #aeb8b2;
+
+  --ink-900: #14222b;
+  --ink-500: #4f5e66;
+  --ink-400: #596a72;
+
+  --lit-100: #f2f4f7;
+  --lit-300: #abb9bf;
+  --lit-500: #8ea0a7;
+
+  --review-blue: #315d6b;
+  --review-blue-deep: #234650;
+  --grid-fine: rgba(49, 93, 107, 0.075);
+  --grid-major: rgba(49, 93, 107, 0.12);
+  --grid-fine-dark: rgba(171, 185, 191, 0.045);
+  --grid-major-dark: rgba(171, 185, 191, 0.075);
+
+  /* The two signals. Every value here was solved against the ground it is used on rather
+   * than picked: each clears 4.5:1 for text on both that room's ground and its raised
+   * surface. `--tally` is the lamp and the marks, which are not text; `--tally-lit` is the
+   * same red taken up until "ON AIR" reads at 11px on the studio ground. */
+  --tally: #d8313a;
+  --tally-lit: #f0646a;
+  --tally-brighter: #ff767b;
+  --tally-ink: #aa1720;
+  --tally-ink-deep: #861018;
+  --cue: #dd9a24;
+  --cue-ink: #7d5406;
+
+  --font-structure: 'Archivo', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-prose: 'Public Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-data: 'Azeret Mono', ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+
+  --step--2: 0.6875rem;
+  --step--1: 0.8125rem;
+  --step-0: 1rem;
+  --step-1: 1.0625rem;
+  --step-2: clamp(1.2rem, 0.9rem + 1vw, 1.4rem);
+  --step-3: clamp(1.5rem, 1.1rem + 1.8vw, 1.95rem);
+  --step-4: clamp(2.35rem, 1.65rem + 2.8vw, 3.35rem);
+
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+  --s-7: 3rem;
+  --s-8: 4.5rem;
+
+  --r-1: 1px;
+  --r-2: 2px;
+
+  --measure: 68ch;
+  --page: 78rem;
+
+  --lift: 0 2px 3px rgba(20, 34, 43, 0.08), 0 18px 36px -24px rgba(20, 34, 43, 0.36);
+  --lift-studio: 0 2px 3px rgba(0, 0, 0, 0.4), 0 18px 40px -22px rgba(0, 0, 0, 0.8);
+
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Role tokens. Every surface below reads these, never the raw scale, so a route can hand the
+ * whole page to the studio by flipping one attribute. */
+:root,
+[data-room='document'] {
+  --bg: var(--paper-100);
+  --bg-raised: var(--paper-050);
+  --bg-sunk: var(--paper-200);
+  --fg: var(--ink-900);
+  --fg-quiet: var(--ink-500);
+  --fg-faint: var(--ink-400);
+  --rule: var(--paper-300);
+  --rule-strong: var(--paper-400);
+  --signal: var(--tally-ink);
+  --signal-bright: var(--tally);
+  --pending: var(--cue-ink);
+  --shadow: var(--lift);
+  --selection: rgba(189, 17, 25, 0.16);
+
+  /* The primary control is inked onto paper here and lit on a panel in the studio, so the
+   * two rooms invert it. Both hover states raise contrast rather than lowering it: ink gets
+   * darker, a lamp gets brighter. The first version brightened the paper button on hover and
+   * took its label from 6.5:1 to 4.0:1, which is backwards. */
+  --signal-fill: var(--tally-ink);
+  --signal-fill-hover: var(--tally-ink-deep);
+  --signal-fill-ink: #ffffff;
+}
+
+[data-room='studio'] {
+  --bg: var(--studio-800);
+  --bg-raised: var(--studio-750);
+  --bg-sunk: var(--studio-900);
+  --fg: var(--lit-100);
+  --fg-quiet: var(--lit-300);
+  --fg-faint: var(--lit-500);
+  --rule: var(--studio-700);
+  --rule-strong: var(--studio-600);
+  --signal: var(--tally-lit);
+  --signal-bright: var(--tally-lit);
+  --pending: var(--cue);
+  --shadow: var(--lift-studio);
+  --selection: rgba(240, 83, 89, 0.28);
+
+  --signal-fill: var(--tally-lit);
+  --signal-fill-hover: var(--tally-brighter);
+  --signal-fill-ink: #1b0c0c;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* The room token lives on <html>, so the ground under a short page is the room's own
+ * ground. Painting a fixed colour here put a near-black band below every light page. */
+html {
+  background: var(--bg);
+  transition: background 320ms var(--ease);
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-prose);
+  font-size: var(--step-0);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  transition: background 320ms var(--ease), color 320ms var(--ease);
+}
+
+html[data-room='document'] body {
+  background-color: var(--paper-100);
+  background-image:
+    linear-gradient(var(--grid-major) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
+    linear-gradient(var(--grid-fine) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-fine) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+}
+
+html[data-room='studio'] body {
+  background-color: var(--studio-800);
+  background-image:
+    linear-gradient(var(--grid-major-dark) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-major-dark) 1px, transparent 1px),
+    linear-gradient(var(--grid-fine-dark) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-fine-dark) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+}
+
+/* The surfaces nobody draws still belong to the design. */
+::selection {
+  background: var(--selection);
+  color: var(--fg);
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--signal-bright);
+  outline-offset: 2px;
+  border-radius: var(--r-1);
+}
+
+a {
+  text-underline-offset: 0.2em;
+  text-decoration-thickness: 1px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--rule-strong);
+  border: 3px solid var(--bg);
+  border-radius: 99px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-faint);
+}
+
+input,
+textarea,
+button,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+textarea,
+input[type='text'],
+input:not([type]) {
+  width: 100%;
+  background: var(--bg-raised);
+  color: var(--fg);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-1);
+  padding: var(--s-3);
+  caret-color: var(--signal-bright);
+  transition: border-color 140ms var(--ease), box-shadow 140ms var(--ease);
+}
+textarea:hover,
+input:hover {
+  border-color: var(--rule-strong);
+}
+textarea:focus,
+input:focus {
+  outline: none;
+  border-color: var(--signal-bright);
+  box-shadow: 0 0 0 3px var(--selection);
+}
+textarea::placeholder,
+input::placeholder {
+  color: var(--fg-faint);
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-structure);
+  font-weight: 600;
+  letter-spacing: -0.026em;
+  text-wrap: balance;
+  margin: 0;
+}
+h1 {
+  font-size: var(--step-3);
+}
+h2 {
+  font-size: var(--step-2);
+}
+h3 {
+  font-size: var(--step-1);
+}
+
+p {
+  margin: 0;
+}
+
+/* A slug is the rundown's name for a row. Everywhere it appears it is set the same way. */
+.slug {
+  font-family: var(--font-structure);
+  font-size: var(--step--2);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-quiet);
+}
+
+.num {
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

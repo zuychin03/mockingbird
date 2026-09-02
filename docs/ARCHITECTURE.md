@@ -147,6 +147,31 @@ app.cli                                            exact runtime identifier
     data/sessions/<session-id>/
 ```
 
+The browser surface adds one process and changes nothing below it:
+
+```text
+Process C: browser                Process D: uvicorn                 Process B: LM Studio
+-------------------------------   --------------------------------   --------------------
+SvelteKit SPA (adapter-static)
+  fetch /api/... --------------->  api.main
+                                     _guard -> app.* domain calls --> as Process A above
+                                     resume.write(data/live.json)
+  GET /, /_app/*, /fonts/* ----->  static host over ui/build
+```
+
+The API is a layer over the runtime, never a parallel implementation of it: `app/` imports
+nothing from `api/` and stays standard-library-only, so an interview runs identically from the
+terminal. The HTTP layer owns exactly three things the terminal did not need: mapping domain
+refusals onto status codes (`ProviderError` to 503, `ValueError` to 400, `KeyError` to 404),
+carrying the Runner between stateless requests through `app/resume.py`, and deciding what the
+candidate is allowed to see.
+
+That last one is an invariant, not a preference. `_session_state` builds the live payload by
+listing the fields it will send rather than by removing the ones it will not, so `ok`, the guard
+names and the posterior cannot reach the interview surface even by accident. Section 12's rule
+that no assessment appears mid-session is therefore enforced at the boundary, and the page could
+not render a judgement if it tried.
+
 `127.0.0.1` is intentional. Using `localhost` previously attempted IPv6 before IPv4 and added a
 large client-side stall that server timing could not see.
 
@@ -183,8 +208,28 @@ The provider port uses two endpoints because the API surfaces are complementary:
 | [`app/score.py`](../app/score.py) | Deterministic criterion arithmetic | Observations and criteria map | `QuestionScore` and `Report` |
 | [`app/report.py`](../app/report.py) | Evidence-led candidate feedback | Scores, observations, close reasons | Plain-text report |
 | [`app/depth_signals.py`](../app/depth_signals.py) | Regex facts used by focus and observations | Answer text | Depth-signal booleans |
+| [`app/resume.py`](../app/resume.py) | Carries a live Runner between processes; `FIELDS` is the guarded list a test compares against the Runner's own attributes | `Runner` | Self-describing snapshot, including the plan |
 
-### 4.2 Configuration and tools
+### 4.2 The browser surface
+
+| Area | Role |
+|---|---|
+| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session and report endpoints, the domain-refusal mapping, and the static host for `ui/build` |
+| [`ui/src/lib/theme.css`](../ui/src/lib/theme.css) | Every design token. Two rooms, `document` and `studio`, selected by `data-room` on the root element; components read role tokens only, never the raw scale |
+| [`ui/src/lib/live.svelte.js`](../ui/src/lib/live.svelte.js) | Whether a session is on air, shared by the nav strip and the interview so the tally never lags a request behind |
+| [`ui/src/routes/+page.svelte`](../ui/src/routes/+page.svelte) | Plan, as a numbered running order with per-phase durations taken from `planner._per_question` |
+| [`ui/src/routes/session/+page.svelte`](../ui/src/routes/session/+page.svelte) | The interview. Renders dialogue and nothing else |
+| [`ui/src/routes/history/+page.svelte`](../ui/src/routes/history/+page.svelte) | Past sessions, and the report laid out from `report.render`'s text plus the rubric as data |
+| [`tests/test_theme.py`](../tests/test_theme.py) | Parses `theme.css` and fails when any text token drops below 4.5:1 on the ground it is used on |
+
+The design carries the product's own separation rather than decorating it: the interview is a
+dark studio under a red on-air light, and the plan and report are that studio's paperwork on a
+pale ground, so which room you are in is visible before you read a word. Colour is load-bearing
+and rationed — red means on air or needs your decision, amber means proposed and not yet
+approved, and nothing signals quality anywhere, because a green tick beside an answer would be
+an assessment leaking into a surface that must not carry one.
+
+### 4.3 Configuration and tools
 
 | Area | Role |
 |---|---|
