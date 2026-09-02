@@ -25,6 +25,8 @@ structure has to survive both.
 
 from __future__ import annotations
 
+import textwrap
+
 from . import guards
 from .score import CRITERIA, Report
 
@@ -309,6 +311,36 @@ def render(report: Report, questions_asked: int, questions_answered: int,
         out.append("-" * 60)
         for q in thin[:5]:
             out.append("  [%s] %s" % (q.addresses_question, _clip(q.question, 70)))
+        out.append("")
+
+    # The candidate's own questions. `asked_back` was persisted from the first version of the
+    # closing handler and read by nobody, while the interviewer told them to their face it had
+    # gone "in your report" -- a reviewed line promising what the runner did not do, which is
+    # the SKIP_ACK defect. They are verbatim: these are the only words in the report that were
+    # never scored, never extracted and never judged, so paraphrasing them would be the one
+    # edit with nothing to gain.
+    asked = [line for q in (question_states or []) for line in q.asked_back if line.strip()]
+    if asked:
+        out.append("WHAT YOU ASKED")
+        out.append("-" * 60)
+        out.append("  These went unanswered on purpose. There is no employer behind this")
+        out.append("  interview, and inventing an answer about a real workplace is the one")
+        out.append("  thing a practice interviewer must not do. They are recorded here so")
+        out.append("  you can put them to the real one.")
+        out.append("")
+        # Wrapped, never clipped. A candidate often asks two things in one breath, and
+        # truncating dropped the second one silently -- which is the same loss the section
+        # was added to undo.
+        for line in asked[:6]:
+            # `break_on_hyphens` off: the default split "per-region?" across two lines, and
+            # a hyphenation break in the one section that exists to reproduce the candidate's
+            # words exactly is the same defect as clipping, just quieter.
+            wrapped = textwrap.wrap(" ".join(line.split()), width=64,
+                                    break_on_hyphens=False, break_long_words=False)
+            out.append("  - %s" % (wrapped[0] if wrapped else ""))
+            out.extend("    %s" % w for w in wrapped[1:])
+        if len(asked) > 6:
+            out.append("  ... and %d more in the session record." % (len(asked) - 6))
         out.append("")
 
     out.extend(design_note(observations or []))
