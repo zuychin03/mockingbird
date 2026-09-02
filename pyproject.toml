@@ -9,7 +9,10 @@ requires-python = ">=3.12"
 dependencies = []
 
 [project.optional-dependencies]
-test = ["pytest>=9.1,<10"]
+test = ["pytest>=9.1,<10", "httpx>=0.28,<1"]
+# Stage 4's surface. `app/` still imports none of this: the API is a layer OVER the runtime,
+# so an interview runs with the standard library alone whether or not the web extra is here.
+web = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
 # Tier 1 harnesses only. `app/` does not import either.
 research = ["numpy>=2.5,<3", "praat-parselmouth>=0.4.7", "sherpa-onnx>=1.13"]
 

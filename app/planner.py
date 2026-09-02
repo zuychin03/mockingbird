@@ -224,7 +224,11 @@ async def propose_question(provider: Provider, bank: Bank, competency: str, evid
 # phase's `scored: false` and the paragraph explaining why scoring it inverts the ranking
 # (9.6), each phase's focus ladder. A planner that re-derived those would be re-litigating
 # settled measurements with a model, so assembly chooses QUESTIONS and nothing else.
-TEMPLATE = "config/interview_swe_general.json"
+# Anchored to the package, not to the working directory. It was relative until the HTTP
+# surface tried to load it: every existing caller happened to run from the repo root, so a
+# path that only worked from there looked correct for as long as nothing ran from anywhere
+# else.
+TEMPLATE = Path(__file__).resolve().parent.parent / "config" / "interview_swe_general.json"
 
 # Phases whose questions assembly selects. Warmup and closing are structural: identical in
 # every plan, carrying no competency, and their wording is the disclosure and the sign-off.
