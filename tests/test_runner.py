@@ -2354,6 +2354,48 @@ def test_reword_needs_both_sides_present():
     assert not focus.rewords("How did you know?", [], "What made you decide that?", ["REASON"])
 
 
+def test_an_advance_acknowledges_instead_of_going_silent(tmp_path, monkeypatch):
+    """The contract discards `say` on advance and the runner's forced advances throw away the
+    model's probe, so 681 of 724 recorded advances said nothing at all and the candidate went
+    straight from answering to the next scripted question. Asking the model for the line was
+    measured and abandoned (log 8.18), so the line is deterministic."""
+    _accept_any_focus(monkeypatch)
+    r, state = build([d("advance", "", ok=True)], tmp_path)
+    run(r.ask())
+    out = run(r.submit("We split the table live. I wrote the backfill and ran it in batches, "
+                       "and there was no downtime."))
+
+    assert out.act == "advance"
+    assert out.spoken.text in runner_mod.ADVANCE_ACK
+    assert "?" not in out.spoken.text
+
+
+def test_the_advance_acknowledgement_carries_no_judgement(tmp_path, monkeypatch):
+    """Section 12 treats showing an assessment mid-session as a correctness bug, which is the
+    second reason the model's own openers are dropped rather than kept -- they arrive as
+    "That's a solid approach --". Every reviewed line has to stay neutral."""
+    graded = ("great", "good", "excellent", "strong", "impressive", "well done", "solid",
+              "nice", "perfect", "interesting", "helpful")
+    for line in runner_mod.ADVANCE_ACK:
+        assert not line.endswith("?"), line
+        assert len(line.split()) <= 3, line
+        assert not any(w in line.lower() for w in graded), line
+
+
+def test_a_harness_written_advance_line_survives_the_template(tmp_path, monkeypatch):
+    """The template is a fallback for silence, not a replacement. A MODEL-written advance line
+    can never reach it -- guard 4 drops speech on every closing action, on 50 stored lines of
+    which not one was a sentence (log 8.18) -- but the handlers that build `Guarded` directly
+    bypass that guard, and `closing->advance` carries CLOSING_ACK. Overwriting that would end
+    the interview on "Okay." instead of a sign-off."""
+    g = guards.Guarded("advance", runner_mod.CLOSING_ACK, False, "", ["closing->advance"])
+    r, _ = build([], tmp_path)
+    say, closed, ended = r._on_advance(g)
+    assert say == runner_mod.CLOSING_ACK
+    assert say not in runner_mod.ADVANCE_ACK
+    assert closed is True
+
+
 def test_runner_advances_rather_than_asking_a_reworded_probe(tmp_path, monkeypatch):
     """The response is advance, not repair. Routing rejected lines to the repair was measured
     worse: it fails often and the failures become templates."""
@@ -2367,7 +2409,10 @@ def test_runner_advances_rather_than_asking_a_reworded_probe(tmp_path, monkeypat
     out = run(r.submit("It felt like a round number."))
     decision = last_decision(state)
     assert "redundant-probe->advance" in decision["guards"]
-    assert decision["say"] == ""
+    # The rejected probe is not spoken. What IS spoken is the advance acknowledgement, which
+    # is a harness line like SKIP_ACK rather than anything the model wrote.
+    assert decision["say"] in runner_mod.ADVANCE_ACK
+    assert first not in decision["say"] and second not in decision["say"]
     # The focus is not charged either: nothing was asked, so nothing was delivered.
     assert decision["focus_got"] == []
 
