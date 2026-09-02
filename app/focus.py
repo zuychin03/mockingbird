@@ -137,9 +137,13 @@ _PATTERNS = {
             # the optional object is what "which parts of that were yours" needs.
             r"which parts (?:of (?:that|it|this) )?were you|"
             r"what did you do|were you the",
-    "OUTCOME": r"outcome|what happened|end (up|result)|how did (it|that) (go|land|turn out)|"
+    "OUTCOME": r"outcome|what happened|end (up|result)|"
+               r"how did (it|that) (?:\w+ ){0,2}?(go|land|turn out)|"
                r"result|in the end|was it successful|what (?:was|is) the impact",
-    "STEPS": r"step|walk (me )?through|how did you (do|approach|go about|handle)|"
+    "STEPS": r"step|walk (me )?through|"
+             r"how did you (do|approach|go about|handle|address|resolve|fix)|"
+             r"what did you (?:\w+ ){0,3}?do\b|"
+             r"did you (?:conduct|perform|carry out|run)\b|"
              r"what did you do (?:first|next)|what specific changes (?:did|would) you make|"
              r"what specific changes did you suggest (?:they|the team|your team) make|"
              r"sequence|first thing you did",
