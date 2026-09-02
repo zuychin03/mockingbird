@@ -39,9 +39,9 @@ def _preflight(p: prov.LMStudio, skip: bool) -> dict | None:
         return None
     model = prov.product_model(loaded)
     if model is None:
-        print("Llama 3.2 is not loaded under Mockingbird's required identifier. run: "
-              "lms load llama-3.2-3b-instruct --context-length 8192 "
-              "--identifier llama-3.2-3b-instruct -y")
+        print("Qwen3-4B-Instruct is not loaded under Mockingbird's required identifier. run: "
+              "lms load qwen3-4b-instruct-2507 --context-length 8192 "
+              "--identifier qwen3-4b-instruct-2507 -y")
         return None
     m = dict(model)
     print("model: %s (%s, ctx %s)" % (m["id"], m.get("quantization"), m.get("loaded_context_length")))

@@ -70,11 +70,13 @@ def test_warm_up_call_is_spent_before_measuring(monkeypatch):
     assert calls == [provider.CANARY_TOKENS, provider.CANARY_TOKENS]
 
 
-def test_product_model_accepts_only_the_exact_llama_runtime():
-    llama = {"id": "llama-3.2-3b-instruct", "state": "loaded"}
+def test_product_model_accepts_only_the_exact_product_runtime():
+    """Asserted against `provider.MODEL` rather than a literal: the pin moves between
+    adaptation branches and the rule being tested is exact-match, not which model it is."""
+    product = {"id": provider.MODEL, "state": "loaded"}
     other = {"id": "unsupported-model", "state": "loaded"}
 
-    assert provider.product_model([other, llama]) is llama
+    assert provider.product_model([other, product]) is product
     assert provider.product_model([other]) is None
 
 
@@ -86,4 +88,4 @@ def test_preflight_rejects_a_loaded_non_product_model(monkeypatch, capsys):
     ])
 
     assert cli._preflight(provider.LMStudio(), skip=True) is None
-    assert "llama-3.2-3b-instruct" in capsys.readouterr().out
+    assert provider.MODEL in capsys.readouterr().out

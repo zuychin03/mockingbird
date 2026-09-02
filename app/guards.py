@@ -235,6 +235,11 @@ def asks_a_question(utterance: str) -> bool:
     return "?" in (utterance or "") or any(p in low for p in ASKS)
 
 
+# Longer than any trailing clause, shorter than either observed self-answered framing
+# question (31 and 44 words). 10, 20 and 30 all select the same single corpus item.
+ANSWERED_OWN_QUESTION_WORDS = 20
+
+
 def offers_a_choice(utterance: str) -> bool:
     """Is the clarification "did you mean A or B?" rather than "what does this mean?"
 
@@ -243,7 +248,20 @@ def offers_a_choice(utterance: str) -> bool:
     "do you mean the WordPress site or the booking tool?" was met with "It just means a
     specific example from your own experience", which is a non-sequitur (9.17).
     """
-    questions = [s for s in _sentences(utterance) if _is_question(s)]
+    sentences = _sentences(utterance)
+    questions = [s for s in sentences if _is_question(s)]
+    # A real either/or request ENDS the turn: you ask and wait. A candidate who frames a
+    # design answer with one answers it himself and keeps going -- "is it about fairness
+    # between tenants, or about not falling over? ... Assuming it's both, I'd go with a token
+    # bucket". Reading that as a clarification cost a live turn. Across 199 sessions only one
+    # recorded utterance carries a tail this long past its last question, and it is the same
+    # shape ("is this per-user, per-key, or per-IP? I'll assume per API key"), so this moves
+    # one corpus item and moves it in the right direction.
+    last = max((i for i, s in enumerate(sentences) if _is_question(s)), default=None)
+    if last is not None:
+        tail = " ".join(sentences[last + 1:])
+        if len(tail.split()) >= ANSWERED_OWN_QUESTION_WORDS:
+            return False
     if any(re.search(r"\bor\b", s, re.I) for s in questions):
         return True
     # Speech can segment the alternatives: "meaning what, a few days? A sprint?".
@@ -337,6 +355,10 @@ def _lead(utterance: str) -> str:
     return ""
 
 
+# Longer than any cannot-answer measured across the recorded sessions (max 29).
+CANNOT_ANSWERED_TAIL_WORDS = 40
+
+
 def cannot_answer(utterance: str) -> bool:
     """No experience to draw on, as opposed to declining to share it.
 
@@ -349,6 +371,16 @@ def cannot_answer(utterance: str) -> bool:
     led = re.sub(r"(\w)n t\b", r"\1nt", _norm(_lead(utterance)))
     whole = re.sub(r"(\w)n t\b", r"\1nt", _norm(utterance))
     if _CANNOT.search(led) or _CANNOT_LEAD_TRAILING.search(led):
+        # The lead rule had no recovery escape, so a disclaimer in front of a real answer
+        # read as an inability and cost a reask: "I've not really had to." followed by 68
+        # words naming a colleague, what was said and what changed. The escape is the one
+        # the weaker rule already uses, plus a length outside the observed distribution --
+        # across 199 sessions every genuine cannot-answer has a tail of 29 words or fewer
+        # (median 9), so 40 moves nothing in the corpus and only fires well clear of it.
+        tail = " ".join(_sentences(utterance)[1:])
+        if (len(tail.split()) >= CANNOT_ANSWERED_TAIL_WORDS
+                and _CANNOT_RECOVERY.search(whole)):
+            return False
         return True
 
     # The new endpoint phrases are weaker evidence than an explicit refusal. Suppressing
