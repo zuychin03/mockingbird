@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -2370,6 +2371,35 @@ def test_an_advance_acknowledges_instead_of_going_silent(tmp_path, monkeypatch):
     assert "?" not in out.spoken.text
 
 
+def test_no_reviewed_line_grades_the_candidate():
+    """Section 12 treats an assessment delivered mid-session as a correctness bug. The rule
+    belongs to every line the harness speaks, not just the advance ack: QUESTION_DEFERRED
+    opened "Good question." and QUESTION_NOTED "That's a good one to ask." until 02/09, so the
+    interviewer praised a question while the whole design keeps judgement out of the session.
+    Sweeping every reviewed constant is what stops the next one being added quietly."""
+    graded = ("great", "good", "excellent", "strong", "impressive", "solid", "nice",
+              "perfect", "interesting", "helpful", "thorough", "insightful", "smart")
+    spoken = [n for n in dir(runner_mod)
+              if n.isupper() and isinstance(getattr(runner_mod, n), (str, tuple))]
+    for name in spoken:
+        value = getattr(runner_mod, name)
+        for line in (value if isinstance(value, tuple) else (value,)):
+            if not isinstance(line, str) or len(line) < 8:
+                continue
+            for word in graded:
+                assert not re.search(r"\b%s\b" % word, line, re.I), (name, word, line)
+
+
+def test_no_reviewed_line_promises_what_the_runner_cannot_do():
+    """`SKIP_ACK` once said "come back if there's time" and there is no requeue; QUESTION_NOTED
+    said the question goes "in your report" and `report.render` only ever receives a COUNT of
+    questions asked, never the text. Both are the same defect."""
+    assert "come back" not in runner_mod.SKIP_ACK.lower()
+    assert "report" not in runner_mod.QUESTION_NOTED.lower()
+    # What it does claim has to be true: this path really does record the utterance.
+    assert "noted" in runner_mod.QUESTION_NOTED.lower()
+
+
 def test_the_advance_acknowledgement_carries_no_judgement(tmp_path, monkeypatch):
     """Section 12 treats showing an assessment mid-session as a correctness bug, which is the
     second reason the model's own openers are dropped rather than kept -- they arrive as
@@ -2378,7 +2408,9 @@ def test_the_advance_acknowledgement_carries_no_judgement(tmp_path, monkeypatch)
               "nice", "perfect", "interesting", "helpful")
     for line in runner_mod.ADVANCE_ACK:
         assert not line.endswith("?"), line
-        assert len(line.split()) <= 3, line
+        # Long enough to sound like an interviewer, short enough not to become a speech in
+        # front of every question. The bound is on length only; neutrality is the real rule.
+        assert 3 <= len(line.split()) <= 9, line
         assert not any(w in line.lower() for w in graded), line
 
 
