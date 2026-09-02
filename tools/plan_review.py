@@ -10,6 +10,7 @@ explicitly rather than pickled, because pickling a live object across a code cha
 harness starts lying.
 
     python tools/plan_review.py --jd jd.txt
+    python tools/plan_review.py --stock technical --minutes 40
     python tools/plan_review.py --show
     python tools/plan_review.py --propose performance
     python tools/plan_review.py --approve gen.performance.29
@@ -121,12 +122,18 @@ def show(d: review.Draft) -> None:
               % ", ".join(q.id for q in approved_generated))
 
 
-async def start(jd_path: Path) -> review.Draft:
+async def start(jd_path: Path, minutes: int | None = None) -> review.Draft:
     b = bank_mod.load(BANK)
     p = prov.LMStudio()
     spec = await planner.read_jd(p, b, jd_path.read_text(encoding="utf-8"))
-    a = planner.assemble(spec, b)
-    return review.from_assembled(a, b, spec)
+    return review.from_assembled(planner.assemble(spec, b, minutes=minutes), b, spec)
+
+
+def stock(kind: str, minutes: int | None) -> review.Draft:
+    """FR-4. No model call at all: there is no description to read, so the whole path is
+    selection over reviewed text."""
+    b = bank_mod.load(BANK)
+    return review.from_assembled(planner.stock_plan(kind, b, minutes=minutes), b, None)
 
 
 async def propose(d: review.Draft, competency: str) -> review.Draft:
@@ -144,6 +151,9 @@ async def propose(d: review.Draft, competency: str) -> review.Draft:
 async def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--jd", type=Path)
+    ap.add_argument("--stock", choices=sorted(planner.STOCK),
+                    help="FR-4: plan without a job description")
+    ap.add_argument("--minutes", type=int, help="target interview length")
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--propose", metavar="COMPETENCY")
     ap.add_argument("--approve", metavar="ID")
@@ -156,8 +166,14 @@ async def main() -> int:
     ap.add_argument("--save-bank", type=Path, default=BANK)
     a = ap.parse_args()
 
-    if a.jd:
-        d = await start(a.jd)
+    if a.jd and a.stock:
+        raise SystemExit("--jd and --stock are two different ways to start; pick one")
+    if a.jd or a.stock:
+        try:
+            d = await start(a.jd, minutes=a.minutes) if a.jd else stock(a.stock, a.minutes)
+        except (ValueError, KeyError) as e:
+            print("  refused: %s" % e)
+            return 1
         save_state(d)
         show(d)
         return 0

@@ -331,3 +331,76 @@ def test_the_notes_record_what_was_and_was_not_covered():
 def test_the_duration_estimate_is_reported_as_an_estimate():
     a = _assembled("data_modelling", "collaboration")
     assert 20 * 60 < a.estimated_secs < 120 * 60
+
+
+def test_the_three_stock_plans_are_actually_different_interviews():
+    """The first version ranked competencies but kept every phase, so "technical" still held
+    two behavioural questions and behavioural/technical shared 7 of 8 questions -- which made
+    the choice cosmetic. A stock kind has to change the SHAPE."""
+    got = {k: planner.stock_plan(k, BANK, template=TEMPLATE) for k in planner.STOCK}
+    b, t = set(got["behavioural"].questions), set(got["technical"].questions)
+    structural = {q for ph in got["mixed"].plan["phases"] if ph["id"] in ("warmup", "closing")
+                  for q in ph["questions"]}
+    assert len(b & t) - len(b & t & structural) <= 4, "the two kinds are nearly the same plan"
+
+    shape = lambda a: {ph["id"]: len(ph["questions"]) for ph in a.plan["phases"]}  # noqa: E731
+    assert shape(got["behavioural"]) != shape(got["technical"])
+    assert "design" not in shape(got["behavioural"]), "a behavioural interview drops design"
+    assert shape(got["technical"])["technical_experience"] > \
+        shape(got["behavioural"])["technical_experience"]
+
+
+def test_a_dropped_phase_is_removed_not_left_empty():
+    """A scored phase with no questions gives the rubric a denominator of zero. Design is the
+    only phase safe to drop, because it is observed and described rather than scored (9.6)."""
+    a = planner.stock_plan("behavioural", BANK, template=TEMPLATE)
+    for ph in a.plan["phases"]:
+        assert ph["questions"], ph["id"]
+
+
+def test_every_stock_plan_loads_through_the_real_validator(tmp_path):
+    for kind in planner.STOCK:
+        a = planner.stock_plan(kind, BANK, template=TEMPLATE)
+        p = tmp_path / ("%s.json" % kind)
+        p.write_text(json.dumps(a.plan), encoding="utf-8")
+        assert sess.load_plan(p), kind
+
+
+def test_a_stock_competency_carries_no_evidence():
+    """There is no employer text to cite, and inventing one is exactly what the JD path drops
+    a requirement for."""
+    a = planner.stock_plan("technical", BANK, template=TEMPLATE)
+    assert a.covered
+    assert "no job description" in a.plan["notes"]
+
+
+def test_a_shorter_interview_is_the_same_interview_with_less_of_it():
+    long_ = planner.stock_plan("mixed", BANK, template=TEMPLATE)
+    short = planner.stock_plan("mixed", BANK, template=TEMPLATE, minutes=30)
+    assert len(short.questions) < len(long_.questions)
+    assert short.estimated_secs < long_.estimated_secs
+    # Same phases, fewer questions -- not a different shape of interview.
+    assert [ph["id"] for ph in short.plan["phases"]] == \
+        [ph["id"] for ph in long_.plan["phases"]]
+
+
+def test_a_duration_the_plan_cannot_reach_is_refused_not_silently_overshot():
+    """Returning a 26-minute interview to someone who asked for 12 is the quiet degrading this
+    codebase refuses elsewhere -- `answer_shape` is validated rather than defaulted for the
+    same reason."""
+    with pytest.raises(ValueError, match="shorter than this plan can be"):
+        planner.stock_plan("mixed", BANK, template=TEMPLATE, minutes=12)
+
+
+def test_an_unknown_stock_kind_names_the_known_ones():
+    with pytest.raises(KeyError, match="behavioural"):
+        planner.stock_plan("vibes", BANK, template=TEMPLATE)
+
+
+def test_a_stock_plan_holds_only_askable_questions():
+    proposal = bank.Question(id="gen.own.99", text="A proposed ownership question?",
+                             competencies=("ownership",), shape="star",
+                             source="generated", status="proposed")
+    b = bank.with_question(BANK, proposal)
+    a = planner.stock_plan("behavioural", b, template=TEMPLATE)
+    assert proposal.text not in a.questions
