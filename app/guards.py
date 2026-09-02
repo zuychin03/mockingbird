@@ -408,30 +408,22 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
     if act in ("advance", "end"):
         qs = [s for s in _sentences(say) if _is_question(s)]
         if qs:
-            # `ok` decides this for `advance` only. On `advance` a false `ok` is the model
-            # contradicting itself -- it says move on and writes a follow-up -- so the
-            # question is the honest part.
+            # `ok` no longer decides this. It was read as self-contradiction on `advance`,
+            # which is a llama-3.2-3b calibration: that model carries ok=true on all ten
+            # gold=`advance` fixtures, so the rule never fired for it (9.42).
             #
-            # On `end` it means nothing: `ok` asks whether the reply answered the QUESTION,
-            # and "I need to stop, sorry" never does. Reading that as self-contradiction
-            # turned a grounded stop request into a probe, which is guard 2's call and not
-            # this one's. Strip the question and let guard 2 decide whether the end stands
-            # -- an ungrounded one still becomes `probe` two lines below (9.19).
-            if not ok and act == "advance":
-                act, say, applied = "probe", say, applied + ["invented-question->probe"]
-            else:
-                say = " ".join(s for s in _sentences(say) if not _is_question(s))
-                applied.append("invented-question-dropped")
-
-    # 1b. The advance/ok contradiction, which is guard 1's rule with the question dropped.
-    # `advance` claims the reply answers the question and `ok=false` says it does not, so the
-    # model has contradicted itself and `ok` is the field it was asked to reason about.
-    #
-    # Measured on llama-3.2-3b over the 60 fixtures (9.42): it advanced 13 times, all ten
-    # gold=`advance` carried ok=true, and both ok=false advances were gold=`probe`. Perfect
-    # discrimination, so this costs nothing and recovers two.
-    if act == "advance" and not ok:
-        act, applied = "probe", applied + ["advance-not-ok->probe"]
+            # qwen3-4b-instruct-2507 does not share the calibration. It acknowledges and then
+            # bridges with a question ("That's a solid approach -- how did you ensure data
+            # consistency?"), carrying ok=false on advances that are correct. Reading that as
+            # contradiction cost 4 of its 5 misses. Its `act` needs no second opinion: over
+            # the 60 fixtures it says `advance` exactly ten times and all ten are gold, which
+            # is the precision the old rule assumed for llama and llama does not have (it
+            # says `advance` twelve times for ten golds).
+            #
+            # So the question is always the decoration and the act always stands. The
+            # acknowledgement in front of it is what the candidate hears.
+            say = " ".join(s for s in _sentences(say) if not _is_question(s))
+            applied.append("invented-question-dropped")
 
     # 2. `end` gate. Wrongly continuing costs seconds; wrongly ending loses the session.
     if act == "end" and not user_asked_to_stop(utterance):

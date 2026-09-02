@@ -29,10 +29,16 @@ def test_unknown_action_becomes_probe():
 
 
 # --------------------------------------------------- 1. invented-question strip
-def test_advance_with_question_and_not_ok_becomes_probe():
-    r = guards.apply(g("advance", "Good. What did you measure?", ok=False), "we shipped it", [])
-    assert r.act == "probe"
-    assert "invented-question->probe" in r.applied
+def test_advance_with_a_question_keeps_its_advance_whatever_ok_says():
+    """`ok` no longer overrides `act`. Reading a false `ok` as self-contradiction was a
+    llama calibration that never fired for llama and cost qwen 4 of its 5 misses: qwen
+    acknowledges and then bridges with a question while carrying ok=false, and its `act` is
+    10/10 precise on `advance` over the 60 fixtures."""
+    for ok in (True, False):
+        r = guards.apply(g("advance", "Good. What did you measure?", ok=ok), "we shipped it", [])
+        assert r.act == "advance"
+        assert "?" not in r.say
+        assert "invented-question-dropped" in r.applied
 
 
 def test_advance_with_question_but_ok_keeps_advance_and_drops_question():
@@ -393,11 +399,12 @@ def _raw(act, ok=True, say="", ask=""):
     return {"act": act, "ok": ok, "say": say, "ask": ask}
 
 
-def test_advance_with_ok_false_is_a_contradiction():
-    """Llama's measured `ok` signal keeps an incomplete answer open for probing."""
+def test_a_bare_advance_with_ok_false_still_advances():
+    """The companion to the guard-1 change: with the contradiction rule gone there is no
+    second opinion on `act` anywhere in the path, so a questionless advance stands too."""
     g = guards.apply(_raw("advance", ok=False), "I had to pick up a legacy Java service.", [])
-    assert g.act == "probe"
-    assert "advance-not-ok->probe" in g.applied
+    assert g.act == "advance"
+    assert "advance-not-ok->probe" not in g.applied
 
 
 def test_an_honest_advance_still_advances():
