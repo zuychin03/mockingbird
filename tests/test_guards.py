@@ -373,6 +373,29 @@ def test_a_gap_named_after_a_real_answer_is_not_a_cannot_answer():
         assert not guards.cannot_answer(said), said
 
 
+def test_a_disclaimer_in_front_of_a_real_answer_is_not_an_inability():
+    """The lead rule had no recovery escape, so "I've not really had to" in front of a full
+    answer cost a reask in a live session. The escape needs a tail outside the observed
+    distribution: across 199 recorded sessions every genuine cannot-answer has 29 words or
+    fewer after its opening sentence, so 40 moves nothing in the corpus."""
+    answered = ("I've not really had to. I'm the most junior person on the team so it's "
+                "usually the other way round. The closest thing was another junior who "
+                "joined after me kept asking me the same questions instead of writing "
+                "anything down, and I found it a bit frustrating. I ended up just making a "
+                "doc of the common ones and pointing him at it rather than actually saying "
+                "anything to him about it.")
+    assert not guards.cannot_answer(answered)
+
+    # A short tail is still an inability however it is decorated, which is the whole point
+    # of keeping the threshold clear of the distribution rather than at its edge.
+    for said in ("I can't really think of one.",
+                 "I can't really think of one. I'm quite junior so I mostly go along with "
+                 "what the seniors decide.",
+                 "I haven't had one that was really mine. The closest is a test suite I "
+                 "broke for half a day, but that's not production."):
+        assert guards.cannot_answer(said), said
+
+
 def test_the_inability_still_counts_when_it_opens_the_reply():
     for said in ("I haven't done a schema change on a live system. That's not been my work.",
                  "I can't really think of one. I'm quite junior so I go along with the seniors.",

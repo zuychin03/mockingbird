@@ -31,7 +31,7 @@ from typing import Any, Protocol
 BASE = "http://127.0.0.1:1234"
 # Mockingbird deliberately supports one measured runtime. Keeping the API model id identical
 # to the LM Studio instance id makes both routing and stored provenance unambiguous.
-MODEL = "llama-3.2-3b-instruct"
+MODEL = "qwen3-4b-instruct-2507"
 TOP_LOGPROBS = 20          # server rejects anything higher (log 7.2)
 CANARY_WARN_MS = 150.0     # a warm TTFT above this means the GPU clock dropped (log 7.23)
 # `clock_ok` watches TTFT, which is PREFILL, and 8.8 measured the turn as essentially all
