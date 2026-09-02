@@ -35,40 +35,14 @@ from tools._console import utf8  # noqa: E402
 utf8()
 
 from app import (contract, embed, observe, provenance, provider as prov,
-                 session as sess)  # noqa: E402
+                 resume, session as sess)  # noqa: E402
 from app.runner import Runner  # noqa: E402
 
 STATE = ROOT / "data" / "live_session.json"
 
 
 def save(r: Runner) -> None:
-    STATE.write_text(json.dumps({
-        "session_id": r.state.session_id,
-        "index": r.index,
-        "pool": r.pool,
-        "follow_ups_used": r.follow_ups_used,
-        "clarifies_used": r.clarifies_used,
-        "focus_used": sorted(r.focus_used),
-        "seen": sorted(r.seen),
-        "stalls": r.stalls,
-        "said_this_session": r.said_this_session,
-        "last_probe": list(r.last_probe) if r.last_probe else None,
-        "design_followed_up": r.design_followed_up,
-        "clarify_extra": r.clarify_extra,
-        "skip_offered": r.skip_offered,
-        "awaiting_confirm": r.awaiting_confirm,
-        "confirm_narrowed": r.confirm_narrowed,
-        "awaiting_skip_offer": r.awaiting_skip_offer,
-        "questions_asked": r.questions_asked,
-        "said_this_question": r.said_this_question,
-        "answers_this_question": r.answers_this_question,
-        "history_summary": r.history.summary,
-        "history_completed": r.history._completed,
-        "history_dirty": r.history._dirty,
-        "status": r.state.status,
-        "turns": [asdict(t) for t in r.state.turns],
-        "questions": [asdict(q) for q in r.state.questions],
-    }, indent=1, ensure_ascii=False), encoding="utf-8", newline="\n")
+    resume.write(r, STATE)
 
 
 def extractor(p):
@@ -79,39 +53,9 @@ def extractor(p):
 
 
 def restore(p, plan) -> Runner:
-    d = json.loads(STATE.read_text(encoding="utf-8"))
-    # Every field the Runner carries between turns has to be listed here. `focus_used` was
-    # missed on the first pass, so each invocation began with an empty set and the rotation
-    # silently did nothing across a live session while working in-process (log 8.19).
-    state = sess.SessionState(session_id=d["session_id"], plan_id=plan.get("id", "?"),
-                              started_at="", status=d["status"])
-    state.turns = [sess.Turn(**t) for t in d["turns"]]
-    state.questions = [sess.QuestionState(**q) for q in d["questions"]]
-    r = Runner(p, plan, state, pool=d["pool"], observe_fn=extractor(p),
-               similarity=embed.similarity)
-    r.index = d["index"]
-    r.follow_ups_used = d["follow_ups_used"]
-    # Tuples do not survive JSON; `rewords` compares membership, so rebuild the shape.
-    lp = d.get("last_probe")
-    r.last_probe = (lp[0], tuple(lp[1])) if lp else None
-    r.clarifies_used = d["clarifies_used"]
-    r.focus_used = set(d.get("focus_used", []))
-    r.seen = set(d.get("seen", []))
-    r.stalls = d.get("stalls", 0)
-    r.said_this_session = d.get("said_this_session", [])
-    r.design_followed_up = d.get("design_followed_up", False)
-    r.clarify_extra = d["clarify_extra"]
-    r.skip_offered = d["skip_offered"]
-    r.awaiting_confirm = d["awaiting_confirm"]
-    r.confirm_narrowed = d.get("confirm_narrowed", False)
-    r.awaiting_skip_offer = d["awaiting_skip_offer"]
-    r.questions_asked = d.get("questions_asked", [])
-    r.said_this_question = d["said_this_question"]
-    r.answers_this_question = d["answers_this_question"]
-    r.history.summary = d["history_summary"]
-    r.history._completed = [(q, a) for q, a in d["history_completed"]]
-    r.history._dirty = d["history_dirty"]
-    return r
+    # `plan` is ignored for a snapshot that carries its own, which is what makes a session
+    # started here resumable in the browser and the other way round.
+    return resume.read(p, None, STATE, observe_fn=extractor(p), similarity=embed.similarity)
 
 
 def show(r: Runner, line: str) -> None:

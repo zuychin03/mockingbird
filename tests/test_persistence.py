@@ -113,17 +113,29 @@ def test_files_are_written_with_lf_endings(tmp_path):
 
 
 # ------------------------- the live harness's own state (log 8.19)
-def test_the_live_harness_saves_every_field_the_runner_carries():
-    """`focus_used` was missed, so a live session silently lost the focus rotation every
-    turn while it worked in-process. The next added field must not be able to do that."""
+def test_the_snapshot_saves_every_field_the_runner_carries():
+    """`focus_used` was missed, so a live session silently lost the focus rotation every turn
+    while it worked in-process. The next added field must not be able to do that.
+
+    The snapshot moved from `tools/live_candidate.py` into `app/resume.py` when the HTTP
+    surface needed it too. This reads the module's own declared field lists rather than
+    scanning its source: the first repointed version matched every quoted word in the file,
+    so a field named only in a comment counted as persisted and the check passed vacuously.
+
+    It stays a STATIC check over `Runner.__init__`, complementing the runtime sweep in
+    `test_resume.py`. This one sees a field assigned in `__init__` and never touched again,
+    which an instance sweep of a mid-session runner can miss.
+    """
     import ast
     import inspect
     import textwrap
+    from app import resume
     from app.runner import Runner
 
-    src = (Path(__file__).resolve().parent.parent / "tools" / "live_candidate.py").read_text(
-        encoding="utf-8")
-    saved = set(re.findall(r'"(\w+)":', src.split("def save")[1].split("def restore")[0]))
+    saved = set(resume.FIELDS) | set(resume.SET_FIELDS) | {
+        # Handled by name in `snapshot`/`restore` because they need converting.
+        "last_probe",
+    }
 
     tree = ast.parse(textwrap.dedent(inspect.getsource(Runner.__init__)))
     attrs = {n.attr for n in ast.walk(tree)
@@ -132,14 +144,14 @@ def test_the_live_harness_saves_every_field_the_runner_carries():
     # Rebuilt from the plan or the provider on every restore, so they carry nothing.
     # `_pending` is an in-flight extraction task and MUST NOT cross a process boundary --
     # `settle()` is what makes its result durable, as `seen` and `stalls`.
-    # `max_say_words` is fixed Llama product configuration, not turn state.
+    # `max_say_words` is fixed product configuration, not turn state.
     # `similarity` is a capability handle like `observe_fn`, not turn state: it is rebuilt from
     # whether the optional embedding model answers, which is a property of the machine rather
     # than of the interview, and persisting a function reference across a process is meaningless.
     rebuilt = {"provider", "plan", "state", "questions", "history", "pace",
                "observe_fn", "_pending", "max_say_words", "similarity"}
     missing = attrs - rebuilt - saved
-    assert not missing, "live_candidate.save() does not persist: %s" % sorted(missing)
+    assert not missing, "app/resume.py does not persist: %s" % sorted(missing)
 
 
 # ------------------------- source hygiene (log 5, 8.18, 9.7)

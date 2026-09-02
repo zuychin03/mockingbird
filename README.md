@@ -209,8 +209,16 @@ app/
   bank.py          the curated question bank and its closed competency vocabulary
   planner.py       description -> competencies -> plan; generation, and stock plans
   review.py        the operations a person performs on a plan before it is run
+  resume.py        carrying a live session between processes
+api/
+  main.py          the HTTP surface, and the static host for the built interface
+ui/
+  src/lib/         design tokens, the shared on-air state, the icon set
+  src/routes/      the three surfaces: plan, interview, history
+  static/fonts/    the three faces, self-hosted so the app renders offline
 config/            interview plans, and the question bank
 tests/             deterministic unit and integration coverage
+tools/shots.sh     screenshots every surface at both widths, for design review
 ```
 
 ## Why Qwen3-4B-Instruct
@@ -238,7 +246,7 @@ intentionally ignored by Git.
 ## Status
 
 The text interview, rubric scoring, report, the natural-probing wave and the planner are
-implemented, with 468 automated tests passing. An interview can be planned from a job
+implemented, with 518 automated tests passing. An interview can be planned from a job
 description or from a stock plan, reviewed and edited, saved, and then conducted.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
@@ -253,4 +261,22 @@ non-deterministic on this GPU path — two runs of one build measured 50.0% and 
 comparisons between sessions are worthless unless the arms are interleaved: the same build has
 measured 20% apart depending on how warm the GPU was.
 
-A web interface and voice mode are designed and not built.
+The browser interface is built. It is one page per stage of a run: a **plan** as a numbered
+running order with per-phase durations, which you edit and approve before anything is asked; the
+**interview** itself; and a **history** of past interviews with the report for any one of them.
+
+Its design follows the product's own rule that no judgement reaches the candidate mid-interview.
+The interview is a dark studio under a red on-air light; the plan and the report are that
+studio's paperwork on a pale ground. Red carries exactly two meanings and no others: on air, or
+this needs your decision. Nothing in the interview scores, ranks or congratulates.
+
+Serving it needs the optional `web` extra and one build:
+
+```bash
+pip install -e ".[web]"
+npm --prefix ui install && npm --prefix ui run build
+python -m uvicorn api.main:app --port 8000
+```
+
+The API runs without the interface; the static host simply does not mount when `ui/build` is
+absent. Voice mode is designed and not built.

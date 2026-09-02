@@ -209,7 +209,7 @@ def design_note(observations) -> list[str]:
         out.append("  You %s:" % label)
         out.append("      \"%s\"" % _clip(getattr(d, k), 88))
     for label in missing:
-        out.append("  Nothing in the answer %s." % label)
+        out.append("  - Nothing in the answer %s." % label)
     out.append("")
     return out
 
@@ -310,7 +310,7 @@ def render(report: Report, questions_asked: int, questions_answered: int,
         out.append("QUESTIONS WORTH REVISITING ON YOUR OWN")
         out.append("-" * 60)
         for q in thin[:5]:
-            out.append("  [%s] %s" % (q.addresses_question, _clip(q.question, 70)))
+            out.append("  - [%s] %s" % (q.addresses_question, _clip(q.question, 70)))
         out.append("")
 
     # The candidate's own questions. `asked_back` was persisted from the first version of the
@@ -340,6 +340,7 @@ def render(report: Report, questions_asked: int, questions_answered: int,
             out.append("  - %s" % (wrapped[0] if wrapped else ""))
             out.extend("    %s" % w for w in wrapped[1:])
         if len(asked) > 6:
+            out.append("")
             out.append("  ... and %d more in the session record." % (len(asked) - 6))
         out.append("")
 
