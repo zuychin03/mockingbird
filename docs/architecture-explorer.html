@@ -408,7 +408,7 @@
       <div>
         <p class="eyebrow">Current-state architecture · 29/08/2026</p>
         <h1>Mockingbird, from answer to evidence.</h1>
-        <p class="lede">A Llama-only local interview coach where the model writes and reads bounded text, while Python owns consent, pacing, speech acceptance, persistence and every score.</p>
+        <p class="lede">A single-runtime local interview coach where the model writes and reads bounded text, while Python owns consent, pacing, speech acceptance, persistence and every score.</p>
       </div>
       <dl class="snapshot" aria-label="Evidence snapshot">
         <dt>Branch</dt><dd>stage3-natural-probing</dd>
@@ -442,7 +442,7 @@
       <div class="shell">
         <span class="kicker">01 · Authority boundary</span>
         <h2>The model has a narrow job on purpose.</h2>
-        <p class="section-intro">Mockingbird is not an unconstrained interviewer agent. Llama may propose one of six moves and phrase one short sentence. Python decides whether that move is grounded, affordable, focused and safe to commit.</p>
+        <p class="section-intro">Mockingbird is not an unconstrained interviewer agent. The model may propose one of six moves and phrase one short sentence. Python decides whether that move is grounded, affordable, focused and safe to commit.</p>
 
         <div class="authority-grid">
           <article class="authority-panel model">
@@ -551,7 +551,7 @@
           </div>
           <aside class="outcome-panel" aria-live="polite">
             <h3 id="scenario-title">Partial candidate answer</h3>
-            <p id="scenario-outcome">Python selects a missing focus, Llama proposes a turn, policy fixes action and pacing, then speech is retained, repaired or replaced before commit.</p>
+            <p id="scenario-outcome">Python selects a missing focus, the model proposes a turn, policy fixes action and pacing, then speech is retained, repaired or replaced before commit.</p>
             <div class="outcome-grid">
               <div><span>Model calls</span><strong id="scenario-calls">1–2</strong></div>
               <div><span>Likely action</span><strong id="scenario-action">probe</strong></div>
@@ -726,13 +726,13 @@
           role: "Chooses and validates request type, rotates templates, repairs design tense and caps follow-up demand.",
           input: "answer signals, criteria, used focuses, pool",
           output: "focus instruction, classification, design-safe template and Allowance",
-          watch: "Spoken questions stay within 25 words; design's displayed cap is hard.",
+          watch: "Spoken questions stay within the 35-word cap; design's displayed cap is hard.",
           files: [["app/focus.py", "../app/focus.py"], ["app/budget.py", "../app/budget.py"]]
         },
         provider: {
           kind: "Model boundary",
           title: "LM Studio provider",
-          role: "One async port for structured completions, enum posteriors, exact Llama identity and health.",
+          role: "One async port for structured completions, enum posteriors, exact runtime identity and health.",
           input: "system/user prompts, schema, exact product identifier",
           output: "Completion metrics or ProviderError",
           watch: "127.0.0.1 avoids the measured localhost IPv6 stall.",
@@ -788,7 +788,7 @@
       const scenarios = {
         answer: {
           title: "Partial candidate answer",
-          outcome: "Python selects a missing focus, Llama proposes a turn, policy fixes action and pacing, then speech is retained, repaired or replaced before commit.",
+          outcome: "Python selects a missing focus, the model proposes a turn, policy fixes action and pacing, then speech is retained, repaired or replaced before commit.",
           calls: "1–2", action: "probe", budget: "1 follow-up", owner: "Runner",
           steps: [
             ["Settle", "Fold the previous background observation into STAR evidence.", "python"],

@@ -233,8 +233,8 @@ def product_model(models: list[dict] | None = None) -> dict | None:
 
     Earlier multi-model runs tried to infer the weights behind an instance alias from model
     metadata. That became ambiguous when two installed revisions shared the same metadata.
-    The Llama-only product instead requires its runtime identifier to be exact; a wrong model
-    is rejected before an interview starts rather than silently receiving Llama's controls.
+    The single-runtime product instead requires its identifier to be exact; a wrong model is
+    rejected before an interview starts rather than silently receiving another's controls.
     """
     available = loaded_models() if models is None else models
     return next((model for model in available if model.get("id") == MODEL), None)

@@ -73,7 +73,7 @@ async def run(plan_path: Path, skip_canary: bool) -> int:
     # Before the first question, not after: this is what keeps turn 0 off the cold path.
     ms = await p.warmup(contract.SYSTEM, contract.render(
         next(session.iter_questions(plan))["question"], "", ""))
-    print("warmed Llama prompt cache in %.0f ms" % ms)
+    print("warmed the prompt cache in %.0f ms" % ms)
     state = session.new_session(plan, provenance.snapshot(model))
 
     async def observe_answer(question_id, question, utterance):

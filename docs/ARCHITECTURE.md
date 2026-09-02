@@ -38,7 +38,7 @@ the model's six-action JSON object is advisory input to that orchestrator.
 - A 14-question, six-phase software-engineering interview plan.
 - Terminal-based text interviews through `python -m app.cli`.
 - LM Studio integration with structured output, enum posteriors, timing and health checks.
-- Exact-identity, Llama 3.2 3B Instruct runtime with a measured 25-word speech cap.
+- Exact-identity, Qwen3-4B-Instruct-2507 runtime with a measured 35-word speech cap.
 - Deterministic consent, refusal, clarification, repetition, speech and budget controls.
 - Focus-aware creative probing, hypothetical-design tense repair and one action-locked
   speech-only repair before template fallback.
@@ -120,7 +120,7 @@ LM Studio is the only live external process, reached on `http://127.0.0.1:1234`.
 ```text
 Process A: terminal application                    Process B: LM Studio
 -----------------------------------------------   -------------------------------
-app.cli                                            exact Llama identifier
+app.cli                                            exact runtime identifier
   preflight ------------------------------------> /api/v0/models
   canary ---------------------------------------> /api/v0/chat/completions
   warm prompt cache ----------------------------> /v1/chat/completions
@@ -150,7 +150,7 @@ The provider port uses two endpoints because the API surfaces are complementary:
 | [`app/cli.py`](../app/cli.py) | Terminal entry point, preflight, warm-up and interview loop | Plan path, stdin, LM Studio | Candidate speech and session paths |
 | [`app/runner.py`](../app/runner.py) | Owns the turn loop, precedence, state transitions and dispatch | Candidate utterance, plan, provider, state | `TurnOutcome`, persisted turn |
 | [`app/contract.py`](../app/contract.py) | Normal turn and speech-only repair schemas, prompts and severity utility | Current question, answer, summary | Structured model request |
-| [`app/provider.py`](../app/provider.py) | LM Studio transport, metrics, posteriors and exact Llama identity | System/user prompts and schema | `Completion` or `ProviderError` |
+| [`app/provider.py`](../app/provider.py) | LM Studio transport, metrics, posteriors and exact runtime identity | System/user prompts and schema | `Completion` or `ProviderError` |
 | [`app/intent.py`](../app/intent.py) | Clause-aware control parsing | Candidate utterance | stop, continue, skip or unclear |
 | [`app/direction.py`](../app/direction.py) | Separates candidate questions from answers | Candidate utterance | Role decision and optional answer prefix |
 | [`app/guards.py`](../app/guards.py) | Validates model proposal and sanitises speech | Raw model JSON and utterance | `Guarded` effective proposal |
@@ -182,14 +182,14 @@ The provider port uses two endpoints because the API surfaces are complementary:
 
 `app.cli.run()` establishes the runtime in this order:
 
-1. Create an `LMStudio` provider for the exact identifier `llama-3.2-3b-instruct`.
+1. Create an `LMStudio` provider for the exact identifier `qwen3-4b-instruct-2507`.
 2. Query loaded models and refuse to start unless that exact product model is loaded.
 3. Run the canary unless disabled. It checks prefill time, decode throughput and transport
    overhead separately.
 4. Load and validate the interview plan.
 5. Warm the real turn system prompt so the first candidate turn is not a cold-cache measurement.
 6. Capture provenance and create the session directory.
-7. Construct `Runner` with the 25-word cap and an injected per-answer observation function.
+7. Construct `Runner` with the 35-word cap and an injected per-answer observation function.
 8. Ask the current scripted question.
 9. Repeatedly read one non-empty utterance and call `Runner.submit()`.
 10. Print only candidate-safe `Spoken` fields.
@@ -260,7 +260,7 @@ action posterior from the enum token position.
 
 1. Invalid or missing JSON becomes a regenerating `probe` fallback.
 2. Invented questions on closing actions are removed; an `advance`/`ok=false` contradiction becomes
-   `probe` for the measured Llama contract.
+   `probe` for the measured turn contract.
 3. Ungrounded `end`, `clarify` and `skip` actions are downgraded.
 4. Candidate-grounded refusal and cannot-answer language upgrades eligible actions to `skip` and
    `reask` respectively.
@@ -277,8 +277,9 @@ There are at most two model calls for a turn.
 
 - A repeated or malformed first turn response gets one full-turn regeneration. A second semantic
   repetition advances rather than looping; malformed output keeps the safe probe fallback.
-- An over-25-word first line gets one full-turn shortening retry. It is accepted only when the
-  action is unchanged, speech is present and the result fits the cap.
+- A first line past the 35-word cap gets one full-turn shortening retry. It is accepted only
+  when the action is unchanged, speech is present and the result fits the cap. Compound
+  questions are NOT trimmed: a two-part question is ordinary interviewer behaviour.
 - After consent, clarification, budget and pacing decisions are final, a hypothetical design probe
   with a recognised past premise is rewritten through a finite deterministic transform. An unsafe
   or repeated transform uses a future-conditional design template and costs no model call.
@@ -290,12 +291,13 @@ There are at most two model calls for a turn.
   advances and no turn can silently ask the same kind of thing twice.
 - A final `probe` whose speech is empty, or off-focus and too terse to keep, gets one
   speech-only completion through `SPEECH_SCHEMA`. It is accepted only when the line is one
-  direct question, at most 25 words, contains the requested focus and repeats neither the
-  current/rejected line nor prior session speech. A failed attempt falls through to the next
-  unspoken reviewed focus template.
+  direct question within the cap, asks about a focus this question has not already spent, and
+  repeats neither the current/rejected line nor prior session speech. It runs under a deadline;
+  past it the turn stops waiting. A failed attempt falls through to the next unspoken reviewed
+  focus template.
 
 The speech-repair prompt deliberately does not quote rejected or previously spoken lines. The first
-live implementation showed that Llama copied negative examples; repetition is now described only as
+live implementation showed the model copied negative examples; repetition is now described only as
 a validator rule. `reask` retains its existing deterministic fallback to the scripted question.
 
 ### 6.8 Apply runner-owned policy
@@ -390,7 +392,7 @@ Plan loading validates:
 - focus types and speech already used;
 - answers and candidate questions for the current question;
 - stop-confirmation and skip-offer flags;
-- the sole-Llama 25-word cap and whether the design-gap follow-up has fired.
+- the 35-word speech cap and whether the design-gap follow-up has fired.
 
 `SessionState` owns durable-domain state: session identity, status, turns and closed questions.
 
@@ -465,7 +467,7 @@ and the counting is checkable, but a model still selected which words counted as
 | Model proposes ungrounded end/skip | Deterministic grounding downgrades action | Session/question remains open |
 | Ambiguous stop reply | Narrow once; do not guess | One extra control turn |
 | Repeated speech | One regeneration, then bounded fallback/close | No infinite wording loop |
-| Overlong Llama speech | One action-preserving full-turn shortening retry, then focus validation | Bounded latency and 25-word speech |
+| Overlong speech | One action-preserving full-turn shortening retry, then focus validation | Bounded latency and speech within the cap |
 | Unnameable but substantive probe speech | Kept, with the requested focus charged | Fewer templates without losing focus rotation |
 | Empty or terse off-focus probe speech | One `say`-only repair, then a reviewed focus template | Action and pacing remain fixed |
 | Past-premised design speech | Finite tense rewrite, then a future-conditional design template | No false claim of prior implementation |
@@ -487,7 +489,7 @@ At this snapshot, pytest collects and passes 319 tests:
 | `test_observe.py` | 31 | Extraction grounding, cache and observation shapes |
 | `test_persistence.py` | 11 | Plan validation, files and provenance |
 | `test_probe_audit.py` | 4 | Raw, repaired and substituted speech provenance |
-| `test_provider.py` | 7 | Transport, posterior and exact Llama identity |
+| `test_provider.py` | 7 | Transport, posterior and exact runtime identity |
 | `test_report.py` | 8 | Feedback selection, thresholds and rendering |
 | `test_runner.py` | 164 | Turn precedence, pacing, routing, repair and state |
 
@@ -517,7 +519,7 @@ The full junior probe-stress session `20260829-190818-ec1710` completed all 14 q
 turns and produced 31 follow-ups: 23 model-derived lines (20 retained byte for byte plus three
 compound-request trims, 74.2%), seven templates (22.6%) and one deterministic design-gap probe
 (3.2%). It spoke no generic “Could you say a bit more about that?”, compound question or
-over-25-word question, and had no action conflict.
+question past the cap, and had no action conflict.
 
 That run also exposed a defect in the first speech-repair prompt: all seven attempts were rejected,
 including copies of negative examples. The prompt and classifier were corrected afterwards. The
@@ -624,7 +626,7 @@ and record both byte-for-byte retention and accepted repair rates.
 
 ```powershell
 lms server start
-lms load llama-3.2-3b-instruct --context-length 8192 --identifier llama-3.2-3b-instruct -y
+lms load qwen3-4b-instruct-2507 --context-length 8192 --identifier qwen3-4b-instruct-2507 -y
 ```
 
 The identifier is a product contract, not an interchangeable alias. Preflight rejects any other

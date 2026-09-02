@@ -433,6 +433,10 @@ def apply(raw: dict | None, utterance: str, previous_says: list[str]) -> Guarded
 
     act = raw["act"]
     say = (raw.get("say") or "").strip()
+    # Recorded and passed through, but it no longer gates any decision: the two guards that
+    # read it as a second opinion on `act` were removed with the move to qwen. Kept in the
+    # contract because dropping a field the model reasons with is a behaviour change that
+    # would need its own measurement, not a cleanup.
     ok = bool(raw.get("ok"))
     ask = (raw.get("ask") or "").strip()
 

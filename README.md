@@ -4,9 +4,9 @@ A mock-interview coach for software-engineering roles that runs entirely on your
 It conducts a structured interview, decides for itself when to probe and when to move on, and
 produces feedback in which every claim quotes something you actually said.
 
-Built and validated against Llama 3.2 3B on a 6GB laptop GPU, which is the constraint that
-shaped the whole design. Mockingbird intentionally supports that model only: accepting an
-unknown loaded model would bypass the controls measured for the product.
+Built and validated against Qwen3-4B-Instruct-2507 on a 6GB laptop GPU, which is the
+constraint that shaped the whole design. Mockingbird intentionally supports that model only:
+accepting an unknown loaded model would bypass the controls measured for the product.
 
 ## The idea it is testing
 
@@ -94,7 +94,7 @@ Needs Python 3.12 and [LM Studio](https://lmstudio.ai/) with a local model loade
 
 ```bash
 lms server start
-lms load llama-3.2-3b-instruct --context-length 8192 --identifier llama-3.2-3b-instruct -y
+lms load qwen3-4b-instruct-2507 --context-length 8192 --identifier qwen3-4b-instruct-2507 -y
 ```
 
 One small embedding model is optional and worth loading. Two of the speech controls compare
@@ -162,17 +162,32 @@ config/            interview plans
 tests/             deterministic unit and integration coverage
 ```
 
-## Why Llama
+## Why Qwen3-4B-Instruct
 
-Mockingbird was built measurement-first. The private development log
-`internal_docs/MODEL_EXPERIMENTING_LOG.md` records the symmetric fixture screens, full interview
-controls, speech audits and rejected alternatives that led to selecting Llama as the sole runtime.
-It remains local and intentionally ignored by Git.
+Mockingbird was built measurement-first, and the runtime changed once the measurements said to.
+Llama 3.2 3B was the sole model until September 2026, when a symmetric screen and a paired live
+control replaced it.
+
+On 60 fixtures scored through the real guards, Qwen reads 49/49 with severity 0 against Llama's
+47/49 and severity 2, and it never contradicts itself on `advance`: it chooses that action ten
+times for ten, where Llama chooses it twelve times for the same ten. On a live junior interview
+answered turn by turn, Qwen closed all fourteen questions in 29 turns against Llama's 42, needed
+no speech repair where Llama's failed three times and fell back to four canned lines, and drew
+twice on the shared question pool where Llama drew five times.
+
+Qwen decodes about 24% slower per token, which is the one axis it loses and the one that matters
+least: it writes less per decision, so a single turn is faster in wall time (840 ms median against
+897 ms, and 1438 ms at its worst against 1682 ms), and Llama is the one that breaches the 1500 ms
+per-turn budget.
+
+The private development log `internal_docs/MODEL_EXPERIMENTING_LOG.md` records the screens,
+controls, speech audits and rejected alternatives behind that change. It remains local and
+intentionally ignored by Git.
 
 ## Status
 
 The text interview, rubric scoring, report and the Stage 3 natural-probing wave are implemented,
-with 390 automated tests passing.
+with 391 automated tests passing.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
 closed all 14 questions in 25 turns and a strong one in 16, with no reask, family crossing,

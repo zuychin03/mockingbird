@@ -1,6 +1,6 @@
 """What produced a session. Log section 9.14.
 
-The exact Llama runtime id, quantisation, context length, prompt and code revision are stored
+The exact runtime id, quantisation, context length, prompt and code revision are stored
 with every session. An instance nickname alone is insufficient to reproduce a result.
 
 Cheap and best-effort by construction. Nothing here may raise: provenance that can abort an
