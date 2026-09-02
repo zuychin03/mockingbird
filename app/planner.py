@@ -165,11 +165,23 @@ PROPOSE_SCHEMA = {
 # in the bank run 9 to 24 words.
 MAX_QUESTION_WORDS = 32
 # Cosine similarity above which a proposal is judged to be a bank question in different
-# words. UNMEASURED, and deliberately not `embed.SIMILAR`: that threshold is 0.33 and was
-# fitted to a different question -- whether one PROBE repeats the previous probe inside a
-# single interview. Two scripted questions about the same competency sit far higher than 0.33
-# by construction, so borrowing it would reject almost every proposal. This is a placeholder
-# until it is measured against labelled pairs the way the probe threshold was.
+# words. MEASURED (tools/tier1_duplicate.py): 378 pairs of curated questions as negatives,
+# and as positives the model asked to rephrase each bank question -- which is the failure this
+# exists to catch, produced by the path that will meet the threshold in production. AUC 0.987.
+#
+# 0.75 is the highest-recall threshold with ZERO false positives, which is the rule the sweep
+# was run under: rejecting a usable proposal is silent and the reviewer never learns it
+# existed, while a near-duplicate that gets through is shown to someone already reading every
+# proposal. It was a guess before this and the measurement kept it.
+#
+# What it costs: it catches 12 of 28 real rephrasings. The classes genuinely overlap -- the
+# closest pair of DIFFERENT reviewed questions scores 0.726 ("a time you disagreed with a
+# technical decision" against "a decision your team made that you disagreed with and went
+# along with anyway") and 15 of 28 rephrasings score below that. So this is a cheap filter on
+# the obvious cases, NOT a guarantee, and review is what actually catches a near-duplicate.
+#
+# Deliberately not `embed.SIMILAR`: that is 0.33 and was fitted to whether one PROBE repeats
+# the previous probe inside an interview, a different question with a different distribution.
 DUPLICATE = 0.75
 
 

@@ -113,7 +113,23 @@ mxbai-embed-large and embeddinggemma-300m, because those are tuned for matching 
 a long document while this compares two questions of the same shape. It costs 25MB on disk and
 about 164MiB of VRAM.
 
-Then, for an interview in the terminal:
+Then plan an interview. There are three ways in.
+
+From a job description, which is read for the competencies it actually asks for and turned
+into a plan you review before anyone is interviewed with it:
+
+```bash
+python tools/plan_review.py --jd path/to/description.txt
+```
+
+Without one, from a stock plan at a length you choose:
+
+```bash
+python tools/plan_review.py --stock technical --minutes 40
+```
+
+Or skip planning and run the hand-written plan, which is the one every measurement in this
+repo was taken against:
 
 ```bash
 python -m app.cli
@@ -142,6 +158,38 @@ records. It reports retained, repaired and template-substituted questions separa
 also persists its trigger, raw attempt, accepted line, detected focus and rejection reason in
 `speech_attempt`.
 
+## Planning, and what the agent is allowed to ask
+
+A job description is read for the competencies it asks for, each one cited from the
+description's own words. A competency whose citation is not actually in the text is dropped
+and kept separately, because "the description did not ask for this" and "the planner missed
+it" are different facts and only a person can tell them apart. The vocabulary is closed and
+the extraction schema takes its list from the question bank, so the planner cannot name a
+competency it has no question for.
+
+Questions come from a curated bank. The model may also write one, and when it does the
+question is marked `generated` and lands at `proposed`, which means it cannot be asked. There
+are exactly three ways a question reaches a candidate:
+
+- it was written by hand and reviewed, or
+- it was generated and a person approved it, or
+- a person typed it during review.
+
+Approving changes a question's status and never its source, so a generated question stays
+marked as one after it is approved. Assembly reads askable questions only, and review refuses
+to add a proposal by hand, so the gate cannot be reached past from either side. That is what
+makes asking every scripted question verbatim worth anything.
+
+Assembly chooses questions and nothing else. Every other field of a phase -- the probe
+budgets, the focus ladders, whether the phase is scored -- is a measured decision, so the
+phase configuration is the reviewed template and a test asserts it comes through unchanged.
+
+Two limits worth knowing. Extraction found four of six competencies on a hand-labelled
+description and missed one the text names outright; asking per competency instead measured
+worse, so review is the mitigation rather than a better prompt. And the near-duplicate check
+on a generated question catches 12 of 28 real rephrasings at the threshold that produces no
+false positives -- a cheap filter on the obvious cases, not a guarantee.
+
 ## Layout
 
 ```
@@ -158,7 +206,10 @@ app/
   score.py         the rubric, as arithmetic
   report.py        the feedback, and the rules about how it is worded
   session.py       plan validation and persistence
-config/            interview plans
+  bank.py          the curated question bank and its closed competency vocabulary
+  planner.py       description -> competencies -> plan; generation, and stock plans
+  review.py        the operations a person performs on a plan before it is run
+config/            interview plans, and the question bank
 tests/             deterministic unit and integration coverage
 ```
 
@@ -186,8 +237,9 @@ intentionally ignored by Git.
 
 ## Status
 
-The text interview, rubric scoring, report and the Stage 3 natural-probing wave are implemented,
-with 391 automated tests passing.
+The text interview, rubric scoring, report, the natural-probing wave and the planner are
+implemented, with 468 automated tests passing. An interview can be planned from a job
+description or from a stock plan, reviewed and edited, saved, and then conducted.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
 closed all 14 questions in 25 turns and a strong one in 16, with no reask, family crossing,
@@ -201,4 +253,4 @@ non-deterministic on this GPU path — two runs of one build measured 50.0% and 
 comparisons between sessions are worthless unless the arms are interleaved: the same build has
 measured 20% apart depending on how warm the GPU was.
 
-A job-description planner and voice mode are designed and not built.
+A web interface and voice mode are designed and not built.
