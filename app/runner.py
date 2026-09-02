@@ -51,6 +51,34 @@ SKIP_DECLINED = "No problem -- let me put it another way."
 # line used to promise "come back if there's time", which the runner cannot honour.
 SKIP_ACK = "That one isn't landing, so let's leave it there and move on."
 
+# Spoken when an `advance` would otherwise say nothing, which is 94% of them across the
+# recorded sessions (681 of 724): the contract discards `say` on advance, and the runner's own
+# forced advances -- the follow-up cap, the adaptive stop, the regeneration veto -- throw away
+# whatever probe the model had written. The candidate answered and heard the next scripted
+# question with nothing in between.
+#
+# Deterministic on purpose, and RE-MEASURED on qwen rather than inherited from llama. Log
+# 8.18 dropped the request because llama returned topic labels and bare tokens; qwen fails
+# differently and just as hard, on the 10 gold=advance fixtures:
+#
+#   prompt as shipped ("leave it empty")   0/10 usable -- it writes anyway, 8/10 grading the
+#                                          candidate, 7/10 appending a question
+#   asked, with exemplars                  10/10 usable and 1 DISTINCT LINE, "Got it." ten
+#                                          times: it copies the exemplar, as 7.16 found
+#   asked, no exemplars                    10/10 distinct and 10/10 GRADING -- "Great
+#                                          example.", "Excellent detail." -- using the exact
+#                                          words the instruction forbade
+#
+# The negative instruction is ignored, which is the documented habit (7.10): this family
+# follows concrete positive rules and ignores abstract prohibitions. Variety and neutrality
+# are not available together from the model, so Python does it, like SKIP_ACK and CLOSING_ACK.
+# Harness: tools/tier1_advance_ack.py.
+#
+# Every line is deliberately free of judgement. Section 12 treats showing an assessment
+# mid-session as a correctness bug, and the model's own discarded openers are exactly that
+# ("That's a solid approach --"), which is a second reason they are dropped rather than kept.
+ADVANCE_ACK = ("Thanks.", "Okay.", "Got it.", "Right, thanks.", "Understood.", "Okay, thanks.")
+
 # Rec 2, approved: the stop-detector is symmetric. Guard 2 DOWNGRADES an `end` the
 # candidate never asked for; this UPGRADES the reverse case -- their own words clearly ask
 # to stop and the model chose something else. Observed live: "something's come up and I
@@ -1012,7 +1040,11 @@ class Runner:
                                         about=q, at=event_index),
                            closed, ended)
 
-    def _on_advance(self, g): return g.say, True, False
+    def _on_advance(self, g):
+        # Rotated by questions closed so far, so a session never repeats one twice running and
+        # the sequence stays reproducible for a replay.
+        say = g.say or ADVANCE_ACK[len(self.state.questions) % len(ADVANCE_ACK)]
+        return say, True, False
     def _on_skip(self, g):    return g.say or "Understood, let's move on.", True, False
     def _on_end(self, g):     return g.say or "Of course. We'll stop there.", True, True
 
