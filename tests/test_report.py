@@ -99,6 +99,42 @@ def test_two_strengths_do_not_cite_the_same_answer():
     assert a.question_id != b.question_id
 
 
+def test_the_report_renders_what_the_candidate_asked():
+    """`asked_back` was persisted from the first closing handler and read by nobody, while the
+    interviewer said to the candidate's face that it had gone "in your report". The line was
+    corrected first; this is the half that makes the original claim true."""
+    from types import SimpleNamespace
+    r = _report({"sets_context": [True, False]})
+    mine = ("When you moved off the monolithic ledger, did one service end up owning "
+            "settlement across all currencies, or did it split per-region?")
+    states = [
+        SimpleNamespace(question_id="q.0", question=r.scores[0].question,
+                        closed_because=None, asked_back=[mine]),
+        SimpleNamespace(question_id="q.1", question=r.scores[1].question,
+                        closed_because=None, asked_back=[]),
+    ]
+    text = rep.render(r, questions_asked=2, questions_answered=2, question_states=states)
+
+    assert "WHAT YOU ASKED" in text
+    # Verbatim, compared against the flattened text because the line is wrapped to the report
+    # width. These are the only words in the report that were never scored, extracted or
+    # judged, so a paraphrase would be the one edit with nothing to gain.
+    assert " ".join(mine.split()) in " ".join(text.split())
+    block = text.split("WHAT YOU ASKED")[1]
+    assert "no employer behind this" in block
+
+
+def test_a_report_with_no_candidate_questions_omits_the_section():
+    """An empty section is worse than no section: it invites the reader to wonder what they
+    were supposed to have asked."""
+    from types import SimpleNamespace
+    r = _report({"sets_context": [True, False]})
+    states = [SimpleNamespace(question_id="q.0", question=r.scores[0].question,
+                              closed_because=None, asked_back=[])]
+    text = rep.render(r, questions_asked=2, questions_answered=2, question_states=states)
+    assert "WHAT YOU ASKED" not in text
+
+
 def test_a_question_cut_short_is_flagged_in_the_report():
     """`closed_by` put an answer the model was satisfied with and one that ran out of turns
     in the same bucket, so the report presented their scores identically."""
@@ -108,9 +144,9 @@ def test_a_question_cut_short_is_flagged_in_the_report():
     r.scores[1].question = "Tell me about a failure."
     states = [
         SimpleNamespace(question_id="q.0", question=r.scores[0].question,
-                        closed_because="evidence_complete"),
+                        closed_because="evidence_complete", asked_back=[]),
         SimpleNamespace(question_id="q.1", question=r.scores[1].question,
-                        closed_because="budget_exhausted"),
+                        closed_because="budget_exhausted", asked_back=[]),
     ]
     text = rep.render(r, questions_asked=2, questions_answered=2, question_states=states)
     assert "SCORED, BUT CUT SHORT" in text
@@ -139,3 +175,20 @@ def test_a_rendered_report_reaches_no_network_host():
         template = "".join(re.findall(r'"""(.*?)"""', src, re.S))
         for host in ("http://", "https://", "//fonts.", "cdn."):
             assert host not in template, "%s embeds %s" % (tool, host)
+
+
+def test_a_candidate_question_is_never_truncated():
+    """The first version clipped at 200 characters, which silently dropped the second half of
+    "Two things. First ... Second ..." -- the same loss the section exists to undo."""
+    from types import SimpleNamespace
+    r = _report({"sets_context": [True, False]})
+    both = ("Two things. First, when you moved off the monolithic ledger, did one service own "
+            "settlement across every currency or did it split per-region? Second, who gets "
+            "paged when settlement breaks at three in the morning, the owning team or a "
+            "central SRE group?")
+    states = [SimpleNamespace(question_id="q.0", question=r.scores[0].question,
+                              closed_because=None, asked_back=[both])]
+    text = rep.render(r, questions_asked=1, questions_answered=1, question_states=states)
+    flat = " ".join(text.split())
+    assert "Second, who gets paged" in flat, "the second question was dropped"
+    assert "..." not in text.split("WHAT YOU ASKED")[1].split("\n\n")[1]
