@@ -77,7 +77,20 @@ SKIP_ACK = "That one isn't landing, so let's leave it there and move on."
 # Every line is deliberately free of judgement. Section 12 treats showing an assessment
 # mid-session as a correctness bug, and the model's own discarded openers are exactly that
 # ("That's a solid approach --"), which is a second reason they are dropped rather than kept.
-ADVANCE_ACK = ("Thanks.", "Okay.", "Got it.", "Right, thanks.", "Understood.", "Okay, thanks.")
+#
+# The distinction that makes these both warm and neutral: they thank the candidate for the
+# ACT of explaining, never for the QUALITY of what they explained. "Thank you for walking me
+# through that" is courtesy; "that was thorough" is a verdict they have not been given yet.
+# The first draft was "Thanks." / "Okay." / "Got it.", which cleared section 12 by being
+# curt -- it read as clipped rather than professional next to a real interviewer.
+ADVANCE_ACK = (
+    "Thank you for walking me through that.",
+    "Thanks, I appreciate you setting that out.",
+    "Thank you for that.",
+    "Appreciate you talking me through it.",
+    "Thanks for taking the time on that one.",
+    "Thank you, let's keep going.",
+)
 
 # Rec 2, approved: the stop-detector is symmetric. Guard 2 DOWNGRADES an `end` the
 # candidate never asked for; this UPGRADES the reverse case -- their own words clearly ask
@@ -100,14 +113,26 @@ CONFIRM_NARROW = ("Sorry, let me put that more simply -- would you like to stop 
 #
 # The line promises nothing. `SKIP_ACK` used to say "come back if there's time" and the runner
 # has no requeue, so the same mistake is not made twice here.
-QUESTION_DEFERRED = "Good question. Let's finish this one first."
+#
+# It also grades nothing. It opened "Good question." until 02/09, which is an assessment
+# delivered mid-session and so a correctness bug by section 12, the same rule that keeps the
+# model's own openers out of ADVANCE_ACK. "Noted" is accurate rather than flattering: the
+# utterance really is appended to `questions_asked` on this path.
+QUESTION_DEFERRED = "Noted -- let's finish this one first."
 # Below this, the text before a question is throat-clearing ("Actually, can I ask -") rather
 # than an answer, and recording it would put filler in front of the extractor.
 ANSWER_PART_MIN_WORDS = 8
 # The closing phase. There is no employer behind this interview, and inventing an answer about
 # a real workplace would be the one thing a practice interviewer must not do.
-QUESTION_NOTED = ("That's a good one to ask. I can't answer for a real employer, so rather "
-                  "than invent something I've put it in your report. Anything else?")
+# Two corrections on 02/09. It opened "That's a good one to ask.", which section 12 rules
+# out for the same reason as above. And it claimed the question goes in the REPORT, which is
+# not true: `asked_back` is persisted on the question record in session.json, but
+# `report.render` receives `questions_asked` as an integer count and never sees the text. That
+# is the `SKIP_ACK` mistake -- a reviewed line promising what the runner does not do -- so the
+# claim now matches what actually happens. Rendering it in the report is the better fix and a
+# larger change; until then the line does not say it.
+QUESTION_NOTED = ("I can't answer for a real employer, so rather than invent something I've "
+                  "noted it down with your session. Anything else?")
 CLOSING_ACK = "Thanks -- that's everything from me."
 # Answer to "did you mean A or B?" when both are the candidate's own examples. The second
 # clause covers the design question, where naming the assumption IS the answer.
