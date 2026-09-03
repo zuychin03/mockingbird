@@ -42,9 +42,16 @@
 <header bind:this={strip}>
   <div class="strip">
     <a class="brand" href="/">
-      <span class="brand-mark" class:on={live.on} aria-hidden="true">
-        <span></span><span></span><span></span><span></span>
-      </span>
+      <svg class="brand-mark" viewBox="15 28 485 365" aria-hidden="true" focusable="false">
+        <path class="ink-stroke" stroke-width="15" stroke-linecap="butt" d="M232 303 290 378M291 305l74 73" />
+        <path class="ink" d="M224 183 135 272l33-3L23 356c21 3 42 5 63 6l73-50-3-3c30-17 58-38 83-62-14-19-19-41-15-64Z" />
+        <path class="accent" d="M354 133c-30 4-60 9-89 14-21 4-32 21-33 46-1 23 10 46 36 56-11 16-28 29-51 40 26-4 46-9 62-16 18-7 28-15 38-25 17-18 26-44 31-74l6-41Z" />
+        <path class="ink" fill-rule="evenodd" d="M488 72 446 62c-17-19-40-27-67-24-24 3-38 20-51 39l-16 26-36 30 91-14c-3 29-7 56-14 82-8 25-23 49-45 68-12 10-24 17-35 19l-108 22c61 3 122 2 178-5 32-14 62-40 80-70 15-27 14-58 6-86l-6-20c-3-9-1-17 6-26l11-13 48-18Zm-88 0a10 10 0 1 0 20 0 10 10 0 0 0-20 0Z" />
+        <rect class="ink" x="254" y="169" width="70" height="12" rx="1" />
+        <rect class="ink" x="254" y="195" width="70" height="12" rx="1" />
+        <rect class="ink" x="254" y="221" width="39" height="12" rx="1" />
+        <rect class="ink" x="102" y="370" width="349" height="15" rx="7.5" />
+      </svg>
       <span class="brand-copy">
         <strong>Mockingbird</strong>
         <small>Interview review system</small>
@@ -109,21 +116,20 @@
   }
 
   .brand-mark {
-    display: grid;
-    grid-template-columns: repeat(2, 7px);
-    grid-template-rows: repeat(2, 7px);
-    gap: 2px;
-    padding: 5px;
-    border: 1px solid var(--rule-strong);
-    background: var(--bg);
+    width: 42px;
+    height: 36px;
+    flex: none;
+    overflow: visible;
   }
-  .brand-mark span {
-    background: var(--fg-faint);
-    transition: background 260ms var(--ease);
+  .brand-mark .ink {
+    fill: var(--fg);
   }
-  .brand-mark span:first-child,
-  .brand-mark.on span {
-    background: var(--signal);
+  .brand-mark .ink-stroke {
+    fill: none;
+    stroke: var(--fg);
+  }
+  .brand-mark .accent {
+    fill: var(--signal);
   }
   .brand-copy {
     display: grid;
@@ -265,6 +271,10 @@
     }
     .brand-copy small {
       display: none;
+    }
+    .brand-mark {
+      width: 38px;
+      height: 33px;
     }
   }
 </style>
