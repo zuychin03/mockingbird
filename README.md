@@ -239,6 +239,21 @@ least: it writes less per decision, so a single turn is faster in wall time (840
 897 ms, and 1438 ms at its worst against 1682 ms), and Llama is the one that breaches the 1500 ms
 per-turn budget.
 
+Two Arcee models were screened against it in September 2026 and both were rejected.
+`afm-4.5b-i1` answered `reask` on 38 of 60 turns and reads 32/49: every one of its misses is an
+answered question put a second time, which is a loop rather than an interview. The
+`trinity-nano-preview` mixture-of-experts reads 43/49 and decodes about three times faster,
+which is the only axis on which anything has beaten Qwen, but three quarters of its turns
+arrive as several stacked questions and its raw score of 20/60 becomes 43 only because the
+guards rewrite it -- the interview would be written by `guards.py` rather than by the model.
+
+Giving Trinity its own tuned arm made it worse rather than better, and that is the useful
+result. Stating the completeness test concretely fixed every behavioural axis it was aimed at
+and simultaneously took Trinity's invalid replies from 1 to 6; handing back half the added
+instruction recovered none of them. It cannot hold the structured-output contract while
+following instructions detailed enough to correct its judgement, so there is no prompt that
+buys one without spending the other.
+
 The private development log `internal_docs/MODEL_EXPERIMENTING_LOG.md` records the screens,
 controls, speech audits and rejected alternatives behind that change. It remains local and
 intentionally ignored by Git.
