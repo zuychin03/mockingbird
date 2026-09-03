@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="15 28 485 365" role="img" aria-labelledby="title">
+  <title id="title">Mockingbird</title>
+  <style>
+    :root { --logo-ink: #14222b; --logo-accent: #d8313a; }
+    .ink { fill: var(--logo-ink); }
+    .ink-stroke { fill: none; stroke: var(--logo-ink); }
+    .accent { fill: var(--logo-accent); }
+    @media (prefers-color-scheme: dark) {
+      :root { --logo-ink: #f2f4f7; --logo-accent: #f0646a; }
+    }
+  </style>
+  <path class="ink-stroke" stroke-width="26" stroke-linecap="butt" d="M250 304 310 378"/>
+  <path class="ink" d="M224 183 135 272l33-3L23 356c21 3 42 5 63 6l73-50-3-3c30-17 58-38 83-62-14-19-19-41-15-64Z"/>
+  <path class="accent" d="M354 133c-30 4-60 9-89 14-21 4-32 21-33 46-1 23 10 46 36 56-11 16-28 29-51 40 26-4 46-9 62-16 18-7 28-15 38-25 17-18 26-44 31-74l6-41Z"/>
+  <path class="ink" fill-rule="evenodd" d="M488 72 446 62c-17-19-40-27-67-24-24 3-38 20-51 39l-16 26-36 30 91-14c-3 29-7 56-14 82-8 25-23 49-45 68-12 10-24 17-35 19l-108 22c61 3 122 2 178-5 32-14 62-40 80-70 15-27 14-58 6-86l-6-20c-3-9-1-17 6-26l11-13 48-18Zm-92 0a14 14 0 1 0 28 0 14 14 0 0 0-28 0Z"/>
+  <rect class="ink" x="252" y="168" width="74" height="20" rx="3"/>
+  <rect class="ink" x="252" y="205" width="55" height="20" rx="3"/>
+  <rect class="ink" x="98" y="366" width="357" height="23" rx="11.5"/>
+</svg>
