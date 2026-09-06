@@ -146,7 +146,9 @@ function onMessage(m) {
     // Not deleted. 12.4: the remainder is shown struck through, because dropping it destroys
     // both the record and the candidate's understanding of what just happened.
     voice.interrupted = { heard: m.heard, unheard: m.unheard };
-    voice.phase = 'listening';
+    // The phase is deliberately not set here. Esc cuts the speech *without* opening the
+    // microphone (12.8), so treating this message as "listening" lit REC over a closed mic,
+    // dropped the answer, and then wedged in `tail` because stopTalking had nothing to close.
   } else if (m.t === 'utterance') {
     voice.recorded = { seconds: m.seconds, peak: m.peak, path: m.path };
     if (voice.thinkingSince) voice.phase = 'thinking';
