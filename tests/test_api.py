@@ -4,7 +4,9 @@ the domain's, so the web and the terminal cannot disagree about what may be aske
 from __future__ import annotations
 
 import json
+import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -342,3 +344,64 @@ def test_an_unreadable_record_does_not_spend_a_slot(client, monkeypatch, tmp_pat
     got = client.get("/api/sessions?limit=4").json()
     assert len(got) == 4
     assert all(s["session_id"] != "20260105-000000-bbbbbb" for s in got)
+
+
+def _session_with_report(root, sid="20260101-000000-cache1"):
+    d = root / sid
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "session.json").write_text(json.dumps({
+        "session_id": sid, "plan_id": "p", "started_at": "2026-01-01T00:00:00",
+        "status": "complete", "plan_snapshot": {"label": "A plan"}, "questions": [],
+    }), encoding="utf-8")
+    return d
+
+
+def test_a_built_report_is_cached_beside_its_session(client, monkeypatch, tmp_path):
+    root = tmp_path / "s"
+    d = _session_with_report(root)
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    first = client.get("/api/sessions/20260101-000000-cache1/report")
+    assert first.status_code == 200
+    assert (d / "report.json").exists(), "the built report was not kept"
+
+    # Second read must not rebuild. Make rebuilding impossible and require a 200 anyway.
+    def boom(*a, **k):
+        raise AssertionError("rebuilt a report that was already cached")
+    monkeypatch.setattr(api.observe, "observe", boom)
+    monkeypatch.setattr(api.score_mod, "build", boom)
+    again = client.get("/api/sessions/20260101-000000-cache1/report")
+    assert again.status_code == 200
+    assert again.json() == first.json()
+
+
+def test_the_cache_is_dropped_when_the_session_changes(client, monkeypatch, tmp_path):
+    """A cache that never invalidates is worse than none: a report built from four answers
+    must not be served once the session holds six."""
+    root = tmp_path / "s"
+    d = _session_with_report(root, "20260101-000000-cache2")
+    monkeypatch.setattr(api, "SESSIONS", root)
+    client.get("/api/sessions/20260101-000000-cache2/report")
+    cached = d / "report.json"
+    assert cached.exists()
+
+    assert api._report_is_fresh(d) is not None
+    # The session gains a turn after the report was written.
+    os.utime(d / "session.json", (time.time() + 10, time.time() + 10))
+    assert api._report_is_fresh(d) is None, "a changed session still served its old report"
+
+
+def test_refresh_forces_a_rebuild(client, monkeypatch, tmp_path):
+    root = tmp_path / "s"
+    _session_with_report(root, "20260101-000000-cache3")
+    monkeypatch.setattr(api, "SESSIONS", root)
+    client.get("/api/sessions/20260101-000000-cache3/report")
+
+    calls = []
+    real = api.score_mod.build
+    monkeypatch.setattr(api.score_mod, "build",
+                        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    client.get("/api/sessions/20260101-000000-cache3/report")
+    assert not calls, "served from cache without refresh"
+    client.get("/api/sessions/20260101-000000-cache3/report?refresh=true")
+    assert calls, "refresh=true did not rebuild"

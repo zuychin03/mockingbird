@@ -47,7 +47,9 @@
     report = null;
     // Unconditionally, before the request can fail: on success this is the shareable address
     // of the report, and on failure it is what stops the deep-link effect seeing a URL that
-    // disagrees with `opened` and starting the whole build again.
+    // disagrees with `opened` and starting the whole build again. The API caches a built
+    // report beside its session, so reopening this link is now genuinely cheap rather than
+    // silently paying the full extraction and scoring pass again.
     replaceState(`?s=${id}`, {});
     const got = await call(`/api/sessions/${id}/report`);
     if (got) report = got;

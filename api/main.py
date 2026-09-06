@@ -342,14 +342,62 @@ def sessions(limit: int = SESSIONS_SHOWN) -> list[dict]:
     return out
 
 
+def _cache_report(d: Path, payload: dict) -> dict:
+    """Keep the built report beside the session it describes.
+
+    Written through a temporary file and replaced atomically, so a reader that arrives mid-write
+    sees either the old report or the new one and never a half-written file. A failure to cache
+    is not a failure to report: the payload is returned either way.
+    """
+    try:
+        tmp = d / "report.json.tmp"
+        tmp.write_text(json.dumps(payload, indent=1, ensure_ascii=False),
+                       encoding="utf-8", newline="\n")
+        tmp.replace(d / "report.json")
+    except OSError:
+        pass
+    return payload
+
+
+def _report_is_fresh(d: Path) -> dict | None:
+    """A cached report, if one exists and no session file has changed since it was written.
+
+    Freshness is decided by mtime against every file in the session directory rather than by
+    the session's `status`, because a running session gains answers and a report built from
+    four of them must not be served once there are six. Comparing against the newest file
+    means anything that appends -- another turn, a re-run, a hand edit -- invalidates it
+    without this needing to know which file carries what.
+    """
+    cached = d / "report.json"
+    if not cached.exists():
+        return None
+    newest = max((f.stat().st_mtime for f in d.iterdir()
+                  if f.is_file() and f.name != "report.json"), default=0.0)
+    if cached.stat().st_mtime < newest:
+        return None
+    try:
+        return json.loads(cached.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
 @app.get("/api/sessions/{session_id}/report")
-async def session_report(session_id: str) -> dict:
+async def session_report(session_id: str, refresh: bool = False) -> dict:
     """Extraction and scoring run here, not during the interview. They are offline work by
     design (the live and assessment channels are separate), so this is slow and deliberate
-    rather than something the session view polls."""
+    rather than something the session view polls.
+
+    Slow enough to be worth keeping: a 14-question interview costs about three and a half
+    minutes of extraction and scoring, and re-reading a report is a normal thing to do, so the
+    result is cached beside the session. `refresh=true` forces a rebuild.
+    """
     d = SESSIONS / session_id
     if not (d / "session.json").exists():
         raise HTTPException(404, "no session %r" % session_id)
+    if not refresh:
+        hit = _report_is_fresh(d)
+        if hit is not None:
+            return hit
     raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
     plan = raw.get("plan_snapshot") or {}
 
@@ -377,7 +425,7 @@ async def session_report(session_id: str) -> dict:
     text = report_mod.render(rep, questions_asked=len(states),
                              questions_answered=sum(1 for q in states if q.answers),
                              observations=observations, question_states=states)
-    return {
+    return _cache_report(d, {
         "session_id": session_id,
         "label": plan.get("label") or raw.get("plan_id"),
         "started_at": raw.get("started_at"),
@@ -391,7 +439,7 @@ async def session_report(session_id: str) -> dict:
         "rubric": [{"name": k, "label": score_mod.CRITERIA[k][0],
                     "description": score_mod.CRITERIA[k][1], "met": m, "of": n}
                    for k, (m, n) in sorted(rep.totals.items())],
-    }
+    })
 
 
 async def _guard_async(fn, *args, **kwargs):
