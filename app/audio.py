@@ -103,10 +103,14 @@ class Utterance:
     rate: int = MIC_RATE
     chunks: list[np.ndarray] = field(default_factory=list)
     peak: float = 0.0
+    # Running count rather than a sum over `chunks`: the length cap reads it once per 20 ms
+    # frame against a list that grows for the whole answer.
+    length: int = 0
 
     def add(self, pcm: bytes) -> float:
         x = from_int16(pcm)
         self.chunks.append(x)
+        self.length += len(x)
         level = rms(x)
         self.peak = max(self.peak, float(np.abs(x).max()) if len(x) else 0.0)
         return level
@@ -117,7 +121,7 @@ class Utterance:
 
     @property
     def seconds(self) -> float:
-        return sum(len(c) for c in self.chunks) / self.rate
+        return self.length / self.rate
 
     def wav(self) -> bytes:
         import io

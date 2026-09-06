@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -58,6 +59,14 @@ router = APIRouter()
 SLICE_MIN = 6.0
 SLICE_MAX = 14.0
 
+# Tap-to-talk has no natural end (12.6): nothing bounds an open microphone, and the samples
+# stay in memory for the whole of it. The client wedging with the microphone open is not
+# hypothetical -- a phase bug did exactly that, showing REC over a socket that had never been
+# opened. The cap sits far past any real answer (the longest measured here is 84 s) so it ends
+# stuck turns and nothing else, and it ends them by closing the turn the normal way, so the
+# audio and the transcript both survive.
+UTTERANCE_MAX = 300.0
+
 
 def audio_dir() -> Path:
     """Where an answer's audio lands.
@@ -73,6 +82,27 @@ def audio_dir() -> Path:
     except (OSError, ValueError, AttributeError):
         pass
     return LOOSE
+
+
+def write_answer(d: Path, data: bytes) -> Path:
+    """Write one answer's wav under a name no other answer holds.
+
+    Seconds are not fine enough: a one-second stray turn followed straight by a real one lands
+    in the same second, and two answers in that directory already sit a second apart. The name
+    carries milliseconds and is created **exclusively**, so the fallback covers the case a
+    check-then-write cannot -- two browser tabs on one session writing at once, where the
+    check passes for both and the second silently overwrites the first.
+    """
+    t = time.time()
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(t)) + "-%03d" % (t % 1 * 1000)
+    f = d / ("answer-%s.wav" % stamp)
+    try:
+        with open(f, "xb") as out:
+            out.write(data)
+    except FileExistsError:
+        f = d / ("answer-%s-%s.wav" % (stamp, uuid.uuid4().hex[:6]))
+        f.write_bytes(data)
+    return f
 
 
 class Link:
@@ -120,6 +150,8 @@ class Link:
         # before this socket exists, and returning one per frame doubles the traffic to say
         # something the other end knows.
         self.utterance.add(pcm)
+        if self.utterance.seconds >= UTTERANCE_MAX:
+            await self.finish_utterance(capped=True)
 
     async def on_control(self, m: dict) -> bool:
         kind = m.get("t")
@@ -171,7 +203,7 @@ class Link:
             if text:
                 await self.send(t="partial", text=" ".join(self.heard))
 
-    async def finish_utterance(self) -> None:
+    async def finish_utterance(self, capped: bool = False) -> None:
         u, self.utterance = self.utterance, None
         if u is None:
             return
@@ -184,11 +216,10 @@ class Link:
         if u.seconds > 0:
             d = audio_dir()
             d.mkdir(parents=True, exist_ok=True)
-            f = d / ("answer-%s.wav" % time.strftime("%Y%m%d-%H%M%S"))
-            f.write_bytes(u.wav())
+            f = write_answer(d, u.wav())
             path = str(f.relative_to(ROOT)).replace("\\", "/")
         await self.send(t="utterance", seconds=round(u.seconds, 2),
-                        peak=round(u.peak, 4), path=path)
+                        peak=round(u.peak, 4), path=path, capped=capped)
         if self.asr is None:
             return
         tail = u.samples[self.committed:]

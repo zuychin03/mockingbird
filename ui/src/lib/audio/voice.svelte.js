@@ -44,6 +44,9 @@ export const voice = $state({
   asrReady: false,
   asrWhy: null,
   error: null,
+  // Separate from `error`: a capped answer is a bounded, successful end, and colouring it as a
+  // failure would tell the candidate their answer was lost when it was kept.
+  notice: null,
   thinkingSince: 0
 });
 
@@ -151,6 +154,20 @@ function onMessage(m) {
     // dropped the answer, and then wedged in `tail` because stopTalking had nothing to close.
   } else if (m.t === 'utterance') {
     voice.recorded = { seconds: m.seconds, peak: m.peak, path: m.path };
+    if (m.capped) {
+      // The server ended the turn, so this side's `open` flag has to follow it. Left set, the
+      // next press returns early from `startTalking` and the microphone never reopens.
+      link?.stopTalking();
+      // What happened, not a limit derived from it: rounding the cap to minutes read
+      // "0-minute limit" at a short one, and the candidate cares how long was captured.
+      const mins = Math.floor(m.seconds / 60);
+      const length = mins >= 1
+        ? `${mins} minute${mins === 1 ? '' : 's'}`
+        : `${Math.round(m.seconds)} seconds`;
+      voice.notice =
+        `The microphone was open for ${length}, so the answer was closed automatically. ` +
+        'Everything up to that point was kept.';
+    }
     if (voice.thinkingSince) voice.phase = 'thinking';
     else voice.phase = voice.asrReady && m.seconds > 0 ? 'reading' : 'idle';
   } else if (m.t === 'error') {
@@ -178,6 +195,7 @@ export function startTalking() {
   voice.bars = new Array(BARS).fill(0);
   voice.recorded = null;
   voice.partial = '';
+  voice.notice = null;
   link.startTalking();
   voice.phase = 'listening';
 }

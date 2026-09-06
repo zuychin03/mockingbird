@@ -128,6 +128,10 @@
       </p>
     {/if}
 
+    {#if voice.notice}
+      <p class="recorded" role="status">{voice.notice}</p>
+    {/if}
+
     {#if voice.error}
       <p class="err" role="alert">{voice.error}</p>
     {/if}

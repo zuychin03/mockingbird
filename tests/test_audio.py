@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import sys
+import time as time_mod
 import wave
 from pathlib import Path
 
@@ -363,3 +365,109 @@ def test_without_a_recogniser_the_turn_still_completes():
         assert sent(link, "transcript") == [], "and nothing pretended to transcribe it"
 
     asyncio.run(go())
+
+
+# --- an answer that never ends, and two that land at once -----------------------------------
+
+@pytest.fixture()
+def capped(engine, monkeypatch):
+    """A link with a short cap. Driven directly rather than over a socket: a regression here
+    stops the utterance message being sent at all, and a test that waited on it would hang
+    instead of failing."""
+    monkeypatch.setattr(voice_mod, "UTTERANCE_MAX", 0.5)
+    return voice_mod.Link(FakeWS(), engine)
+
+
+def frame(seconds=0.3):
+    return audio.to_int16(tone(seconds, audio.MIC_RATE))
+
+
+def test_an_open_microphone_does_not_record_for_ever(capped, tmp_path):
+    """Tap-to-talk has no natural end, and a client that wedges with the microphone open is
+    not hypothetical: a phase bug held one open while showing REC over a closed socket."""
+    async def go():
+        await capped.on_control({"t": "mic_open"})
+        for _ in range(6):                      # 1.2 s offered against a 0.5 s cap
+            await capped.on_audio(frame(0.2))
+
+        done = sent(capped, "utterance")
+        assert len(done) == 1 and done[0]["capped"] is True
+        # Closed on the frame that crossed the cap, not at some later flush.
+        assert done[0]["seconds"] == pytest.approx(0.6, abs=0.05)
+        # The answer is kept: a cap that discarded what was said would be worse than no cap.
+        assert (tmp_path / done[0]["path"]).exists()
+        assert capped.utterance is None
+
+    asyncio.run(go())
+
+
+def test_a_normal_turn_is_not_marked_capped(capped):
+    async def go():
+        await capped.on_control({"t": "mic_open"})
+        await capped.on_audio(frame(0.2))
+        await capped.on_control({"t": "mic_close"})
+        assert sent(capped, "utterance")[-1]["capped"] is False
+
+    asyncio.run(go())
+
+
+def test_a_capped_turn_leaves_the_link_ready_for_the_next_answer(capped):
+    """The cap ends one turn, not the interview."""
+    async def go():
+        await capped.on_control({"t": "mic_open"})
+        await capped.on_audio(frame())
+        await capped.on_audio(frame())
+        assert sent(capped, "utterance")[-1]["capped"] is True
+
+        await capped.on_control({"t": "mic_open"})
+        await capped.on_audio(frame())
+        await capped.on_control({"t": "mic_close"})
+        again = sent(capped, "utterance")[-1]
+        assert again["capped"] is False
+        assert again["seconds"] == pytest.approx(0.3, abs=0.05)
+
+    asyncio.run(go())
+
+
+def test_frames_arriving_after_the_cap_are_dropped_not_banked(capped):
+    """The client keeps sending until it is told to stop, and those frames must not quietly
+    become a turn nobody opened."""
+    async def go():
+        await capped.on_control({"t": "mic_open"})
+        await capped.on_audio(frame())
+        await capped.on_audio(frame())
+        await capped.on_audio(frame())
+        await capped.on_audio(frame())
+        await capped.on_control({"t": "mic_close"})
+        assert len(sent(capped, "utterance")) == 1, "the stray frames opened a second turn"
+
+    asyncio.run(go())
+
+
+class _Frozen:
+    """`time` for `write_answer`, stopped. Two answers are rarely written in the same
+    millisecond, which is exactly why the collision would be found in production."""
+
+    @staticmethod
+    def time():
+        return 1757193700.5
+
+    localtime = staticmethod(time_mod.localtime)
+    strftime = staticmethod(time_mod.strftime)
+
+
+def test_two_answers_in_the_same_millisecond_do_not_overwrite_each_other(tmp_path, monkeypatch):
+    """Names were second-resolution and two answers a second apart already exist on disk, so
+    a one-second stray turn followed straight by a real one silently replaced the first."""
+    monkeypatch.setattr(voice_mod, "time", _Frozen)
+    first = voice_mod.write_answer(tmp_path, b"first")
+    second = voice_mod.write_answer(tmp_path, b"second")
+
+    assert first != second
+    assert first.read_bytes() == b"first"
+    assert second.read_bytes() == b"second"
+
+
+def test_an_answer_is_named_to_the_millisecond(tmp_path):
+    assert re.fullmatch(r"answer-\d{8}-\d{6}-\d{3}\.wav",
+                        voice_mod.write_answer(tmp_path, b"x").name)
