@@ -1,8 +1,16 @@
+[build-system]
+# Declared rather than left implicit: without it pip falls back to a legacy default, and the
+# SPDX `license` field below needs setuptools 77 or newer.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "mockingbird"
 version = "0.2.0"
 description = "A locally-hosted mock-interview coach for software-engineering roles."
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 
 # The runtime is standard library only, deliberately: asyncio, urllib, json, dataclasses,
 # pathlib. Nothing here talks to a package index at interview time.
@@ -13,8 +21,25 @@ test = ["pytest>=9.1,<10", "httpx>=0.28,<1"]
 # Stage 4's surface. `app/` still imports none of this: the API is a layer OVER the runtime,
 # so an interview runs with the standard library alone whether or not the web extra is here.
 web = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
-# Tier 1 harnesses only. `app/` does not import either.
+# Tier 1 harnesses only. Nothing under `app/` imports these.
 research = ["numpy>=2.5,<3", "praat-parselmouth>=0.4.7", "sherpa-onnx>=1.13"]
+# Voice. `app/audio.py`, `app/speech.py` and `app/listen.py` DO need numpy and sherpa-onnx,
+# which is the one place `app/` reaches past the standard library -- but nothing on the text
+# path imports them, so a text interview still runs on the standard library alone. `test_nfr`
+# enforces that rather than trusting this comment. `websockets` is what lets uvicorn serve
+# `/api/voice` at all. Recognition also needs a `transcribe.cpp` build, which is not a Python
+# dependency: see MOCKINGBIRD_TRANSCRIBE in the README.
+voice = ["numpy>=2.5,<3", "sherpa-onnx>=1.13", "websockets>=15,<18"]
+
+# Named explicitly because flat-layout auto-discovery refuses this repo outright: it sees
+# `ui`, `data`, `config`, `models`, `docs` and the rest as candidate packages and stops rather
+# than guess. Only these two ship. `tools/` is local harnesses and `tests/` is not a package.
+#
+# Editable is the supported install (the README's `pip install -e ".[web]"`). Paths are resolved
+# from the repo root -- `config/question_bank.json`, `data/`, `models/`, `ui/build` -- so a
+# non-editable wheel would install the code and none of what it reads.
+[tool.setuptools]
+packages = ["app", "api"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
