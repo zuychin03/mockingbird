@@ -158,6 +158,13 @@ function onMessage(m) {
   }
 }
 
+/* Called once the answer carrying this recording has been accepted. Without it the path
+ * outlives its answer, and the next question -- typed, with nothing said aloud -- would submit
+ * the previous question's audio as its own. */
+export function clearRecording() {
+  voice.recorded = null;
+}
+
 export function say(text) {
   if (link && text) link.say(text);
 }

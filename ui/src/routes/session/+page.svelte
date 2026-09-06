@@ -15,6 +15,7 @@
     toggleTalking,
     setThinking,
     loadPreferences,
+    clearRecording,
     disable as voiceOff
   } from '$lib/audio/voice.svelte.js';
 
@@ -111,10 +112,14 @@
     answer = '';
     toBottom();
     setThinking(true);
-    const got = await send('/api/session/answer', { text });
+    // Read, not consumed: a failed submit puts the answer back in the composer, and the
+    // recording has to still be attached when they send it again.
+    const audio = voice.recorded?.path ?? null;
+    const got = await send('/api/session/answer', { text, audio });
     setThinking(false);
     if (got) {
       sending = null;
+      clearRecording();
       adopt(got);
       queueMicrotask(() => composer?.focus());
     } else {

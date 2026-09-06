@@ -310,6 +310,10 @@ class Runner:
         # have seen any of them.
         self.said_this_session: list[str] = []
         self.answers_this_question: list[str] = []
+        # Set by `submit` and read by `_dispatch`, both within one call. An argument threaded
+        # through instead would have to reach every dispatch path, and missing one loses the
+        # link silently for that path alone.
+        self._audio: str | None = None
         self.awaiting_confirm = False
         self.awaiting_skip_offer = False
         # One narrowing re-ask per confirmation, then ambiguity carries on rather than
@@ -549,8 +553,10 @@ class Runner:
         """For a harness that ends the process between turns; the loop does this itself."""
         await self._settle()
 
-    async def submit(self, utterance: str) -> TurnOutcome:
-        """One committed utterance in, one decision out."""
+    async def submit(self, utterance: str, audio: str | None = None) -> TurnOutcome:
+        """One committed utterance in, one decision out. `audio` is the recording it was
+        spoken from, already validated by the caller; a typed answer passes None."""
+        self._audio = audio
         await self._settle()
         q = self.current
         if q is None:
@@ -1009,7 +1015,7 @@ class Runner:
         self.state.turns.append(session.Turn(
             index=len(self.state.turns), phase=q["phase"], question_id=q["question_id"],
             question=q["question"], utterance=utterance, act=g.act, say=text,
-            ok=g.ok, ask=g.ask, guards=g.applied))
+            ok=g.ok, ask=g.ask, guards=g.applied, audio=self._audio))
 
         session.append_decision(self.state, {
             "turn": len(self.state.turns) - 1,

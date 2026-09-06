@@ -48,6 +48,10 @@ class Turn:
     ask: str
     guards: list[str] = field(default_factory=list)
     at: str = field(default_factory=now)
+    # Repo-relative path to the answer's recording, when it was spoken. Without it an answer
+    # and its audio can only be matched by timestamp, and one session directory already holds
+    # a dozen wavs. 12.9's playback and 11.5's delivery metrics both start here.
+    audio: str | None = None
 
 
 @dataclass

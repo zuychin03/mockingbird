@@ -148,8 +148,11 @@ def test_the_snapshot_saves_every_field_the_runner_carries():
     # `similarity` is a capability handle like `observe_fn`, not turn state: it is rebuilt from
     # whether the optional embedding model answers, which is a property of the machine rather
     # than of the interview, and persisting a function reference across a process is meaningless.
+    # `_audio` is an argument to `submit` in all but name: it is set at the top of that call
+    # and read by `_dispatch` inside it, and a later turn that read it would be attaching the
+    # wrong recording, so persisting it would be the bug rather than the fix.
     rebuilt = {"provider", "plan", "state", "questions", "history", "pace",
-               "observe_fn", "_pending", "max_say_words", "similarity"}
+               "observe_fn", "_pending", "max_say_words", "similarity", "_audio"}
     missing = attrs - rebuilt - saved
     assert not missing, "app/resume.py does not persist: %s" % sorted(missing)
 

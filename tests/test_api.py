@@ -405,3 +405,45 @@ def test_refresh_forces_a_rebuild(client, monkeypatch, tmp_path):
     assert not calls, "served from cache without refresh"
     client.get("/api/sessions/20260101-000000-cache3/report?refresh=true")
     assert calls, "refresh=true did not rebuild"
+
+
+# ------------------------------------------------- the answer's recording
+class _AtSession:
+    """Just enough runner for `_recording`: it only ever asks where the session lives."""
+
+    def __init__(self, directory):
+        self.state = type("S", (), {"dir": directory})()
+
+
+@pytest.fixture()
+def recorded(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "ROOT", tmp_path)
+    room = tmp_path / "data" / "sessions" / "s1" / "audio"
+    room.mkdir(parents=True)
+    (room / "answer-1.wav").write_bytes(b"RIFF")
+    return _AtSession(tmp_path / "data" / "sessions" / "s1")
+
+
+def test_an_answer_carries_the_recording_it_was_spoken_from(recorded):
+    got = api._recording(recorded, "data/sessions/s1/audio/answer-1.wav")
+    assert got == "data/sessions/s1/audio/answer-1.wav"
+
+
+def test_a_typed_answer_carries_no_recording(recorded):
+    assert api._recording(recorded, None) is None
+    assert api._recording(recorded, "") is None
+
+
+def test_a_recording_from_outside_this_session_is_not_linked(recorded, tmp_path):
+    """The path comes from the browser. A session that could name any file on disk would let
+    one interview's report play another's audio, and the check is cheaper than the argument
+    about whether that matters."""
+    other = tmp_path / "data" / "sessions" / "s2" / "audio"
+    other.mkdir(parents=True)
+    (other / "answer-1.wav").write_bytes(b"RIFF")
+    assert api._recording(recorded, "data/sessions/s2/audio/answer-1.wav") is None
+    assert api._recording(recorded, "../../../../windows/win.ini") is None
+
+
+def test_a_recording_that_is_not_on_disk_is_not_linked(recorded):
+    assert api._recording(recorded, "data/sessions/s1/audio/never-written.wav") is None

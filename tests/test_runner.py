@@ -2650,3 +2650,26 @@ def test_an_invalid_reply_still_regenerates_even_when_distinct(tmp_path, monkeyp
     out = run(r.submit("It was about eight million rows."))
     assert "char-repeat->kept-distinct" not in last_decision(state)["guards"]
     assert out.act == "probe"
+
+
+# ------------------------------------------------------- the answer's recording
+def test_a_spoken_answer_records_the_recording_it_came_from(tmp_path):
+    """12.9's playback and 11.5's delivery metrics both begin with "find this answer's
+    audio", and a session directory holds one wav per answer with nothing but a timestamp to
+    tell them apart."""
+    r, state = build([d("advance", "Good.")], tmp_path)
+    run(r.ask())
+    run(r.submit("a full answer", "data/sessions/s1/audio/answer-1.wav"))
+    assert state.turns[-1].audio == "data/sessions/s1/audio/answer-1.wav"
+
+
+def test_a_typed_answer_does_not_inherit_the_previous_recording(tmp_path):
+    """The link must not outlive its turn. An answer nobody spoke that carried the audio of
+    the one before it would play the wrong recording under the right transcript, which is
+    worse than having no audio at all."""
+    r, state = build([d("advance", "Good."), d("advance", "Thanks.")], tmp_path)
+    run(r.ask())
+    run(r.submit("spoken", "data/sessions/s1/audio/answer-1.wav"))
+    run(r.submit("typed"))
+    assert state.turns[-1].audio is None
+    assert state.turns[0].audio == "data/sessions/s1/audio/answer-1.wav"

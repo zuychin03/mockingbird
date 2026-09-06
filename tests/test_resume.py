@@ -55,6 +55,9 @@ def test_every_field_the_runner_carries_between_turns_is_persisted(tmp_path):
         "questions", "pace", "max_say_words",
         # A live asyncio task. It cannot cross a process and is re-created by the next turn.
         "_pending",
+        # Set at the top of `submit` and read by `_dispatch` in the same call. It is an
+        # argument in all but name and is never read on a later turn.
+        "_audio",
     }
     r = _advanced(tmp_path)
     persisted = set(resume.FIELDS) | set(resume.SET_FIELDS) | {"last_probe"}
@@ -102,3 +105,20 @@ def test_the_start_time_survives_a_resume(tmp_path):
 
     after = resume.restore(before.provider, before.plan, resume.snapshot(before))
     assert after.state.started_at == before.state.started_at
+
+
+def test_a_turn_keeps_its_recording_across_a_restore(tmp_path):
+    before = _advanced(tmp_path)
+    before.state.turns[-1].audio = "data/sessions/s1/audio/answer-1.wav"
+    after = resume.restore(before.provider, before.plan, resume.snapshot(before))
+    assert after.state.turns[-1].audio == "data/sessions/s1/audio/answer-1.wav"
+
+
+def test_a_session_written_before_answers_had_audio_still_loads(tmp_path):
+    """Sessions on disk predate the field. Reading one must not fail, and its turns are
+    honestly audioless rather than guessed at from the files lying beside them."""
+    data = resume.snapshot(_advanced(tmp_path))
+    for t in data["turns"]:
+        t.pop("audio")
+    after = resume.restore(None, None, data)
+    assert all(t.audio is None for t in after.state.turns)

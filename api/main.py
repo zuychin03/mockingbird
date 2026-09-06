@@ -299,12 +299,30 @@ def session_get() -> dict:
     return _session_state(_runner())
 
 
+def _recording(r, audio: str | None) -> str | None:
+    """The recording this answer was spoken from, or None.
+
+    The path arrives from the browser, so it is checked against this session's own audio
+    directory rather than trusted. A path that does not survive the check drops the link
+    instead of refusing the answer: a wrong link quietly corrupts a report, while a refused
+    submit loses what the candidate just said, and only one of those is recoverable.
+    """
+    if not audio:
+        return None
+    target = (ROOT / audio).resolve()
+    room = (r.state.dir / "audio").resolve()
+    if room not in target.parents or not target.is_file():
+        return None
+    return audio
+
+
 @app.post("/api/session/answer")
-async def session_answer(text: str = Body(..., embed=True)) -> dict:
+async def session_answer(text: str = Body(..., embed=True),
+                         audio: str | None = Body(None, embed=True)) -> dict:
     r = _runner()
     if r.done:
         raise HTTPException(400, "this session has finished")
-    out = await _guard_async(r.submit, text)
+    out = await _guard_async(r.submit, text, _recording(r, audio))
     if out.closed_question and not r.done and not out.end_session:
         await _guard_async(r.ask)
     return _session_state(r)
