@@ -261,7 +261,7 @@ intentionally ignored by Git.
 ## Status
 
 The text interview, rubric scoring, report, the natural-probing wave and the planner are
-implemented, with 518 automated tests passing. An interview can be planned from a job
+implemented, with 546 automated tests passing. An interview can be planned from a job
 description or from a stock plan, reviewed and edited, saved, and then conducted.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
@@ -293,5 +293,49 @@ npm --prefix ui install && npm --prefix ui run build
 python -m uvicorn api.main:app --port 8000
 ```
 
+The install is editable on purpose: paths are resolved from the repo root, so the question bank,
+the sessions and the built interface are found where they actually live. Add `voice` --
+`pip install -e ".[web,voice]"` -- for the speech transport, which needs numpy, sherpa-onnx and
+`websockets`; the text interview needs none of them.
+
 The API runs without the interface; the static host simply does not mount when `ui/build` is
-absent. Voice mode is designed and not built.
+absent.
+
+Voice is part-built. The interviewer speaks its questions, you answer by tapping to talk, and
+a barge-in cuts the line where you cut it and shows the rest struck through. A single WebSocket
+at `/api/voice` carries microphone PCM up and synthesised speech down, an `AudioWorklet`
+resamples capture to the 16 kHz the recogniser wants, and playback is scheduled on a monotonic
+cursor so bursty delivery is not audible.
+
+Your answer is recognised **while you are still giving it**. One pass over a finished 84 s
+answer costs about 18 s on this machine, which would be dead air at the worst possible moment,
+so the answer is read in slices cut at pauses and only the tail is left when you stop --
+measured at **2.3 s** after release against 17.8 s for a single pass. The text lands in the
+composer rather than being sent, because correcting it before it is scored is a fairness
+requirement, not a convenience: unedited recognition scores its own accent bias rather than the
+person.
+
+Recognition is verbatim, filled pauses included, because the report reads fluency as well as
+content. It is also imperfect on jargon -- `PostgreSQL` comes back as `Postgre SQL` -- which is
+the other reason the transcript is yours to edit.
+
+Voice needs three things this repository does not ship, because none of them are ours to
+redistribute:
+
+| What | Where it goes |
+|---|---|
+| Two Piper voices, `en_US-hfc_female-medium` and `en_US-ryan-medium` | `models/vits-piper-<voice>/` |
+| `nemotron-3.5-asr-streaming-0.6b` Q8_0 GGUF | `models/nemotron-asr/` |
+| A `transcribe.cpp` build | anywhere; point `MOCKINGBIRD_TRANSCRIBE` at `transcribe-cli.exe` |
+
+Each is checked at connect time and reported rather than assumed: a missing recogniser leaves
+the interview running on the typed answer and says so on screen, and a missing voice is the only
+thing that stops the interviewer speaking.
+
+## Licence
+
+MIT, in [LICENSE](LICENSE).
+
+That covers the code in this repository and nothing else. The language model and the voice
+models are downloaded separately, are not redistributed here, and carry their own licences --
+worth checking before shipping anything built on this.

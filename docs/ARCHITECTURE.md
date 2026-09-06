@@ -49,10 +49,21 @@ the model's six-action JSON object is advisory input to that orchestrator.
 - A curated question bank over a closed competency vocabulary, model-generated questions
   that stay unaskable until a person approves them, and a plan review surface.
 - Replay, calibration, transcript, planning and report harnesses under `tools/`.
+- A voice channel: one WebSocket carries microphone PCM up and synthesised speech down, the
+  interviewer speaks its own lines, tap-to-talk records the answer, and a barge-in cuts the line
+  where the candidate cut it and keeps the remainder struck through rather than deleting it.
+- Speech recognition read in slices *while the answer is still being given*, so the wait after
+  the candidate stops is about 2 s rather than the ~18 s a single pass over a long answer costs.
+  The transcript lands in an editable box and is never scored without the candidate seeing it.
 
 ### What is not implemented
 
-- Voice input, TTS integration, barge-in, acoustic metrics and browser audio.
+- Voice activity detection and open-mic turn-taking. Turn control is tap-to-talk, which is a
+  decision rather than a gap: interview answers are long and full of thinking pauses, which is
+  exactly where energy VAD false-cuts, and a false cut truncates the answer being scored.
+- The pre-flight audio wizard: loop-back test, device picker, empirical echo detection and a
+  persisted choice. The permission gate explains before it prompts; the rest is not built.
+- Acoustic and fluency metrics computed from the recorded audio.
 - A production web interface or remote service.
 - A retrieval detour for answering the candidate's own questions mid-session.
 - Durable command serialization, idempotency or atomic event replay.
@@ -220,12 +231,25 @@ The provider port uses two endpoints because the API surfaces are complementary:
 | [`app/report.py`](../app/report.py) | Evidence-led candidate feedback | Scores, observations, close reasons | Plain-text report |
 | [`app/depth_signals.py`](../app/depth_signals.py) | Regex facts used by focus and observations | Answer text | Depth-signal booleans |
 | [`app/resume.py`](../app/resume.py) | Carries a live Runner between processes; `FIELDS` is the guarded list a test compares against the Runner's own attributes | `Runner` | Self-describing snapshot, including the plan |
+| [`app/audio.py`](../app/audio.py) | PCM framing, the voice wire protocol, and where to cut a growing answer so a slice ends in a pause | Wire frames, raw samples | Frames, `Utterance`, `Speech`, the heard/unheard split |
+| [`app/speech.py`](../app/speech.py) | The TTS port: a protocol, a voice dictionary and one Piper/sherpa-onnx implementation | A line to say | Float32 mono at the engine's rate |
+| [`app/listen.py`](../app/listen.py) | The ASR port: nemotron through `transcribe.cpp`, one slice at a time | A slice of speech | Verbatim text |
+
+`audio.py`, `speech.py` and `listen.py` are the one place `app/` reaches past the standard
+library, and they need the `voice` extra. Nothing on the text path imports them, so a text
+interview still runs on the standard library alone -- `tests/test_nfr.py` enforces that in a
+subprocess rather than trusting the claim.
 
 ### 4.2 The browser surface
 
 | Area | Role |
 |---|---|
 | [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session and report endpoints, the domain-refusal mapping, and the static host for `ui/build` |
+| [`api/voice.py`](../api/voice.py) | The voice socket at `/api/voice`. Control is JSON, audio is raw int16. Speech is streamed in a task so the receive loop stays free, because a barge-in that cannot be heard until the agent stops talking is not a barge-in |
+| [`ui/static/worklets/mic-capture.js`](../ui/static/worklets/mic-capture.js) | Captures at the device rate and resamples to the 16 kHz the recogniser wants, with an anti-alias filter, off the main thread |
+| [`ui/src/lib/audio/transport.js`](../ui/src/lib/audio/transport.js) | The browser half: capture, the monotonic playback cursor that keeps bursty delivery inaudible, barge-in, and device changes |
+| [`ui/src/lib/audio/voice.svelte.js`](../ui/src/lib/audio/voice.svelte.js) | The phase machine the interview reads: off, idle, listening, tail, reading, thinking, speaking |
+| [`ui/src/lib/VoiceBar.svelte`](../ui/src/lib/VoiceBar.svelte) | The control strip. The state indicator and the talk control are one object, every state carries a text label, and the label is the `aria-live` target |
 | [`ui/src/lib/theme.css`](../ui/src/lib/theme.css) | Every design token. Two rooms, `document` and `studio`, selected by `data-room` on the root element; components read role tokens only, never the raw scale |
 | [`ui/src/lib/live.svelte.js`](../ui/src/lib/live.svelte.js) | Whether a session is on air, shared by the nav strip and the interview so the tally never lags a request behind |
 | [`ui/src/routes/+page.svelte`](../ui/src/routes/+page.svelte) | Plan, as a numbered running order with per-phase durations taken from `planner._per_question` |

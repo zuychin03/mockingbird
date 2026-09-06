@@ -5,8 +5,18 @@
   // wanted to.
   import Icon from '$lib/Icon.svelte';
   import Problem from '$lib/Problem.svelte';
+  import VoiceBar from '$lib/VoiceBar.svelte';
   import { set as setLive } from '$lib/live.svelte.js';
   import { refused, unreachable } from '$lib/problem.js';
+  import {
+    voice,
+    say,
+    hush,
+    toggleTalking,
+    setThinking,
+    loadPreferences,
+    disable as voiceOff
+  } from '$lib/audio/voice.svelte.js';
 
   let session = $state(null);
   let problem = $state(null);
@@ -17,8 +27,14 @@
   let planPath = $state('');
   let showPath = $state(false);
   let elapsed = $state(0);
+  let thinkingFor = $state(0);
   let box = $state();
   let composer = $state();
+  // Plain, not reactive: they only exist to stop the same line being spoken or the same
+  // transcript being adopted twice, and making them state would re-run the effects that set
+  // them.
+  let spokenLine = '';
+  let adopted = 0;
 
   const PLANS = [
     {
@@ -94,7 +110,9 @@
     sending = text;
     answer = '';
     toBottom();
+    setThinking(true);
     const got = await send('/api/session/answer', { text });
+    setThinking(false);
     if (got) {
       sending = null;
       adopt(got);
@@ -138,6 +156,61 @@
 
   $effect(() => {
     resume();
+  });
+
+  $effect(() => {
+    loadPreferences();
+  });
+
+  // Teardown on its own, with nothing reactive in it. Sharing an effect with anything that
+  // reads state means a later edit turns a caption toggle into "voice switches itself off".
+  $effect(() => () => voiceOff());
+
+  // The interviewer speaks its own line. Guarded on the text rather than the question number
+  // because a probe and a reask both keep the number and are different lines.
+  $effect(() => {
+    const line = pending;
+    if (voice.phase === 'off' || !line || line === spokenLine) return;
+    spokenLine = line;
+    say(line);
+  });
+
+  // A recognised answer lands in the composer rather than being sent: 12.6 makes correcting
+  // the transcript before scoring a fairness requirement, because unedited ASR scores its own
+  // accent bias rather than the person.
+  $effect(() => {
+    const got = voice.transcript;
+    if (!got || got.id === adopted) return;
+    adopted = got.id;
+    if (!got.text) return;
+    answer = answer.trim() ? answer.trim() + ' ' + got.text : got.text;
+    queueMicrotask(() => composer?.focus());
+  });
+
+  // 12.8: Space talks, Esc stops the interviewer. Space is only ours when the caret is not in
+  // a field and the focus is not on a button, or it would swallow the composer's spacebar and
+  // every button's activation.
+  $effect(() => {
+    function onGlobalKey(e) {
+      if (e.key === 'Escape') return hush();
+      if (e.code !== 'Space' || voice.phase === 'off' || e.repeat) return;
+      const el = e.target;
+      if (el?.isContentEditable || ['TEXTAREA', 'INPUT', 'BUTTON', 'A'].includes(el?.tagName))
+        return;
+      e.preventDefault();
+      toggleTalking();
+    }
+    window.addEventListener('keydown', onGlobalKey);
+    return () => window.removeEventListener('keydown', onGlobalKey);
+  });
+
+  $effect(() => {
+    if (!sending) return;
+    const began = Date.now();
+    const tick = () => (thinkingFor = (Date.now() - began) / 1000);
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
   });
 
   $effect(() => {
@@ -227,7 +300,9 @@
           <p>{sending}</p>
           <p class="thinking" aria-live="polite">
             <span class="sweep"><span></span></span>
-            Considering your answer. This runs on your machine, so it takes a moment.
+            Considering your answer{#if voice.phase === 'off'}<span class="num">
+                {thinkingFor.toFixed(0)}s</span
+              >{/if}. This runs on your machine, so it takes a moment.
           </p>
         </div>
       {/if}
@@ -252,6 +327,8 @@
           <span class="prompt-number num">Q{String(session.question_number).padStart(2, '0')}</span>
           <h1 class="asking" aria-live="polite">{pending ?? ''}</h1>
         </div>
+
+        <VoiceBar {busy} />
 
         <div class="composer">
           <textarea

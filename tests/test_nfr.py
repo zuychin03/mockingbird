@@ -160,3 +160,27 @@ def test_the_degraded_line_is_scripted_speech_not_an_empty_string(tmp_path):
     out = asyncio.run(r.submit("an answer"))
     assert out.act == "probe"
     assert out.spoken.text.strip(), "degraded probe must still say something"
+
+
+def test_a_text_interview_never_reaches_past_the_standard_library():
+    """The runtime's promise is that an interview needs no package index (pyproject).
+
+    Voice broke the shape of that claim -- `app/audio.py` and `app/speech.py` genuinely need
+    numpy and sherpa-onnx -- so the promise is now narrower and worth enforcing rather than
+    asserting in a comment: nothing the *text* path imports may drag them in.
+    """
+    import importlib
+    import subprocess
+
+    src = (
+        "import sys;"
+        "sys.path.insert(0, %r);"
+        "import app.runner, app.session, app.contract, app.guards, app.planner, app.report;"
+        "bad = sorted(m for m in sys.modules if m.split('.')[0] in "
+        "{'numpy', 'sherpa_onnx', 'fastapi', 'scipy', 'websockets'});"
+        "print(','.join(bad))"
+    ) % str(Path(__file__).resolve().parent.parent)
+    out = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "", "the text path pulled in %s" % out.stdout.strip()
+    assert importlib.util.find_spec("app.audio"), "the voice modules should still exist"

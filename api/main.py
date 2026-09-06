@@ -27,6 +27,7 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from api import voice  # noqa: E402
 from app import bank as bank_mod  # noqa: E402
 from app import (contract, embed, observe, planner, provenance,  # noqa: E402
                  provider as prov, report as report_mod, resume, review,
@@ -451,6 +452,9 @@ async def _guard_async(fn, *args, **kwargs):
         raise HTTPException(400, str(e)) from e
     except KeyError as e:
         raise HTTPException(404, str(e).strip("'\"")) from e
+
+
+app.include_router(voice.router)
 
 
 # The built UI, when there is one. Declared last so it never shadows /api, and absent
