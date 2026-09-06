@@ -2,6 +2,9 @@
 **/__pycache__/
 *.py[cod]
 .pytest_cache/
+*.egg-info/
+build/
+dist/
 .superpowers/
 .worktrees/
 
@@ -26,6 +29,7 @@ council/
 data/sessions/
 data/calibration/
 data/comparisons/
+data/voice/
 data/*.json
 data/*.html
 data/*.txt
@@ -63,7 +67,19 @@ tools/session_script.py
 tools/calibrate.py
 tools/audition.html
 tools/tts_bench.py
+tools/spike_*.py
 tools/tier1_posterior_granite.json
+
+# Recorded speech, anywhere in the tree. A local-first product must not push a candidate's
+# voice to a public repo, and the one thing worse than losing an answer is publishing it.
+*.wav
+*.mp3
+*.webm
+*.ogg
+
+# Agent working notes for an abandoned Exaone/Granite adaptation on a dead branch. Internal
+# process rather than project documentation, and it carried an absolute home path.
+docs/superpowers/
 
 # Stage 4's UI. The source and the self-hosted fonts are tracked (the app must render
 # offline, so the faces cannot come from a CDN); the install and the build are not.
