@@ -172,6 +172,17 @@ names and the posterior cannot reach the interview surface even by accident. Sec
 that no assessment appears mid-session is therefore enforced at the boundary, and the page could
 not render a judgement if it tried.
 
+It also owns one latency concern the terminal never had. `app/cli.py` prefills llama.cpp's
+prefix cache before asking the first question; the browser did not, so every interview in the UI
+ran turn 0 cold. `_warm()` now fires that same warm-up from `session_start` and deliberately does
+not await it: the delay it removes is the one *after* the candidate has spoken, and they spend
+far longer composing a first answer than the warm-up needs, so it finishes inside time that was
+being spent anyway. Awaiting it would only move the same wait onto the button that starts the
+interview. Measured on qwen with this contract, the warm-up costs 411 ms against a cold cache
+and 43 ms against a warm one, so it takes roughly 370 ms off the candidate's first answer.
+Failures are swallowed, because it is an optimisation and a genuinely unreachable model is
+already reported by the real call.
+
 `127.0.0.1` is intentional. Using `localhost` previously attempted IPv6 before IPv4 and added a
 large client-side stall that server timing could not see.
 

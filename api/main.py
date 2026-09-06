@@ -15,6 +15,7 @@ terminal tool uses, so the two surfaces are one workflow rather than two.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -27,9 +28,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from app import bank as bank_mod  # noqa: E402
-from app import (embed, observe, planner, provenance, provider as prov,  # noqa: E402
-                 report as report_mod, resume, review, score as score_mod,
-                 session as sess)
+from app import (contract, embed, observe, planner, provenance,  # noqa: E402
+                 provider as prov, report as report_mod, resume, review,
+                 score as score_mod, session as sess)
 
 BANK = ROOT / "config" / "question_bank.json"
 DRAFT = ROOT / "data" / "plan_draft.json"
@@ -244,6 +245,33 @@ def _session_state(r) -> dict:
     }
 
 
+def _warm(p: prov.LMStudio, plan: dict) -> None:
+    """Prefill llama.cpp's prefix cache while the candidate reads question one.
+
+    `cli.py` warms before the first question and the browser never did, so every interview sat
+    through a cold prefill on turn 0. Measured on qwen with this contract: the warm-up costs
+    411 ms against a cold cache and 43 ms against a warm one, so it takes ~370 ms off the
+    candidate's first answer. `provider.warmup` still cites ~1,277 ms from log 8.14; that was
+    llama-3.2-3b before the model switch, and this configuration does not reproduce it. Deliberately NOT awaited: the wait it removes is the one after
+    they have spoken, and they spend far longer than this composing an answer, so the warm
+    finishes inside time the candidate was going to spend anyway. Awaiting it here would just
+    move the same delay onto the button they press to begin.
+
+    Failures are swallowed on purpose. This is an optimisation; if the model is unreachable the
+    real call reports it, and a warm-up that raised here would break starting an interview for
+    a reason the candidate cannot act on. When phase 2 lands, the TTS pitch shifter warms here
+    too -- its first call is ~14.8 s of numba JIT.
+    """
+    async def go() -> None:
+        try:
+            await p.warmup(contract.SYSTEM,
+                           contract.render(next(sess.iter_questions(plan))["question"], "", ""))
+        except Exception:
+            pass
+
+    asyncio.get_running_loop().create_task(go())
+
+
 @app.post("/api/session/start")
 async def session_start(plan_path: str = Body(..., embed=True)) -> dict:
     target = (ROOT / plan_path).resolve()
@@ -261,6 +289,7 @@ async def session_start(plan_path: str = Body(..., embed=True)) -> dict:
     # Called for the effect, not the text: `ask` is the only place the rolling history
     # refreshes, and `_pending` derives the line to show.
     await _guard_async(r.ask)
+    _warm(p, plan)
     return _session_state(r)
 
 
