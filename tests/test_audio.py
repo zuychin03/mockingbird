@@ -57,10 +57,7 @@ def engine(monkeypatch):
 
 
 @pytest.fixture()
-def client(tmp_path, monkeypatch, engine):
-    monkeypatch.setattr(voice_mod, "LOOSE", tmp_path / "voice")
-    monkeypatch.setattr(voice_mod, "LIVE", tmp_path / "nothing.json")
-    monkeypatch.setattr(voice_mod, "ROOT", tmp_path)
+def client(engine):
     return TestClient(api.app)
 
 
