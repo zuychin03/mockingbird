@@ -258,17 +258,37 @@
            cloud port lands this wording changes itself rather than needing to be
            remembered. -->
       {#if storage}
-        <span class="num">{storage.leaves_machine ? 'SENT OFF THIS MACHINE' : 'LOCAL / PRIVATE'}</span>
-        {#if storage.leaves_machine}
+        <span class="num">
+          {storage.served_remotely
+            ? 'HOSTED COPY'
+            : storage.answers_leave
+              ? 'SENT FOR READING'
+              : 'LOCAL / PRIVATE'}
+        </span>
+        <!-- Two facts, not one. A hosted copy keeps the recordings on somebody else's
+             disk even with a local model reading them, and a remote model transmits the
+             words even when the files never move. Saying only one would be a half-truth
+             in whichever direction happened to be false. -->
+        {#if storage.served_remotely}
           <p>
-            Answers on this machine are sent to <b>{storage.provider.host}</b> to be read.
-            Every question and every answer leaves this computer verbatim.
+            This is a hosted copy, so these interviews are kept on its server rather than
+            on your own computer: {storage.sessions} of them and {storage.recordings}
+            recordings, {size(storage.bytes)}, in
+            <code class="where">{storage.path}</code>. Delete any of them below.
           </p>
         {:else}
           <p>
-            Nothing here leaves this computer. {storage.sessions} interviews and
+            {storage.answers_leave
+              ? 'These files stay on this computer'
+              : 'Nothing here leaves this computer'}: {storage.sessions} interviews and
             {storage.recordings} recordings, {size(storage.bytes)}, in
             <code class="where">{storage.path}</code>. Delete any of them below.
+          </p>
+        {/if}
+        {#if storage.answers_leave}
+          <p>
+            Every question and every answer is sent to <b>{storage.provider.host}</b>
+            verbatim to be read.
           </p>
         {/if}
       {:else}

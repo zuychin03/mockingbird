@@ -606,3 +606,49 @@ def test_deleting_refuses_a_name_that_is_not_a_session(client, monkeypatch, tmp_
     for name in ("../elsewhere", "missing", "."):
         assert client.delete("/api/sessions/%s" % name).status_code in (404, 405, 307), name
     assert (tmp_path / "elsewhere").exists()
+
+
+class _Caller:
+    """Just enough Request for `_served_remotely`: who asked, and through what."""
+
+    def __init__(self, host="127.0.0.1", headers=None):
+        self.client = type("C", (), {"host": host})()
+        self.headers = headers or {}
+
+
+def test_a_hosted_copy_cannot_claim_to_be_private(client, monkeypatch, tmp_path):
+    """The interview module runs on one machine; the IELTS module is meant to be served. The
+    same build has to be able to say either, and the hosted one keeps the recordings on
+    somebody else's disk even when a local model is doing the reading."""
+    monkeypatch.setattr(api, "SESSIONS", tmp_path / "s")
+    (tmp_path / "s").mkdir()
+    monkeypatch.setenv("MOCKINGBIRD_HOSTED", "1")
+
+    got = client.get("/api/storage").json()
+    assert got["served_remotely"] is True
+    assert got["leaves_machine"] is True
+    # The two exposures stay separate: a local model still reads the answers locally.
+    assert got["answers_leave"] is False
+    assert "hosted service" in got["why_hosted"]
+
+
+def test_being_served_is_noticed_without_being_configured(monkeypatch):
+    """The signal that matters must not be forgettable. A deploy that never sets the variable
+    still gives itself away, by the caller not being on this machine or by the proxy in front
+    of it announcing itself."""
+    monkeypatch.delenv("MOCKINGBIRD_HOSTED", raising=False)
+
+    assert api._served_remotely(_Caller()) is None
+    assert "over the network" in api._served_remotely(_Caller(host="203.0.113.7"))
+    assert "proxy" in api._served_remotely(_Caller(headers={"x-forwarded-for": "203.0.113.7"}))
+    assert "proxy" in api._served_remotely(_Caller(headers={"forwarded": "for=203.0.113.7"}))
+
+
+def test_running_it_yourself_still_reads_as_private(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "SESSIONS", tmp_path / "s")
+    (tmp_path / "s").mkdir()
+    monkeypatch.delenv("MOCKINGBIRD_HOSTED", raising=False)
+
+    got = client.get("/api/storage").json()
+    assert got == {**got, "served_remotely": False, "answers_leave": False,
+                   "leaves_machine": False, "why_hosted": None}

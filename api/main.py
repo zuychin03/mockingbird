@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -329,19 +330,46 @@ async def session_answer(text: str = Body(..., embed=True),
     return _session_state(r)
 
 
-def _storage() -> dict:
-    """Where a candidate's interviews actually are, and whether the product's central claim
-    about them is currently true.
+LOOPBACK = ("127.0.0.1", "::1", "localhost", "testclient")
+
+
+def _served_remotely(request: Request) -> str | None:
+    """Why this instance is being served to someone other than the person at the keyboard, or
+    None when it is not.
+
+    Three signals, because the one that matters must not be forgettable. `MOCKINGBIRD_HOSTED`
+    is the operator saying so; a caller that is not on loopback says so by existing; and a
+    forwarding header says a proxy is in front, which is how a hosted instance would otherwise
+    look local to itself. Any one of them is enough.
+
+    The default is local because that is what running this on your own machine is, and the two
+    self-evident signals are what stop that default from becoming a lie the day it is served
+    without anybody remembering this function.
+    """
+    if os.environ.get("MOCKINGBIRD_HOSTED"):
+        return "this copy is configured as a hosted service"
+    for header in ("x-forwarded-for", "x-forwarded-host", "forwarded"):
+        if request.headers.get(header):
+            return "this copy is being served through a proxy"
+    client = (request.client.host if request.client else "") or ""
+    if client and client not in LOOPBACK:
+        return "this copy is being served over the network"
+    return None
+
+
+def _storage(request: Request) -> dict:
+    """Where a candidate's interviews actually are, and what is true about them right now.
 
     12.9 makes *"this never leaves your machine"* the trust the whole design is spent on, and
-    says it only counts when it is said in the interface -- **and only while it is true.** So
-    `leaves_machine` is DERIVED from the provider in use rather than written down as a string.
-    The moment 9.5's cloud port exists, a session served by it reports `False` here and the
-    interface has to change its wording, instead of a hardcoded reassurance quietly becoming a
-    lie that nobody edited.
+    says it counts only while it is true. So nothing here is a written-down reassurance: every
+    part is derived, and from **two independent facts** rather than one, because they are
+    different exposures and only saying one of them would be a half-truth.
 
-    Sizes are walked rather than cached. It is one directory tree on a local disk, and a number
-    that is stale is worse than a number that took a moment.
+    `answers_leave` is about the model: a remote provider means the words are transmitted to be
+    read, wherever the files sit. `served_remotely` is about the deployment: a hosted copy keeps
+    the recordings on somebody else's disk, even with a local model doing the reading. The
+    interview module runs on one machine and the IELTS module is intended to be hosted, so the
+    same build has to be able to say either.
     """
     total, files, recordings = 0, 0, 0
     for f in SESSIONS.rglob("*"):
@@ -354,6 +382,8 @@ def _storage() -> dict:
             total += f.stat().st_size
         except OSError:
             pass
+    remote_model = not prov.BASE.startswith(("http://127.0.0.1", "http://localhost"))
+    hosted = _served_remotely(request)
     return {
         "path": str(SESSIONS),
         "sessions": sum(1 for _ in SESSIONS.glob("*/session.json")),
@@ -363,13 +393,18 @@ def _storage() -> dict:
         # Named, not implied. A reader deciding whether to trust the claim should be able to
         # see which machine and which port answered for it.
         "provider": {"vendor": None, "host": prov.BASE, "model": prov.MODEL},
-        "leaves_machine": not prov.BASE.startswith(("http://127.0.0.1", "http://localhost")),
+        "answers_leave": remote_model,
+        "served_remotely": hosted is not None,
+        "why_hosted": hosted,
+        # The summary the interface branches on. Either exposure alone is enough to make the
+        # sentence false, so it is the union rather than a third opinion.
+        "leaves_machine": remote_model or hosted is not None,
     }
 
 
 @app.get("/api/storage")
-def storage() -> dict:
-    return _storage()
+def storage(request: Request) -> dict:
+    return _storage(request)
 
 
 @app.delete("/api/sessions/{session_id}")
