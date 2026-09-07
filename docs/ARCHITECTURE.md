@@ -55,6 +55,15 @@ the model's six-action JSON object is advisory input to that orchestrator.
 - Speech recognition read in slices *while the answer is still being given*, so the wait after
   the candidate stops is about 2 s rather than the ~18 s a single pass over a long answer costs.
   The transcript lands in an editable box and is never scored without the candidate seeing it.
+- Each answer's recording named on the turn it belongs to, so a report can find one answer's
+  audio instead of matching timestamps against a directory of them.
+- Fluency measured from the waveform at report time: syllable nuclei, speech and articulation
+  rate, pauses at a 200 ms floor, mean length of run, pitch and intensity, and words per minute
+  when a transcript is present. Reported as observation and never as a score contributor.
+- Playback of the candidate's own answers in the report, with every pause drawn on the track
+  and the longer ones offered as seek targets.
+- A cap on how long one press-to-talk turn may run, so a microphone left open ends the turn
+  the normal way instead of recording until something else stops it.
 
 ### What is not implemented
 
@@ -63,7 +72,11 @@ the model's six-action JSON object is advisory input to that orchestrator.
   exactly where energy VAD false-cuts, and a false cut truncates the answer being scored.
 - The pre-flight audio wizard: loop-back test, device picker, empirical echo detection and a
   persisted choice. The permission gate explains before it prompts; the rest is not built.
-- Acoustic and fluency metrics computed from the recorded audio.
+- Word-level alignment, and so seeking to a word in the transcript. Playback seeks to pauses,
+  which are known exactly; a position guessed from word count would land ten seconds out on a
+  ninety-second answer and play the wrong sentence under a cursor that looks precise.
+- Validation of the mid-clause pause heuristic against annotated speech. The syllable method
+  carries a published 85-90% agreement; the pause classifier carries nothing of the sort.
 - A production web interface or remote service.
 - A retrieval detour for answering the candidate's own questions mid-session.
 - Durable command serialization, idempotency or atomic event replay.
@@ -234,9 +247,10 @@ The provider port uses two endpoints because the API surfaces are complementary:
 | [`app/audio.py`](../app/audio.py) | PCM framing, the voice wire protocol, and where to cut a growing answer so a slice ends in a pause | Wire frames, raw samples | Frames, `Utterance`, `Speech`, the heard/unheard split |
 | [`app/speech.py`](../app/speech.py) | The TTS port: a protocol, a voice dictionary and one Piper/sherpa-onnx implementation | A line to say | Float32 mono at the engine's rate |
 | [`app/listen.py`](../app/listen.py) | The ASR port: nemotron through `transcribe.cpp`, one slice at a time | A slice of speech | Verbatim text |
+| [`app/delivery.py`](../app/delivery.py) | Fluency from the waveform: syllables, rates, pauses and where they fall. Observation only (FR-36) | Answer samples, optionally a word count | `Delivery`, or the reason it could not be measured |
 
-`audio.py`, `speech.py` and `listen.py` are the one place `app/` reaches past the standard
-library, and they need the `voice` extra. Nothing on the text path imports them, so a text
+`audio.py`, `speech.py`, `listen.py` and `delivery.py` are the one place `app/` reaches past the
+standard library, and they need the `voice` extra. Nothing on the text path imports them, so a text
 interview still runs on the standard library alone -- `tests/test_nfr.py` enforces that in a
 subprocess rather than trusting the claim.
 
@@ -244,12 +258,13 @@ subprocess rather than trusting the claim.
 
 | Area | Role |
 |---|---|
-| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session and report endpoints, the domain-refusal mapping, and the static host for `ui/build` |
+| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session, report and answer-audio endpoints, the domain-refusal mapping, and the static host for `ui/build` |
 | [`api/voice.py`](../api/voice.py) | The voice socket at `/api/voice`. Control is JSON, audio is raw int16. Speech is streamed in a task so the receive loop stays free, because a barge-in that cannot be heard until the agent stops talking is not a barge-in |
 | [`ui/static/worklets/mic-capture.js`](../ui/static/worklets/mic-capture.js) | Captures at the device rate and resamples to the 16 kHz the recogniser wants, with an anti-alias filter, off the main thread |
 | [`ui/src/lib/audio/transport.js`](../ui/src/lib/audio/transport.js) | The browser half: capture, the monotonic playback cursor that keeps bursty delivery inaudible, barge-in, and device changes |
 | [`ui/src/lib/audio/voice.svelte.js`](../ui/src/lib/audio/voice.svelte.js) | The phase machine the interview reads: off, idle, listening, tail, reading, thinking, speaking |
 | [`ui/src/lib/VoiceBar.svelte`](../ui/src/lib/VoiceBar.svelte) | The control strip. The state indicator and the talk control are one object, every state carries a text label, and the label is the `aria-live` target |
+| [`ui/src/lib/Playback.svelte`](../ui/src/lib/Playback.svelte) | Answer playback in the report. One audio element for the whole list, so starting one answer stops the last; pauses drawn on the track and the longest offered as jumps |
 | [`ui/src/lib/theme.css`](../ui/src/lib/theme.css) | Every design token. Two rooms, `document` and `studio`, selected by `data-room` on the root element; components read role tokens only, never the raw scale |
 | [`ui/src/lib/live.svelte.js`](../ui/src/lib/live.svelte.js) | Whether a session is on air, shared by the nav strip and the interview so the tally never lags a request behind |
 | [`ui/src/routes/+page.svelte`](../ui/src/routes/+page.svelte) | Plan, as a numbered running order with per-phase durations taken from `planner._per_question` |
@@ -503,6 +518,8 @@ data/sessions/<session-id>/
   session.json       session metadata, plan snapshot, provenance and closed-question state
   transcript.json    every committed turn in candidate/interviewer order
   decisions.jsonl    append-only effective decision and diagnostic record per turn
+  report.json        the built report, cached and invalidated by any newer file beside it
+  audio/             one wav per spoken answer, named on the turn it belongs to
 ```
 
 Important decision fields include candidate utterance, effective action and speech, guard names,

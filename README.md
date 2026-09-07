@@ -210,10 +210,16 @@ app/
   planner.py       description -> competencies -> plan; generation, and stock plans
   review.py        the operations a person performs on a plan before it is run
   resume.py        carrying a live session between processes
+  audio.py         PCM framing, the wire protocol, where to cut a growing answer
+  speech.py        the TTS port: one Piper voice through sherpa-onnx
+  listen.py        the ASR port: nemotron through transcribe.cpp, a slice at a time
+  delivery.py      fluency from the waveform; observation, never a score
 api/
   main.py          the HTTP surface, and the static host for the built interface
+  voice.py         the WebSocket carrying microphone up and speech down
 ui/
   src/lib/         design tokens, the shared on-air state, the icon set
+  src/lib/audio/   the browser half of the transport, and the phase machine
   src/routes/      the three surfaces: plan, interview, history
   static/fonts/    the three faces, self-hosted so the app renders offline
 config/            interview plans, and the question bank
@@ -261,7 +267,7 @@ intentionally ignored by Git.
 ## Status
 
 The text interview, rubric scoring, report, the natural-probing wave and the planner are
-implemented, with 546 automated tests passing. An interview can be planned from a job
+implemented, with 593 automated tests passing. An interview can be planned from a job
 description or from a stock plan, reviewed and edited, saved, and then conducted.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
@@ -295,13 +301,13 @@ python -m uvicorn api.main:app --port 8000
 
 The install is editable on purpose: paths are resolved from the repo root, so the question bank,
 the sessions and the built interface are found where they actually live. Add `voice` --
-`pip install -e ".[web,voice]"` -- for the speech transport, which needs numpy, sherpa-onnx and
-`websockets`; the text interview needs none of them.
+`pip install -e ".[web,voice]"` -- for speech and the delivery measurements, which need numpy,
+sherpa-onnx, `websockets` and praat-parselmouth; the text interview needs none of them.
 
 The API runs without the interface; the static host simply does not mount when `ui/build` is
 absent.
 
-Voice is part-built. The interviewer speaks its questions, you answer by tapping to talk, and
+Voice works end to end. The interviewer speaks its questions, you answer by tapping to talk, and
 a barge-in cuts the line where you cut it and shows the rest struck through. A single WebSocket
 at `/api/voice` carries microphone PCM up and synthesised speech down, an `AudioWorklet`
 resamples capture to the 16 kHz the recogniser wants, and playback is scheduled on a monotonic
@@ -310,7 +316,8 @@ cursor so bursty delivery is not audible.
 Your answer is recognised **while you are still giving it**. One pass over a finished 84 s
 answer costs about 18 s on this machine, which would be dead air at the worst possible moment,
 so the answer is read in slices cut at pauses and only the tail is left when you stop --
-measured at **2.3 s** after release against 17.8 s for a single pass. The text lands in the
+**2.3 s** after release measuring the recogniser alone, and **2.6-3.4 s** driving the whole
+thing through the browser, against 17.8 s for a single pass. The text lands in the
 composer rather than being sent, because correcting it before it is scored is a fairness
 requirement, not a convenience: unedited recognition scores its own accent bias rather than the
 person.
@@ -331,6 +338,34 @@ redistribute:
 Each is checked at connect time and reported rather than assumed: a missing recogniser leaves
 the interview running on the typed answer and says so on screen, and a missing voice is the only
 thing that stops the interviewer speaking.
+
+## How you said it, and hearing it back
+
+The report measures delivery from the waveform: syllable rate, articulation rate, pauses, mean
+length of run, pitch and intensity, and words per minute when there is a transcript to count.
+
+**None of it needs the recogniser, and that is the point.** Every figure but words per minute
+comes off the intensity and pitch contours, so a candidate whose accent the recogniser mangles
+still gets accurate fluency numbers. It is also why none of it is scored: delivery is the
+measurement most contaminated by recognition error and most biased against non-native speakers,
+so the report says so beside the numbers rather than leaving you to assume they counted.
+
+A pause is 200 ms, not the 100 ms most tools default to, because that is the threshold L2
+fluency research found predicted proficiency on monologic tasks. Syllables are intensity peaks
+flanked by a 2 dB dip with unvoiced peaks discarded -- De Jong and Wempe's method, which agrees
+with hand annotation about 85-90% of the time.
+
+Where you paused matters more than how much, so each pause is classified by the pitch reset
+across it: English marks a clause boundary with a reset, while a hesitation resumes at about the
+pitch it left. That one is a prosodic heuristic and its agreement with human judgement is
+**unmeasured**, so the measured reset is shown beside the label and can be argued with.
+
+Then you can hear it. Each spoken answer in the report has a player, a track with every pause
+drawn on it -- one colour for inside a clause, another for between -- and jumps into the longest
+of them. It does not seek to a word: that needs an alignment nothing here produces, and guessing
+one from word position lands about ten seconds out on a ninety-second answer and plays the wrong
+sentence under a cursor that looks exact. Where you stopped is known exactly, so that is what it
+offers.
 
 ## Licence
 
