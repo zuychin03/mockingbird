@@ -46,12 +46,18 @@
     building = id;
     opened = id;
     report = null;
-    // Unconditionally, before the request can fail: on success this is the shareable address
-    // of the report, and on failure it is what stops the deep-link effect seeing a URL that
+    // Before the request can fail, not after: on success this is the shareable address of
+    // the report, and on failure it is what stops the deep-link effect seeing a URL that
     // disagrees with `opened` and starting the whole build again. The API caches a built
     // report beside its session, so reopening this link is now genuinely cheap rather than
     // silently paying the full extraction and scoring pass again.
-    replaceState(`?s=${id}`, {});
+    //
+    // Skipped when the URL already says this, which is exactly the case a deep link
+    // arrives in. Writing it there is redundant AND impossible: the effect below runs on
+    // mount, before SvelteKit's router has initialised, and `replaceState` throws. The
+    // invariant the unconditional call was protecting still holds either way -- the URL
+    // and `opened` agree by the time this returns.
+    if (page.url.searchParams.get('s') !== id) replaceState(`?s=${id}`, {});
     const got = await call(`/api/sessions/${id}/report`);
     if (got) report = got;
     busy = false;

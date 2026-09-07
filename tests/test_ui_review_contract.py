@@ -60,3 +60,12 @@ def test_playback_controls_are_reachable_without_a_mouse():
     assert 'type="range"' in source
     assert 'aria-label="Seek within' in source
     assert 'aria-label="Play' in source
+
+
+def test_a_deep_linked_report_does_not_rewrite_the_url_it_arrived_on():
+    """`replaceState` throws before SvelteKit's router is initialised, and the deep-link effect
+    runs on mount. The URL already carries the id in that case, so the write is skipped rather
+    than the error swallowed."""
+    source = HISTORY.read_text(encoding="utf-8")
+    assert "if (page.url.searchParams.get('s') !== id) replaceState(" in source
+    assert source.count("replaceState(`?s=${id}`") == 1, "only the guarded call may remain"
