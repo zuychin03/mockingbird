@@ -447,3 +447,29 @@ def test_a_recording_from_outside_this_session_is_not_linked(recorded, tmp_path)
 
 def test_a_recording_that_is_not_on_disk_is_not_linked(recorded):
     assert api._recording(recorded, "data/sessions/s1/audio/never-written.wav") is None
+
+
+def test_an_unreachable_model_says_so_when_building_a_report(client, monkeypatch, tmp_path):
+    """The same failure `/api/session/start` was already fixed for, missed on this path. The
+    provider's own sentence names the host it tried and how to start it, and unguarded the
+    whole thing arrived as an opaque 500 with "Internal Server Error" on the page."""
+    root = tmp_path / "s"
+    sid = "20260101-000000-down01"
+    d = root / sid
+    d.mkdir(parents=True)
+    (d / "session.json").write_text(json.dumps({
+        "session_id": sid, "plan_id": "p", "started_at": "2026-01-01T00:00:00",
+        "status": "complete", "plan_snapshot": {"label": "A plan"},
+        "questions": [{"phase": "p1", "question_id": "p1.1", "question": "Why?",
+                       "answers": ["because"]}],
+    }), encoding="utf-8")
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    async def down(*a, **k):
+        raise api.prov.ProviderError("cannot reach LM Studio at http://127.0.0.1:1234. "
+                                     "Is `lms server start` running?")
+    monkeypatch.setattr(api.observe, "observe", down)
+
+    r = client.get("/api/sessions/%s/report" % sid)
+    assert r.status_code == 503, r.text
+    assert "lms server start" in r.json()["detail"]

@@ -277,7 +277,12 @@ def render(report: Report, questions_asked: int, questions_answered: int,
            observations=None, question_states=None, delivery=None) -> str:
     totals = report.totals
     if not totals:
-        return "No scored questions in this session.\n"
+        # Delivery is explicitly not a score (FR-36), so it does not belong behind
+        # this gate: an interview that was spoken aloud and scored nothing still has
+        # something measured and true to say about how it was spoken.
+        head = ["No scored questions in this session.", ""]
+        body = head + _delivery_lines(delivery or {})
+        return "\n".join(body).rstrip() + "\n"
 
     rate = {k: v[0] / v[1] for k, v in totals.items() if v[1]}
     weak = sorted((k for k, r in rate.items() if r <= WEAK), key=lambda k: rate[k])

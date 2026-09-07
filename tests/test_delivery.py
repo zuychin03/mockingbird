@@ -262,3 +262,32 @@ def test_no_delivery_section_when_the_interview_was_typed():
 
     assert report._delivery_lines({}) == []
     assert report._delivery_lines({"spoken": 0}) == []
+
+
+def test_delivery_is_shown_even_when_nothing_was_scored():
+    """It is not a score (FR-36), so it does not belong behind the no-scores gate. An interview
+    spoken aloud and scored on nothing still has something measured to say about how it went."""
+    from app import report
+
+    class _Empty:
+        totals: dict = {}
+        scores: list = []
+
+    text = report.render(_Empty(), questions_asked=2, questions_answered=2,
+                         delivery={"spoken": 1, "speaking_seconds": 12.0,
+                                   "articulation_rate": 4.7, "wpm": 140.0,
+                                   "pause_count": 0, "mid_clause_pauses": 0,
+                                   "mid_clause_share": None})
+    assert "No scored questions" in text
+    assert "DELIVERY" in text and "4.7 syllables per second" in text
+
+
+def test_a_typed_session_that_scored_nothing_says_only_that():
+    from app import report
+
+    class _Empty:
+        totals: dict = {}
+        scores: list = []
+
+    text = report.render(_Empty(), questions_asked=2, questions_answered=2)
+    assert text.strip() == "No scored questions in this session."

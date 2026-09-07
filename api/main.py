@@ -462,7 +462,12 @@ async def session_report(session_id: str, refresh: bool = False) -> dict:
     for qs in states:
         if not qs.answers:
             continue
-        observations.append(await observe.observe(p, qs.question_id, qs.question, qs.answers))
+        # Guarded like every other model call here. Unguarded, an unreachable LM Studio came
+        # back as an opaque 500 and the page said "Internal Server Error" -- the same failure
+        # `/api/session/start` was already fixed for, and the provider's own sentence names the
+        # host it tried and how to start it.
+        observations.append(await _guard_async(
+            observe.observe, p, qs.question_id, qs.question, qs.answers))
 
     rep = score_mod.build(raw.get("session_id", session_id), observations, criteria_for)
     spoken = _delivery(d)
