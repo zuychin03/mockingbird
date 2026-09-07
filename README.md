@@ -267,7 +267,7 @@ intentionally ignored by Git.
 ## Status
 
 The text interview, rubric scoring, report, the natural-probing wave and the planner are
-implemented, with 593 automated tests passing. An interview can be planned from a job
+implemented, with 598 automated tests passing. An interview can be planned from a job
 description or from a stock plan, reviewed and edited, saved, and then conducted.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
@@ -366,6 +366,21 @@ of them. It does not seek to a word: that needs an alignment nothing here produc
 one from word position lands about ten seconds out on a ninety-second answer and plays the wrong
 sentence under a cursor that looks exact. Where you stopped is known exactly, so that is what it
 offers.
+
+## Where your interviews are
+
+The history page names the directory they are in, how many there are, how many recordings
+they hold and how much disk that is -- and whether any of it leaves this computer.
+
+**That last part is derived, not asserted.** It is computed from the model provider actually
+in use, so a cloud provider would make the page say what it sends and where, rather than
+leaving a reassuring sentence that nobody remembered to edit. A claim about privacy is worth
+nothing if it cannot go false.
+
+Any interview can be deleted from that page, and deleting one takes its recordings with it.
+It takes two presses rather than a dialog, and the interview currently being conducted is
+refused. A product that records your voice and offers no way to remove it has not earned the
+sentence above.
 
 ## Licence
 

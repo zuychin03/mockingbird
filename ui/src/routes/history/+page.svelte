@@ -17,13 +17,18 @@
   let building = $state('');
   let opened = $state('');
   let showAbandoned = $state(false);
+  let storage = $state(null);
+  // Which row is asking to be confirmed. One at a time, and cleared by any other
+  // action, so an armed button cannot be left lying under a later click.
+  let arming = $state('');
+  let wiping = $state('');
 
   const LIMIT = 50;
 
-  async function call(path) {
+  async function call(path, init) {
     problem = null;
     try {
-      const res = await fetch(path);
+      const res = await fetch(path, init);
       const body = await res.json();
       if (!res.ok) {
         problem = refused(res.status, body.detail);
@@ -39,6 +44,26 @@
   async function load() {
     const got = await call(`/api/sessions?limit=${LIMIT}`);
     if (got) sessions = got;
+    storage = await call('/api/storage');
+  }
+
+  /* 12.9 asks for a working delete button, and the word carrying the weight is
+   * *working*: this records a candidate's voice, and a product that cannot remove that
+   * has not earned the sentence above it. Two presses rather than a dialog -- the second
+   * press is the confirmation, and nothing is destroyed by one stray click. */
+  async function wipe(id) {
+    if (arming !== id) {
+      arming = id;
+      return;
+    }
+    arming = '';
+    wiping = id;
+    const gone = await call(`/api/sessions/${id}`, { method: 'DELETE' });
+    wiping = '';
+    if (gone) {
+      if (opened === id) close();
+      await load();
+    }
   }
 
   async function build(id) {
@@ -79,6 +104,8 @@
   const day = (iso) => (iso ? iso.slice(0, 10) : 'unknown');
   const at = (iso) => (iso ? iso.slice(11, 16) : '--:--');
   const finished = (s) => s.status === 'complete';
+  const size = (n) =>
+    n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`;
 
   // A stub with no answers looked identical to a full interview in a flat list of sixteen
   // near-identical labels. Finished interviews are the ones worth reading, so they lead and
@@ -225,8 +252,29 @@
       </p>
     </div>
     <div class="archive-note">
-      <span class="num">LOCAL / PRIVATE</span>
-      <p>Reports quote your answers and show which parts were model readings.</p>
+      <!-- 12.9: the claim only counts if it is said in the interface, and only while it
+           is true. Both halves come from the server -- the path is the real one and
+           `leaves_machine` is derived from the provider actually in use -- so when 9.5's
+           cloud port lands this wording changes itself rather than needing to be
+           remembered. -->
+      {#if storage}
+        <span class="num">{storage.leaves_machine ? 'SENT OFF THIS MACHINE' : 'LOCAL / PRIVATE'}</span>
+        {#if storage.leaves_machine}
+          <p>
+            Answers on this machine are sent to <b>{storage.provider.host}</b> to be read.
+            Every question and every answer leaves this computer verbatim.
+          </p>
+        {:else}
+          <p>
+            Nothing here leaves this computer. {storage.sessions} interviews and
+            {storage.recordings} recordings, {size(storage.bytes)}, in
+            <code class="where">{storage.path}</code>. Delete any of them below.
+          </p>
+        {/if}
+      {:else}
+        <span class="num">LOCAL / PRIVATE</span>
+        <p>Reports quote your answers and show which parts were model readings.</p>
+      {/if}
     </div>
   </div>
 
@@ -246,7 +294,10 @@
       <section class="day" aria-label="Interviews on {group.day}">
         <h2 class="slug">{group.day}</h2>
         {#each group.rows as s (s.session_id)}
-          <button
+          <!-- The row is itself a button, so the delete control cannot live inside it.
+               They sit side by side, and the destructive one is the narrow quiet one. -->
+          <div class="tape">
+            <button
             class="tape-row"
             class:working={building === s.session_id}
             disabled={busy}
@@ -264,7 +315,21 @@
             {#if building === s.session_id}
               <span class="sweep"><span></span></span>
             {/if}
-          </button>
+            </button>
+            <button
+              class="wipe"
+              class:armed={arming === s.session_id}
+              disabled={busy || wiping === s.session_id}
+              onclick={() => wipe(s.session_id)}
+              onblur={() => { if (arming === s.session_id) arming = ''; }}
+              aria-label={arming === s.session_id
+                ? `Confirm deleting the interview at ${at(s.started_at)}, including its recordings`
+                : `Delete the interview at ${at(s.started_at)}`}
+            >
+              {#if wiping === s.session_id}...{:else if arming === s.session_id}Sure?
+              {:else}<Icon name="remove" size={14} />{/if}
+            </button>
+          </div>
         {/each}
       </section>
     {/each}
@@ -434,6 +499,53 @@
 
   /* The whole row is the control. Sixteen identical outline buttons down the right edge were
    * the loudest thing on a page whose job is choosing between near-identical labels. */
+  .tape {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .tape .tape-row {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Quiet until it is armed. A destructive control that looks as inviting as the one
+   * beside it is a control that gets pressed by accident. */
+  .wipe {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 3.25rem;
+    padding: 0 var(--s-2);
+    border: none;
+    background: transparent;
+    color: var(--fg-faint);
+    font-family: var(--font-structure);
+    font-size: var(--step--2);
+    cursor: pointer;
+  }
+
+  .wipe:hover:not(:disabled) {
+    color: var(--fg);
+  }
+
+  .wipe.armed {
+    color: var(--signal);
+    letter-spacing: 0.04em;
+  }
+
+  .wipe:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .where {
+    font-family: var(--font-data);
+    font-size: var(--step--2);
+    overflow-wrap: anywhere;
+  }
+
   .tape-row {
     position: relative;
     display: grid;

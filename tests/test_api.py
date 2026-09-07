@@ -525,3 +525,84 @@ def test_playback_serves_no_file_for_an_encoded_climb(client, monkeypatch, tmp_p
     r = client.get("/api/sessions/20260101-000000-audio1/audio/..%2F..%2F..%2Fsecrets.txt")
     assert b"not audio" not in r.content
     assert r.headers.get("content-type") != "audio/wav"
+
+
+# ------------------------------------------- where the interviews are, and removing them
+def _recorded_session(root, sid="20260101-000000-stored1"):
+    d = root / sid
+    (d / "audio").mkdir(parents=True)
+    (d / "session.json").write_text(json.dumps({
+        "session_id": sid, "plan_id": "p", "started_at": "2026-01-01T00:00:00",
+        "status": "complete", "plan_snapshot": {"label": "A plan"}, "questions": [],
+    }), encoding="utf-8")
+    (d / "transcript.json").write_text('{"turns": []}', encoding="utf-8")
+    (d / "audio" / "answer-1.wav").write_bytes(b"RIFF" * 64)
+    return d
+
+
+def test_the_interface_can_say_where_the_interviews_are(client, monkeypatch, tmp_path):
+    root = tmp_path / "s"
+    _recorded_session(root)
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    got = client.get("/api/storage").json()
+    assert got["path"] == str(root), "the real path, not a description of it"
+    assert got["sessions"] == 1 and got["recordings"] == 1
+    assert got["bytes"] > 0
+
+
+def test_the_claim_is_derived_from_the_provider_not_asserted(client, monkeypatch, tmp_path):
+    """12.9 makes "this never leaves your machine" the product's central claim and says it
+    counts only while it is true. A hardcoded reassurance becomes a lie the day 9.5's cloud
+    port lands and nobody remembers to edit the string."""
+    monkeypatch.setattr(api, "SESSIONS", tmp_path / "s")
+    (tmp_path / "s").mkdir()
+
+    assert client.get("/api/storage").json()["leaves_machine"] is False
+
+    monkeypatch.setattr(api.prov, "BASE", "https://api.example-vendor.com")
+    got = client.get("/api/storage").json()
+    assert got["leaves_machine"] is True
+    assert got["provider"]["host"] == "https://api.example-vendor.com"
+
+
+def test_deleting_an_interview_takes_the_recordings_with_it(client, monkeypatch, tmp_path):
+    """A product that records someone's voice and cannot remove it has not earned the claim."""
+    root = tmp_path / "s"
+    d = _recorded_session(root)
+    monkeypatch.setattr(api, "SESSIONS", root)
+    monkeypatch.setattr(api, "LIVE", tmp_path / "nothing.json")
+
+    got = client.delete("/api/sessions/20260101-000000-stored1")
+    assert got.status_code == 200
+    assert got.json()["recordings"] == 1 and got.json()["files"] == 3
+    assert not d.exists(), "the directory must go, not just its record"
+    assert client.get("/api/sessions").json() == []
+
+
+def test_the_running_interview_cannot_be_deleted(client, monkeypatch, tmp_path):
+    """It would leave the runner writing turns into a directory that is not there, and
+    "I meant the other one" is the likelier click."""
+    root = tmp_path / "s"
+    d = _recorded_session(root)
+    monkeypatch.setattr(api, "SESSIONS", root)
+    live = tmp_path / "live.json"
+    live.write_text(json.dumps({"session_id": "20260101-000000-stored1"}), encoding="utf-8")
+    monkeypatch.setattr(api, "LIVE", live)
+
+    r = client.delete("/api/sessions/20260101-000000-stored1")
+    assert r.status_code == 409
+    assert "still running" in r.json()["detail"]
+    assert d.exists()
+
+
+def test_deleting_refuses_a_name_that_is_not_a_session(client, monkeypatch, tmp_path):
+    root = tmp_path / "s"
+    root.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    monkeypatch.setattr(api, "SESSIONS", root)
+    monkeypatch.setattr(api, "LIVE", tmp_path / "nothing.json")
+
+    for name in ("../elsewhere", "missing", "."):
+        assert client.delete("/api/sessions/%s" % name).status_code in (404, 405, 307), name
+    assert (tmp_path / "elsewhere").exists()

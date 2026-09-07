@@ -64,6 +64,11 @@ the model's six-action JSON object is advisory input to that orchestrator.
   and the longer ones offered as seek targets.
 - A cap on how long one press-to-talk turn may run, so a microphone left open ends the turn
   the normal way instead of recording until something else stops it.
+- The storage disclosure and a working delete. The history page names the real directory, the
+  interview and recording counts and the size, and whether anything leaves the machine --
+  that last derived from the provider in use, so 9.5's cloud port changes the wording rather
+  than making a hardcoded reassurance false. Deleting an interview removes its recordings
+  with it, and the running interview is refused.
 
 ### What is not implemented
 
@@ -258,7 +263,7 @@ subprocess rather than trusting the claim.
 
 | Area | Role |
 |---|---|
-| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session, report and answer-audio endpoints, the domain-refusal mapping, and the static host for `ui/build` |
+| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session, report, answer-audio, storage-disclosure and delete endpoints, the domain-refusal mapping, and the static host for `ui/build` |
 | [`api/voice.py`](../api/voice.py) | The voice socket at `/api/voice`. Control is JSON, audio is raw int16. Speech is streamed in a task so the receive loop stays free, because a barge-in that cannot be heard until the agent stops talking is not a barge-in |
 | [`ui/static/worklets/mic-capture.js`](../ui/static/worklets/mic-capture.js) | Captures at the device rate and resamples to the 16 kHz the recogniser wants, with an anti-alias filter, off the main thread |
 | [`ui/src/lib/audio/transport.js`](../ui/src/lib/audio/transport.js) | The browser half: capture, the monotonic playback cursor that keeps bursty delivery inaudible, barge-in, and device changes |

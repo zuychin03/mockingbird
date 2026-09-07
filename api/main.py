@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -326,6 +327,81 @@ async def session_answer(text: str = Body(..., embed=True),
     if out.closed_question and not r.done and not out.end_session:
         await _guard_async(r.ask)
     return _session_state(r)
+
+
+def _storage() -> dict:
+    """Where a candidate's interviews actually are, and whether the product's central claim
+    about them is currently true.
+
+    12.9 makes *"this never leaves your machine"* the trust the whole design is spent on, and
+    says it only counts when it is said in the interface -- **and only while it is true.** So
+    `leaves_machine` is DERIVED from the provider in use rather than written down as a string.
+    The moment 9.5's cloud port exists, a session served by it reports `False` here and the
+    interface has to change its wording, instead of a hardcoded reassurance quietly becoming a
+    lie that nobody edited.
+
+    Sizes are walked rather than cached. It is one directory tree on a local disk, and a number
+    that is stale is worse than a number that took a moment.
+    """
+    total, files, recordings = 0, 0, 0
+    for f in SESSIONS.rglob("*"):
+        if not f.is_file():
+            continue
+        files += 1
+        if f.suffix == ".wav":
+            recordings += 1
+        try:
+            total += f.stat().st_size
+        except OSError:
+            pass
+    return {
+        "path": str(SESSIONS),
+        "sessions": sum(1 for _ in SESSIONS.glob("*/session.json")),
+        "recordings": recordings,
+        "files": files,
+        "bytes": total,
+        # Named, not implied. A reader deciding whether to trust the claim should be able to
+        # see which machine and which port answered for it.
+        "provider": {"vendor": None, "host": prov.BASE, "model": prov.MODEL},
+        "leaves_machine": not prov.BASE.startswith(("http://127.0.0.1", "http://localhost")),
+    }
+
+
+@app.get("/api/storage")
+def storage() -> dict:
+    return _storage()
+
+
+@app.delete("/api/sessions/{session_id}")
+def session_delete(session_id: str) -> dict:
+    """Delete one interview and everything recorded with it.
+
+    12.9 asks for a working delete button, and the word doing the work is *working*: a product
+    that records a candidate's voice and offers no way to remove it has not earned the claim
+    above. So this removes the directory whole -- transcript, decisions, the cached report and
+    the audio -- and reports what went, rather than deleting quietly.
+
+    The live session is refused. Deleting the interview currently being conducted would leave
+    the runner writing turns into a directory that no longer exists, and "I meant the other
+    one" is a likelier click than wanting that.
+    """
+    d = (SESSIONS / session_id).resolve()
+    if SESSIONS.resolve() not in d.parents or not (d / "session.json").exists():
+        raise HTTPException(404, "no session %r" % session_id)
+    try:
+        live = json.loads(LIVE.read_text(encoding="utf-8")).get("session_id")
+    except (OSError, ValueError, AttributeError):
+        live = None
+    if live == session_id:
+        raise HTTPException(
+            409, "this interview is still running; finish or leave it before deleting it")
+
+    files = [f for f in d.rglob("*") if f.is_file()]
+    gone = {"session_id": session_id, "files": len(files),
+            "recordings": sum(1 for f in files if f.suffix == ".wav"),
+            "bytes": sum(f.stat().st_size for f in files if f.exists())}
+    shutil.rmtree(d)
+    return gone
 
 
 SESSIONS_SHOWN = 50
