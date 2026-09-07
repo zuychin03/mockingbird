@@ -473,3 +473,55 @@ def test_an_unreachable_model_says_so_when_building_a_report(client, monkeypatch
     r = client.get("/api/sessions/%s/report" % sid)
     assert r.status_code == 503, r.text
     assert "lms server start" in r.json()["detail"]
+
+
+def test_an_answers_recording_is_served_for_playback(client, monkeypatch, tmp_path):
+    root = tmp_path / "s"
+    room = root / "20260101-000000-audio1" / "audio"
+    room.mkdir(parents=True)
+    (room / "answer-1.wav").write_bytes(b"RIFF....WAVE")
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    r = client.get("/api/sessions/20260101-000000-audio1/audio/answer-1.wav")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "audio/wav"
+    assert r.content == b"RIFF....WAVE"
+
+
+def test_playback_refuses_a_name_that_climbs_out_of_the_session(monkeypatch, tmp_path):
+    """Called directly rather than over HTTP: every client normalises `..` out of a path before
+    the request is sent, so an HTTP test of this asserts the client's behaviour and not the
+    server's. What matters is that the handler itself refuses a name that resolves outside the
+    audio folder, whatever route it arrives by.
+
+    Sessions are not isolated from each other and should not be -- they are all one person's on
+    one machine. The line being defended is the sessions tree, not the session.
+    """
+    root = tmp_path / "s"
+    (root / "20260101-000000-audio1" / "audio").mkdir(parents=True)
+    (tmp_path / "secrets.txt").write_bytes(b"not audio")
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    for name in ("../../../secrets.txt", "../../secrets.txt", "missing.wav", "."):
+        with pytest.raises(api.HTTPException) as raised:
+            api.session_audio("20260101-000000-audio1", name)
+        assert raised.value.status_code == 404, name
+
+
+def test_playback_serves_no_file_for_an_encoded_climb(client, monkeypatch, tmp_path):
+    """The one traversal shape that survives a client: percent-encoded separators.
+
+    Asserted on the bytes rather than the status. A decoded name containing slashes matches no
+    path parameter, so the request falls through to the SPA catch-all and comes back as the app
+    shell with a 200 -- but only when `ui/build` exists, which made an earlier version of this
+    test pass or fail depending on whether the UI had been built. What must hold either way is
+    that the file itself never leaves the machine.
+    """
+    root = tmp_path / "s"
+    (root / "20260101-000000-audio1" / "audio").mkdir(parents=True)
+    (tmp_path / "secrets.txt").write_bytes(b"not audio")
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    r = client.get("/api/sessions/20260101-000000-audio1/audio/..%2F..%2F..%2Fsecrets.txt")
+    assert b"not audio" not in r.content
+    assert r.headers.get("content-type") != "audio/wav"

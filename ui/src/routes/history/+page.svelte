@@ -6,6 +6,7 @@
   import { replaceState } from '$app/navigation';
 
   import Icon from '$lib/Icon.svelte';
+  import Playback from '$lib/Playback.svelte';
   import Problem from '$lib/Problem.svelte';
   import { refused, unreachable } from '$lib/problem.js';
 
@@ -323,6 +324,13 @@
                 <p class={b.kind}>{dashes(b.text)}</p>
               {/each}
             </div>
+          {/if}
+
+          <!-- 12.9's playback sits under the delivery figures rather than in a
+               section of its own: the marks on each track ARE those numbers, and
+               hearing a pause is what makes the count mean anything. -->
+          {#if s.heading === 'DELIVERY'}
+            <Playback sessionId={opened} delivery={report.delivery} />
           {/if}
         </section>
       {/each}

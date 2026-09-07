@@ -424,6 +424,25 @@ def _delivery(d: Path) -> dict:
         return {}
 
 
+@app.get("/api/sessions/{session_id}/audio/{name}")
+def session_audio(session_id: str, name: str) -> FileResponse:
+    """One answer's recording, for the report to play back.
+
+    12.9 puts hearing yourself among the highest-value things a speaking report can offer, and
+    it costs nothing extra now that a turn names its own recording.
+
+    `name` arrives from a URL, so it is resolved and checked against the session's own audio
+    directory rather than joined and trusted. A path parameter matches no slash, which stops the
+    obvious escape; this stops the rest, and it is the same check `_recording` makes on the way
+    in. Nothing is served from outside one session's audio folder.
+    """
+    room = (SESSIONS / session_id / "audio").resolve()
+    target = (room / name).resolve()
+    if room not in target.parents or not target.is_file():
+        raise HTTPException(404, "no recording %r in session %r" % (name, session_id))
+    return FileResponse(target, media_type="audio/wav")
+
+
 @app.get("/api/sessions/{session_id}/report")
 async def session_report(session_id: str, refresh: bool = False) -> dict:
     """Extraction and scoring run here, not during the interview. They are offline work by
