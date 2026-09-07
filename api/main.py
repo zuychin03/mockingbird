@@ -400,6 +400,30 @@ def _report_is_fresh(d: Path) -> dict | None:
         return None
 
 
+def _delivery(d: Path) -> dict:
+    """How the answers were said, measured from the recordings the turns point at.
+
+    Measured here rather than when each answer was submitted, which is what makes it work on
+    sessions recorded before any of this existed. Optional in every direction: a session with
+    no audio returns nothing to show, and an install without the voice extra still builds a
+    report rather than failing on an import it never needed for text.
+    """
+    try:
+        from app import delivery as delivery_mod
+    except ImportError:
+        return {}
+    try:
+        turns = json.loads((d / "transcript.json").read_text(encoding="utf-8"))["turns"]
+    except (OSError, ValueError, KeyError):
+        return {}
+    try:
+        return delivery_mod.for_session(turns, ROOT)
+    except Exception:
+        # A report is worth more than its delivery section. Anything parselmouth objects to on
+        # one odd recording must not cost the candidate the scoring that took minutes to build.
+        return {}
+
+
 @app.get("/api/sessions/{session_id}/report")
 async def session_report(session_id: str, refresh: bool = False) -> dict:
     """Extraction and scoring run here, not during the interview. They are offline work by
@@ -441,9 +465,11 @@ async def session_report(session_id: str, refresh: bool = False) -> dict:
         observations.append(await observe.observe(p, qs.question_id, qs.question, qs.answers))
 
     rep = score_mod.build(raw.get("session_id", session_id), observations, criteria_for)
+    spoken = _delivery(d)
     text = report_mod.render(rep, questions_asked=len(states),
                              questions_answered=sum(1 for q in states if q.answers),
-                             observations=observations, question_states=states)
+                             observations=observations, question_states=states,
+                             delivery=spoken)
     return _cache_report(d, {
         "session_id": session_id,
         "label": plan.get("label") or raw.get("plan_id"),
@@ -458,6 +484,9 @@ async def session_report(session_id: str, refresh: bool = False) -> dict:
         "rubric": [{"name": k, "label": score_mod.CRITERIA[k][0],
                     "description": score_mod.CRITERIA[k][1], "met": m, "of": n}
                    for k, (m, n) in sorted(rep.totals.items())],
+        # Sent as data as well as prose so 12.9's surface can lay it out per answer, and
+        # never merged into `rubric`: FR-36 keeps delivery out of the score.
+        "delivery": spoken,
     })
 
 

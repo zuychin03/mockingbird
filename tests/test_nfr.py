@@ -177,10 +177,11 @@ def test_a_text_interview_never_reaches_past_the_standard_library():
         "sys.path.insert(0, %r);"
         "import app.runner, app.session, app.contract, app.guards, app.planner, app.report;"
         "bad = sorted(m for m in sys.modules if m.split('.')[0] in "
-        "{'numpy', 'sherpa_onnx', 'fastapi', 'scipy', 'websockets'});"
+        "{'numpy', 'sherpa_onnx', 'fastapi', 'scipy', 'websockets', 'parselmouth'});"
         "print(','.join(bad))"
     ) % str(Path(__file__).resolve().parent.parent)
     out = subprocess.run([sys.executable, "-c", src], capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "", "the text path pulled in %s" % out.stdout.strip()
     assert importlib.util.find_spec("app.audio"), "the voice modules should still exist"
+    assert importlib.util.find_spec("app.delivery"), "the voice modules should still exist"

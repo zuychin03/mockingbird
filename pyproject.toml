@@ -28,8 +28,10 @@ research = ["numpy>=2.5,<3", "praat-parselmouth>=0.4.7", "sherpa-onnx>=1.13"]
 # path imports them, so a text interview still runs on the standard library alone. `test_nfr`
 # enforces that rather than trusting this comment. `websockets` is what lets uvicorn serve
 # `/api/voice` at all. Recognition also needs a `transcribe.cpp` build, which is not a Python
-# dependency: see MOCKINGBIRD_TRANSCRIBE in the README.
-voice = ["numpy>=2.5,<3", "sherpa-onnx>=1.13", "websockets>=15,<18"]
+# dependency: see MOCKINGBIRD_TRANSCRIBE in the README. `praat-parselmouth` is what `app/
+# delivery.py` measures fluency with, and it needs no model of its own.
+voice = ["numpy>=2.5,<3", "praat-parselmouth>=0.4.7", "sherpa-onnx>=1.13",
+         "websockets>=15,<18"]
 
 # Named explicitly because flat-layout auto-discovery refuses this repo outright: it sees
 # `ui`, `data`, `config`, `models`, `docs` and the rest as candidate packages and stops rather

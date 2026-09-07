@@ -234,8 +234,47 @@ CUT_SHORT = {
 }
 
 
+def _delivery_lines(d: dict) -> list[str]:
+    """How the answers were said. Plain numbers in -- this module is on the text path and may
+    not import what measured them.
+
+    FR-36 is stated in the section rather than assumed: delivery is the measurement most
+    contaminated by recognition error and most biased against non-native speakers, so a reader
+    is told it sits beside the score instead of inside it.
+    """
+    if not d or not d.get("spoken"):
+        return []
+    out = ["DELIVERY", "-" * 60, ""]
+    out.append("  Observations, not scores. These measures are the ones most affected by")
+    out.append("  recognition error and by accent, so they sit beside the result, not in it.")
+    out.append("")
+    out.append("  Measured on %d spoken answer%s, %.0fs of speech."
+               % (d["spoken"], "" if d["spoken"] == 1 else "s", d.get("speaking_seconds") or 0))
+    out.append("")
+    if d.get("articulation_rate"):
+        out.append("  Speaking rate      %.1f syllables per second while actually speaking"
+                   % d["articulation_rate"])
+    if d.get("wpm"):
+        # 11.5's band, given as context rather than a verdict: it is coaching guidance, not a
+        # measurement of anything about this candidate.
+        out.append("  Words per minute   %.0f   (coaching guidance is usually 120-150)"
+                   % d["wpm"])
+    if d.get("pause_count"):
+        out.append("  Pauses             %d of 200ms or longer" % d["pause_count"])
+        share = d.get("mid_clause_share")
+        if share is not None:
+            out.append("  Where they fell    %d of %d were mid-clause"
+                       % (d["mid_clause_pauses"], d["pause_count"]))
+            out.append("                     Pausing between clauses reads as normal;")
+            out.append("                     pausing inside one reads as hunting for the word.")
+    elif d.get("spoken"):
+        out.append("  Pauses             none of 200ms or longer")
+    out.append("")
+    return out
+
+
 def render(report: Report, questions_asked: int, questions_answered: int,
-           observations=None, question_states=None) -> str:
+           observations=None, question_states=None, delivery=None) -> str:
     totals = report.totals
     if not totals:
         return "No scored questions in this session.\n"
@@ -292,6 +331,8 @@ def render(report: Report, questions_asked: int, questions_answered: int,
         got, n = totals[name]
         out.append("  %-22s %2d/%-2d   %s" % (name, got, n, CRITERIA[name][1]))
     out.append("")
+
+    out.extend(_delivery_lines(delivery or {}))
 
     scored_ids = {q.question_id for q in report.scores}
     cut = [(q, CUT_SHORT[q.closed_because]) for q in (question_states or [])
