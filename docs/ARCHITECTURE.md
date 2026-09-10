@@ -64,6 +64,9 @@ the model's six-action JSON object is advisory input to that orchestrator.
   and the longer ones offered as seek targets.
 - A cap on how long one press-to-talk turn may run, so a microphone left open ends the turn
   the normal way instead of recording until something else stops it.
+- Progress across interviews: the same criteria laid out for every session that has been read,
+  with the denominators kept and deliberately no trend line -- the scores are a model reading
+  and how far two readings of one interview drift has not been measured.
 - The storage disclosure and a working delete. The history page names the real directory, the
   interview and recording counts and the size, and whether anything leaves the machine --
   that last derived from the provider in use, so 9.5's cloud port changes the wording rather
@@ -263,12 +266,13 @@ subprocess rather than trusting the claim.
 
 | Area | Role |
 |---|---|
-| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session, report, answer-audio, storage-disclosure and delete endpoints, the domain-refusal mapping, and the static host for `ui/build` |
+| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session, report, answer-audio, progress, storage-disclosure and delete endpoints, the domain-refusal mapping, and the static host for `ui/build` |
 | [`api/voice.py`](../api/voice.py) | The voice socket at `/api/voice`. Control is JSON, audio is raw int16. Speech is streamed in a task so the receive loop stays free, because a barge-in that cannot be heard until the agent stops talking is not a barge-in |
 | [`ui/static/worklets/mic-capture.js`](../ui/static/worklets/mic-capture.js) | Captures at the device rate and resamples to the 16 kHz the recogniser wants, with an anti-alias filter, off the main thread |
 | [`ui/src/lib/audio/transport.js`](../ui/src/lib/audio/transport.js) | The browser half: capture, the monotonic playback cursor that keeps bursty delivery inaudible, barge-in, and device changes |
 | [`ui/src/lib/audio/voice.svelte.js`](../ui/src/lib/audio/voice.svelte.js) | The phase machine the interview reads: off, idle, listening, tail, reading, thinking, speaking |
 | [`ui/src/lib/VoiceBar.svelte`](../ui/src/lib/VoiceBar.svelte) | The control strip. The state indicator and the talk control are one object, every state carries a text label, and the label is the `aria-live` target |
+| [`ui/src/lib/Progress.svelte`](../ui/src/lib/Progress.svelte) | Criteria across the interviews that have been read. Reads cached reports only, because scoring one is a minutes-long model pass; says how many have not been read |
 | [`ui/src/lib/Playback.svelte`](../ui/src/lib/Playback.svelte) | Answer playback in the report. One audio element for the whole list, so starting one answer stops the last; pauses drawn on the track and the longest offered as jumps |
 | [`ui/src/lib/theme.css`](../ui/src/lib/theme.css) | Every design token. Two rooms, `document` and `studio`, selected by `data-room` on the root element; components read role tokens only, never the raw scale |
 | [`ui/src/lib/live.svelte.js`](../ui/src/lib/live.svelte.js) | Whether a session is on air, shared by the nav strip and the interview so the tally never lags a request behind |

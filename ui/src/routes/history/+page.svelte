@@ -8,6 +8,7 @@
   import Icon from '$lib/Icon.svelte';
   import Playback from '$lib/Playback.svelte';
   import Problem from '$lib/Problem.svelte';
+  import Progress from '$lib/Progress.svelte';
   import { refused, unreachable } from '$lib/problem.js';
 
   let sessions = $state([]);
@@ -18,6 +19,7 @@
   let opened = $state('');
   let showAbandoned = $state(false);
   let storage = $state(null);
+  let progress = $state(null);
   // Which row is asking to be confirmed. One at a time, and cleared by any other
   // action, so an armed button cannot be left lying under a later click.
   let arming = $state('');
@@ -45,6 +47,7 @@
     const got = await call(`/api/sessions?limit=${LIMIT}`);
     if (got) sessions = got;
     storage = await call('/api/storage');
+    progress = await call('/api/progress');
   }
 
   /* 12.9 asks for a working delete button, and the word carrying the weight is
@@ -310,6 +313,8 @@
       <a href="/session">Sit one now.</a>
     </p>
   {:else}
+    <Progress {progress} />
+
     {#each days as group (group.day)}
       <section class="day" aria-label="Interviews on {group.day}">
         <h2 class="slug">{group.day}</h2>

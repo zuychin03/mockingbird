@@ -267,7 +267,7 @@ intentionally ignored by Git.
 ## Status
 
 The text interview, rubric scoring, report, the natural-probing wave and the planner are
-implemented, with 598 automated tests passing. An interview can be planned from a job
+implemented, with 606 automated tests passing. An interview can be planned from a job
 description or from a stock plan, reviewed and edited, saved, and then conducted.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
@@ -366,6 +366,21 @@ of them. It does not seek to a word: that needs an alignment nothing here produc
 one from word position lands about ten seconds out on a ninety-second answer and plays the wrong
 sentence under a cursor that looks exact. Where you stopped is known exactly, so that is what it
 offers.
+
+## Whether you are getting better
+
+The history page lays the same criteria across every interview that has been read, oldest
+first, each cell showing what was met and out of how many.
+
+**There is no trend line, no percentage and no arrow, and that is a decision.** The scores
+come from model extraction, so two readings of one interview need not agree, and how far they
+drift has never been measured here. Until that is known, "up 12%" would be a claim the
+pipeline cannot support, in a report whose whole argument is that the arithmetic is checkable.
+The numbers are laid out with their denominators and you draw your own line.
+
+It reads reports that have already been built, and says how many interviews have not been.
+Scoring one costs a full extraction pass, so sixty of them is hours of model time rather than
+something a page can do while you look at it.
 
 ## Where your interviews are
 

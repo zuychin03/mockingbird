@@ -439,6 +439,81 @@ def session_delete(session_id: str) -> dict:
     return gone
 
 
+def _readable() -> int:
+    """Interviews that could be read, whether or not they have been.
+
+    Shown beside the number that have, because the gap is the actionable part: this page is
+    only as long as the reports someone has actually built, and building one is a minutes-long
+    model pass rather than something a page can do on its own.
+    """
+    n = 0
+    for f in SESSIONS.glob("*/session.json"):
+        try:
+            raw = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if raw.get("status") == "complete" and any(
+                q.get("answers") for q in raw.get("questions") or []):
+            n += 1
+    return n
+
+
+@app.get("/api/progress")
+def progress() -> dict:
+    """The same criteria across every interview that has been read.
+
+    Reads cached reports only. Scoring a session costs a full extraction pass, so rebuilding
+    sixty of them to draw a line would be hours of model time; what this shows is what has
+    already been built, and it says how many that is.
+
+    **No trend, no percentage improved, no arrow.** The scores come from model extraction, so
+    two readings of one interview need not agree, and nothing here has measured by how much.
+    Until that noise floor is known, a number claiming improvement would be a number this
+    cannot support -- so the criteria are laid out with their denominators and the reader draws
+    their own line.
+    """
+    rows = []
+    for f in sorted(SESSIONS.glob("*/report.json")):
+        try:
+            raw = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not raw.get("rubric"):
+            continue
+        rows.append(raw)
+    rows.sort(key=lambda r: r.get("started_at") or "")
+
+    seen: dict[str, dict] = {}
+    for i, raw in enumerate(rows):
+        for c in raw["rubric"]:
+            entry = seen.setdefault(c["name"], {
+                "name": c["name"], "description": c.get("description", ""), "points": []})
+            of = c.get("of") or 0
+            # `at` is the column, and the session it names is `sessions[at]`. Repeating the id
+            # and the date on every point would be the same two facts sixty times over.
+            entry["points"].append({
+                "at": i, "met": c.get("met", 0), "of": of,
+                "rate": round(c.get("met", 0) / of, 3) if of else None,
+            })
+    return {
+        "read": len(rows),
+        "readable": _readable(),
+        "sessions": [{"session_id": r.get("session_id"), "started_at": r.get("started_at")}
+                     for r in rows],
+        # Least consistent first: a criterion that moves is the one worth looking at, and
+        # alphabetical buried it. Ties break on the name so the order is stable.
+        "criteria": sorted(seen.values(),
+                           key=lambda e: (-_spread(e["points"]), e["name"])),
+    }
+
+
+def _spread(points: list[dict]) -> float:
+    """How far a criterion's rate has moved across the readings there are. Ordering only --
+    it is never shown as a figure, because two points cannot support one."""
+    rates = [p["rate"] for p in points if p["rate"] is not None]
+    return max(rates) - min(rates) if len(rates) > 1 else 0.0
+
+
 SESSIONS_SHOWN = 50
 
 

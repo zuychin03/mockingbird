@@ -652,3 +652,112 @@ def test_running_it_yourself_still_reads_as_private(client, monkeypatch, tmp_pat
     got = client.get("/api/storage").json()
     assert got == {**got, "served_remotely": False, "answers_leave": False,
                    "leaves_machine": False, "why_hosted": None}
+
+
+# ------------------------------------------------ the same criteria across interviews
+def _read_session(root, sid, started, rubric, answered=14, scored=10):
+    d = root / sid
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "session.json").write_text(json.dumps({
+        "session_id": sid, "plan_id": "p", "started_at": started, "status": "complete",
+        "plan_snapshot": {"label": "A plan"},
+        "questions": [{"phase": "p1", "question_id": "p1.1", "question": "Why?",
+                       "answers": ["because"]}],
+    }), encoding="utf-8")
+    (d / "report.json").write_text(json.dumps({
+        "session_id": sid, "started_at": started, "label": "A plan", "text": "",
+        "answered": answered, "scored": scored,
+        "rubric": [{"name": k, "label": k, "description": "", "met": m, "of": o}
+                   for k, (m, o) in rubric.items()],
+    }), encoding="utf-8")
+    return d
+
+
+def test_progress_lines_up_the_same_criterion_across_interviews(client, monkeypatch, tmp_path):
+    root = tmp_path / "s"
+    _read_session(root, "20260101-000000-aaaaaa", "2026-01-01T09:00:00",
+                  {"first_person": (3, 6), "describes_action": (9, 10)})
+    _read_session(root, "20260202-000000-bbbbbb", "2026-02-02T09:00:00",
+                  {"first_person": (5, 6), "describes_action": (9, 10)})
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    got = client.get("/api/progress").json()
+    assert got["read"] == 2
+    assert [s["session_id"] for s in got["sessions"]] == [
+        "20260101-000000-aaaaaa", "20260202-000000-bbbbbb"], "oldest first, so a line reads left to right"
+
+    # The one that moved leads: a criterion sitting still is not what to look at.
+    assert got["criteria"][0]["name"] == "first_person"
+    assert [p["met"] for p in got["criteria"][0]["points"]] == [3, 5]
+    assert [p["of"] for p in got["criteria"][0]["points"]] == [6, 6]
+
+
+def test_progress_keeps_the_denominator_on_every_point(client, monkeypatch, tmp_path):
+    """The rubric table already learned this: a rate without its denominator makes a criterion
+    judged on four answers look exactly as settled as one judged on ten."""
+    root = tmp_path / "s"
+    _read_session(root, "20260101-000000-aaaaaa", "2026-01-01T09:00:00", {"c": (1, 1)})
+    _read_session(root, "20260202-000000-bbbbbb", "2026-02-02T09:00:00", {"c": (10, 10)})
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    got = client.get("/api/progress").json()
+    points = got["criteria"][0]["points"]
+    assert [(p["met"], p["of"], p["rate"]) for p in points] == [(1, 1, 1.0), (10, 10, 1.0)]
+    # A point names its column and nothing else: the session it belongs to is `sessions[at]`,
+    # so the id and the date are carried once rather than on all sixty points.
+    assert sorted(points[0]) == ["at", "met", "of", "rate"]
+    assert got["sessions"][points[1]["at"]]["session_id"] == "20260202-000000-bbbbbb"
+
+
+def test_progress_claims_no_improvement_anywhere(client, monkeypatch, tmp_path):
+    """Scores come from model extraction, so two readings of one interview need not agree and
+    nothing has measured by how much. A number claiming improvement would be unsupported."""
+    root = tmp_path / "s"
+    _read_session(root, "20260101-000000-aaaaaa", "2026-01-01T09:00:00", {"c": (2, 10)})
+    _read_session(root, "20260202-000000-bbbbbb", "2026-02-02T09:00:00", {"c": (9, 10)})
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    blob = json.dumps(client.get("/api/progress").json())
+    assert not [w for w in ("trend", "improve", "better", "worse", "delta", "change")
+                if w in blob.lower()]
+
+
+def test_progress_says_how_many_interviews_have_not_been_read(client, monkeypatch, tmp_path):
+    """The gap is the actionable part: this is only as long as the reports that exist, and
+    building one is a minutes-long model pass rather than something a page can do."""
+    root = tmp_path / "s"
+    _read_session(root, "20260101-000000-aaaaaa", "2026-01-01T09:00:00", {"c": (1, 2)})
+    for i in range(3):
+        d = root / ("20260303-00000%d-cccccc" % i)
+        d.mkdir(parents=True)
+        (d / "session.json").write_text(json.dumps({
+            "session_id": d.name, "plan_id": "p", "started_at": "2026-03-03T09:00:00",
+            "status": "complete", "plan_snapshot": {"label": "A plan"},
+            "questions": [{"phase": "p1", "question_id": "p1.1", "question": "Why?",
+                           "answers": ["because"]}],
+        }), encoding="utf-8")
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    got = client.get("/api/progress").json()
+    assert got["read"] == 1 and got["readable"] == 4
+
+
+def test_progress_survives_a_report_written_before_a_field_existed(client, monkeypatch, tmp_path):
+    """The one cached report on this machine predates delivery entirely, and carries no label or
+    description on its criteria. A reader that assumed today's shape would fail on exactly the
+    history it exists to show."""
+    root = tmp_path / "s"
+    d = root / "20260101-000000-aaaaaa"
+    d.mkdir(parents=True)
+    (d / "report.json").write_text(json.dumps({
+        "session_id": d.name, "started_at": "2026-01-01T09:00:00",
+        "rubric": [{"name": "c", "met": 1, "of": 2}],
+    }), encoding="utf-8")
+    (d / "session.json").write_text('{"status": "complete", "questions": []}', encoding="utf-8")
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    got = client.get("/api/progress").json()
+    assert got["read"] == 1
+    assert got["criteria"][0]["name"] == "c"
+    assert got["criteria"][0]["description"] == ""
+    assert got["criteria"][0]["points"] == [{"at": 0, "met": 1, "of": 2, "rate": 0.5}]
