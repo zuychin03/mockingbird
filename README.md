@@ -205,6 +205,8 @@ app/
   embed.py         OPTIONAL local sentence similarity; returns None when absent
   score.py         the rubric, as arithmetic
   report.py        the feedback, and the rules about how it is worded
+  detour.py        the candidate's own questions, answered from documents or declined
+  export.py        one interview as a single file, recordings inside it
   session.py       plan validation and persistence
   bank.py          the curated question bank and its closed competency vocabulary
   planner.py       description -> competencies -> plan; generation, and stock plans
@@ -222,7 +224,8 @@ ui/
   src/lib/audio/   the browser half of the transport, and the phase machine
   src/routes/      the three surfaces: plan, interview, history
   static/fonts/    the three faces, self-hosted so the app renders offline
-config/            interview plans, and the question bank
+config/            interview plans, the question bank, and what the interview may say
+                   about itself (about.md)
 tests/             deterministic unit and integration coverage
 tools/shots.sh     screenshots every surface at both widths, for design review
 ```
@@ -267,7 +270,7 @@ intentionally ignored by Git.
 ## Status
 
 The text interview, rubric scoring, report, the natural-probing wave and the planner are
-implemented, with 606 automated tests passing. An interview can be planned from a job
+implemented, with 657 automated tests passing. An interview can be planned from a job
 description or from a stock plan, reviewed and edited, saved, and then conducted.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
@@ -366,6 +369,48 @@ of them. It does not seek to a word: that needs an alignment nothing here produc
 one from word position lands about ten seconds out on a ninety-second answer and plays the wrong
 sentence under a cursor that looks exact. Where you stopped is known exactly, so that is what it
 offers.
+
+## What a score rests on
+
+Every criterion in the report opens onto the answers that decided it: the question, and the
+candidate's own words where there are any. The three deterministic criteria have none, and say
+so rather than putting our sentence in quotation marks -- `specific_detail` is a regex over the
+answer, and dressing a detection as a quotation would attribute it to the person being scored.
+
+The criteria are also shown **before** the interview, on the plan sheet, with the sections each
+applies to. Being told how you will be judged is ordinary assessment practice, and it is what
+makes the report afterwards something you can argue with rather than something to accept.
+
+## Taking an interview with you
+
+Any report exports as a single HTML file with the recordings embedded in it, or without them
+for one that travels by email, plus a JSON sidecar carrying the same facts without the
+presentation. Everything here is local, so export *is* the sharing mechanism -- there is no
+link to send.
+
+Self-contained is the requirement rather than a nicety: the file fetches no stylesheet, no
+script, no font and no audio, so it opens on a machine that never had Mockingbird installed,
+years after this repository is gone. It carries the quotes behind each score and the exact
+model, quantisation, context length and prompt hash that produced it, because a report that
+cannot say what made it cannot be compared to a later one.
+
+## Questions the candidate asks
+
+The closing phase answers them from documents: the plan for the interview, and one page saying
+what Mockingbird is and is not. Keyword retrieval over a few paragraphs, then one model call
+that is given a single passage and asked to answer from it -- and what comes back is checked
+against that passage before it is said, so an answer that drifts is replaced by the document.
+
+**It declines rather than inventing**, and declining is deterministic. A question nothing in the
+corpus covers never reaches the model. A question about the job — salary, team size, who you
+would report to — retrieves the paragraph that exists to say there is no company here to have an
+answer, and a paragraph marked that way is never composed from: it is retrieved so those
+questions cannot land on whatever else happens to share a word with them, and then the interview
+says it cannot answer for a real employer.
+
+That marker is written in the document, not detected in code. Which questions have no answer is
+an editorial decision, and a rule in Python would have to be kept in step with prose it cannot
+read.
 
 ## Whether you are getting better
 

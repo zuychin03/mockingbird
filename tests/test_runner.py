@@ -625,6 +625,120 @@ def test_the_closing_phase_is_bounded_by_detour_budget(tmp_path):
     assert "detour-budget->advance" in state.turns[-1].guards
 
 
+def _corpus():
+    from app import detour
+    return [detour.Passage("how Mockingbird works", "Deleting an interview",
+                           "The history page has a delete button on every row. It removes that "
+                           "interview's directory, recordings included, and it is not "
+                           "reversible.")]
+
+
+class _Detour(ScriptedProvider):
+    """A provider whose detour composition is scripted, so the closing phase can be driven
+    without a model."""
+
+    def __init__(self, answer):
+        super().__init__([])
+        self.answer = answer
+
+    async def complete(self, system, user, schema=None, max_tokens=400, **kw):
+        from app import detour
+        if schema == detour.SCHEMA:
+            self.prompts.append(user)
+            self.systems.append(system)
+            return Completion(text=json.dumps({"answer": self.answer}))
+        return await super().complete(system, user, schema, max_tokens, **kw)
+
+
+def test_the_closing_phase_answers_from_the_corpus_when_it_can(tmp_path):
+    """Stage 5. `type: user_questions` is "the user asks; the agent answers from retrieval",
+    and until the corpus existed the second half was a note-it-down line."""
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(CLOSING_PLAN)
+    p = _Detour("The history page has a delete button on every row, and it is not reversible.")
+    r = Runner(p, CLOSING_PLAN, state, detour=_corpus())
+    run(r.ask())
+    out = run(r.submit("How do I delete an interview afterwards?"))
+
+    assert "delete button" in out.spoken.text
+    assert "detour-answered" in state.turns[-1].guards
+    # The source is on the record even though it is not spoken.
+    assert any(g.startswith("detour-source:how Mockingbird works")
+               for g in state.turns[-1].guards)
+
+
+def test_the_detour_never_enters_the_prompt_the_turn_decision_reads(tmp_path):
+    """Rec 8's cache lineage, and it is structural rather than remembered: a retrieved passage
+    in the interview's history invalidates the prefix cache and the next turn pays a full
+    re-prefill. Nothing the detour produces reaches `answers_this_question`, which is what
+    `close_question` hands to the history."""
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(CLOSING_PLAN)
+    p = _Detour("The history page has a delete button on every row.")
+    r = Runner(p, CLOSING_PLAN, state, detour=_corpus())
+    run(r.ask())
+    run(r.submit("How do I delete an interview afterwards?"))
+
+    assert r.answers_this_question == []
+    assert "delete button" not in r.history.source_text()
+    assert r.history._completed == []
+
+
+def test_a_question_the_corpus_cannot_answer_keeps_the_line_that_declines(tmp_path):
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(CLOSING_PLAN)
+    p = _Detour("I would happily invent a team size.")
+    r = Runner(p, CLOSING_PLAN, state, detour=_corpus())
+    run(r.ask())
+    out = run(r.submit("What is the weather like in Hanoi?"))
+
+    assert "can't answer for a real employer" in out.spoken.text
+    assert "candidate-question->noted" in state.turns[-1].guards
+    assert p.prompts == [], "the model was asked about something the corpus cannot answer"
+
+
+def test_no_corpus_is_the_kill_switch_and_restores_the_previous_line(tmp_path):
+    """FR-32 asks every subsystem for a switch that restores the previous behaviour exactly.
+    An absent corpus is it, and there is no second path to keep in step."""
+    r, state = build_closing(tmp_path)
+    run(r.ask())
+    out = run(r.submit("How do I delete an interview afterwards?"))
+    assert "can't answer for a real employer" in out.spoken.text
+    assert "candidate-question->noted" in state.turns[-1].guards
+
+
+def test_a_detour_that_fails_declines_rather_than_ending_the_interview(tmp_path):
+    """An interview that dies because a paragraph could not be composed is a considerably
+    worse product than one that says it cannot answer."""
+    from app.provider import ProviderError
+
+    class Down(_Detour):
+        async def complete(self, system, user, schema=None, max_tokens=400, **kw):
+            from app import detour
+            if schema == detour.SCHEMA:
+                raise ProviderError("LM Studio is not answering")
+            return await ScriptedProvider.complete(self, system, user, schema, max_tokens, **kw)
+
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(CLOSING_PLAN)
+    r = Runner(Down(""), CLOSING_PLAN, state, detour=_corpus())
+    run(r.ask())
+    out = run(r.submit("How do I delete an interview afterwards?"))
+    assert "can't answer for a real employer" in out.spoken.text
+
+
+def test_an_answered_question_still_invites_the_next_one(tmp_path):
+    """The decline ends by asking for another. An answer does not, and without it the room
+    goes quiet on a candidate who was just told to ask."""
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(CLOSING_PLAN)
+    p = _Detour("The history page has a delete button on every row.")
+    r = Runner(p, CLOSING_PLAN, state, detour=_corpus())
+    run(r.ask())
+    out = run(r.submit("How do I delete an interview afterwards?"))
+    assert out.spoken.text.rstrip().endswith("Anything else?")
+
+
 def test_what_the_candidate_asked_is_kept_apart_from_what_they_answered(tmp_path):
     r, state = build_closing(tmp_path)
     run(r.ask())

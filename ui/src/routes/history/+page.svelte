@@ -74,6 +74,9 @@
     building = id;
     opened = id;
     report = null;
+    // Criteria are per report. Left set, opening a second interview shows an expanded row
+    // whose evidence belongs to the first one read.
+    expanded = null;
     // Before the request can fail, not after: on success this is the shareable address of
     // the report, and on failure it is what stops the deep-link effect seeing a URL that
     // disagrees with `opened` and starting the whole build again. The API caches a built
@@ -183,6 +186,31 @@
 
   const title = (s) => s.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const dashes = (s) => s.replace(/ -- /g, ' - ');
+
+  /* 12.9's third layer: a criterion links to the answer that decided it.
+   *
+   * **Opened, not hovered.** 12.9 says hover, which reaches neither a keyboard nor a phone,
+   * and the evidence for a criterion is several answers rather than one span to light up.
+   * A row that opens shows all of them and is reachable every way in.
+   *
+   * A report cached before this existed has rows with no `evidence` key, and its `label` is
+   * the observation field the criterion reads -- "action", not "Says what they did". Both
+   * arrived in the same generation, so one test covers both: an old row keeps its own name
+   * and opens nothing. Rebuilding it instead would put a GPU between the candidate and a
+   * report they have already been given. */
+  const detailed = (c) => Array.isArray(c.evidence) && c.evidence.length > 0;
+  const heading = (c) => (detailed(c) && c.label ? c.label : title(c.name));
+
+  let expanded = $state(null);
+  const toggle = (name) => (expanded = expanded === name ? null : name);
+
+  function says(e) {
+    if (e.quote) return null;
+    // Never inside quotation marks. The deterministic criteria are detections, and printing
+    // our own sentence as theirs is the one thing an evidence panel must not do.
+    return e.met ? 'Detected in this answer. No quote: this one is measured, not extracted.'
+                 : 'Not found in this answer.';
+  }
 
   /** Does this section just print the numbers the rubric already carries as data? */
   function isRubric(s) {
@@ -385,6 +413,15 @@
           <span class="sep">·</span>{report.answered} answered
           <span class="sep">·</span>{report.scored} scored
         </p>
+        <!-- 12.9: export is the sharing mechanism, because nothing here has a link to send.
+             Plain anchors, so the browser downloads them without this page holding the bytes.
+             The recordings make the first one large, which is why the second exists. -->
+        <p class="takeaway">
+          Take it with you:
+          <a href="/api/sessions/{opened}/export.html" download>one file, recordings inside</a>
+          <a href="/api/sessions/{opened}/export.html?audio=false" download>without the audio</a>
+          <a href="/api/sessions/{opened}/export.json" download>as data</a>
+        </p>
       </header>
 
       {#each shown as s}
@@ -399,18 +436,60 @@
             <table class="rubric">
               <tbody>
                 {#each rubric as c}
-                  <tr>
-                    <th scope="row">{title(c.name)}</th>
+                  <tr class:open={expanded === c.name}>
+                    <th scope="row">
+                      {#if detailed(c)}
+                        <button
+                          class="crit"
+                          aria-expanded={expanded === c.name}
+                          onclick={() => toggle(c.name)}
+                        >
+                          {heading(c)}
+                          <span class="cue" aria-hidden="true">{expanded === c.name ? '−' : '+'}</span>
+                        </button>
+                      {:else}
+                        {heading(c)}
+                      {/if}
+                    </th>
                     <td class="ticks">
+                      <!-- One mark per answer, in the order they were given. Filling the first
+                           `met` of them by count drew an order that was not real: it put every
+                           miss at the end of the interview. -->
                       <span class="marks" aria-hidden="true">
-                        {#each { length: c.of } as _, i}
-                          <span class="tick" class:met={i < c.met}></span>
-                        {/each}
+                        {#if detailed(c)}
+                          {#each c.evidence as e (e.question_id)}
+                            <span class="tick" class:met={e.met} title={e.question}></span>
+                          {/each}
+                        {:else}
+                          {#each { length: c.of } as _, i}
+                            <span class="tick" class:met={i < c.met}></span>
+                          {/each}
+                        {/if}
                       </span>
                       <span class="num count">{c.met}<span class="of">/{c.of}</span></span>
                     </td>
                     <td class="desc">{dashes(c.description)}</td>
                   </tr>
+
+                  {#if expanded === c.name}
+                    <tr class="evidence">
+                      <td colspan="3">
+                        <p class="why">What this rests on, answer by answer.</p>
+                        <ol>
+                          {#each c.evidence as e (e.question_id)}
+                            <li class:met={e.met}>
+                              <span class="asked">{e.question}</span>
+                              {#if e.quote}
+                                <q>{dashes(e.quote)}</q>
+                              {:else}
+                                <span class="none">{says(e)}</span>
+                              {/if}
+                            </li>
+                          {/each}
+                        </ol>
+                      </td>
+                    </tr>
+                  {/if}
                 {/each}
               </tbody>
             </table>
@@ -735,6 +814,32 @@
     color: var(--fg-faint);
   }
 
+  .takeaway {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s-2) var(--s-3);
+    margin-top: var(--s-3);
+    font-size: var(--step--2);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    font-family: var(--font-structure);
+  }
+  .takeaway a {
+    color: var(--fg-quiet);
+    text-decoration: none;
+    border-bottom: 1px solid var(--rule-strong);
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: var(--step--1);
+  }
+  .takeaway a:hover,
+  .takeaway a:focus-visible {
+    color: var(--signal);
+    border-bottom-color: var(--signal);
+  }
+
   .report section {
     margin-top: var(--s-6);
   }
@@ -837,6 +942,79 @@
   .desc {
     color: var(--fg-quiet);
     font-size: var(--step--1);
+  }
+
+  /* The criterion is the control. A separate affordance beside it would read as a second
+     thing to do on a row that only does one. */
+  .crit {
+    font: inherit;
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--s-2);
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+  }
+  .crit:hover,
+  .crit:focus-visible {
+    color: var(--signal);
+  }
+  .cue {
+    font-family: var(--font-data);
+    font-size: var(--step--2);
+    color: var(--fg-faint);
+  }
+  .rubric tr.open {
+    border-bottom-color: transparent;
+  }
+
+  .evidence td {
+    padding: 0 0 var(--s-4);
+  }
+  .evidence .why {
+    margin: 0 0 var(--s-2);
+    font-size: var(--step--2);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+  }
+  .evidence ol {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s-3);
+  }
+  /* The rail carries the judgement, so a met and a missed answer are told apart without
+     colour and without a word for it. */
+  .evidence li {
+    border-left: 2px solid var(--rule-strong);
+    padding-left: var(--s-3);
+    max-width: var(--measure);
+  }
+  .evidence li.met {
+    border-left-color: var(--fg);
+  }
+  .evidence .asked {
+    display: block;
+    font-size: var(--step--2);
+    color: var(--fg-faint);
+  }
+  .evidence q {
+    display: block;
+    margin-top: 2px;
+    font-size: var(--step--1);
+    line-height: 1.6;
+  }
+  .evidence .none {
+    display: block;
+    margin-top: 2px;
+    font-size: var(--step--1);
+    color: var(--fg-quiet);
   }
 
   .report footer {

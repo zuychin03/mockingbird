@@ -23,9 +23,10 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from . import budget, contract, direction, focus, guards, intent, result_check, session
+from . import (budget, contract, detour as detour_mod, direction, focus, guards, intent,
+               result_check, session)
 from .history import History
-from .provider import Completion, Provider
+from .provider import Completion, Provider, ProviderError
 
 # `clarify` deliberately does not consume the follow-up budget (section 6.3), which leaves
 # the loop with no way to terminate if the model keeps choosing it. Observed live: two
@@ -133,6 +134,8 @@ ANSWER_PART_MIN_WORDS = 8
 # larger change; until then the line does not say it.
 QUESTION_NOTED = ("I can't answer for a real employer, so rather than invent something I've "
                   "noted it down with your session. Anything else?")
+# The invitation on its own, for the answers that do not already carry one (stage 5).
+ANYTHING_ELSE = "Anything else?"
 CLOSING_ACK = "Thanks -- that's everything from me."
 # Answer to "did you mean A or B?" when both are the candidate's own examples. The second
 # clause covers the design question, where naming the assumption IS the answer.
@@ -268,8 +271,14 @@ class Runner:
                  pool: int | None = None, pace: bool = True,
                  observe_fn: Callable[[str, str, str], Awaitable] | None = None,
                  max_say_words: int | None = MAX_SAY_WORDS,
-                 similarity: Callable[[str, str], float | None] | None = None):
+                 similarity: Callable[[str, str], float | None] | None = None,
+                 detour: list | None = None):
         self.max_say_words = max_say_words
+        # Stage 5's corpus, or None for the behaviour that shipped before it: note the question
+        # and move on. FR-32 asks every subsystem for a kill switch restoring the previous
+        # behaviour exactly, and an absent corpus IS that switch -- there is no second path to
+        # keep in step, because the decline is the same line it always was.
+        self.detour = detour or None
         # `observe_fn` turns one answer into an Observation. Injected rather than imported so
         # the runner keeps no dependency on the Stage 2 extractor, and so a test can drive the
         # stop rule without a model. None disables the adaptive stop and leaves the cap alone,
@@ -479,23 +488,58 @@ class Runner:
         }
         return (checked.say if rejection is None else None), attempt, checked.applied
 
-    def _user_questions_turn(self, utterance: str, q: dict) -> TurnOutcome:
-        """The closing phase. Costs no model call and produces no score.
+    async def _detour_answer(self, utterance: str) -> tuple[str, list[str]]:
+        """Answer the candidate's question from the corpus, or decline (stage 5, rec 8).
+
+        What comes back is SPOKEN and nothing else. It never joins `answers_this_question`, so
+        it cannot reach the extractor or the rubric, and it never joins the history the turn
+        prompt renders -- which is what keeps the detour on its own cache lineage instead of
+        making the next turn re-prefill.
+
+        A failure here declines. The corpus is a convenience; an interview that dies because a
+        paragraph could not be read would be a considerably worse product than one that says
+        it cannot answer.
+        """
+        if not self.detour:
+            return QUESTION_NOTED, ["candidate-question->noted"]
+        try:
+            got = await detour_mod.answer(self.provider, utterance, self.detour)
+        except (ProviderError, ValueError, KeyError, OSError):
+            got = None
+        if got is None:
+            return QUESTION_NOTED, ["candidate-question->noted"]
+        said, cite = got
+        # The source is recorded rather than spoken. Saying "from the plan for this interview"
+        # aloud before every answer reads as a machine reciting its sources, but a reply with
+        # no recoverable origin is exactly the unaudited claim this product avoids everywhere
+        # else, so it goes on the decision record instead of into the room.
+        return said, ["detour-answered", "detour-source:%s" % cite]
+
+    async def _user_questions_turn(self, utterance: str, q: dict) -> TurnOutcome:
+        """The closing phase. Produces no score, and with no corpus makes no model call.
 
         `detour_budget` bounds it, which is the first time that field has had a consumer:
         it was configured on every phase and read by nothing.
+
+        The looser predicate is the right one HERE and nowhere else: they were just asked what
+        they would like to know, so there is no answer for a false positive to deflect, and a
+        question about this product rather than about the role is still a question.
         """
-        if direction.is_candidate_question(utterance):
+        if direction.asks_anything(utterance):
             # Onto `questions_asked` and NOT onto `answers_this_question`. The transcript
             # still has the utterance verbatim; what the two lists separate is what the
             # report may treat as an answer.
             self.questions_asked.append(utterance)
+            said, applied = await self._detour_answer(utterance)
             if len(self.questions_asked) >= q.get("detour_budget", 0):
-                g = guards.Guarded("advance", QUESTION_NOTED + " " + CLOSING_ACK, False, "",
-                                   ["candidate-question->noted", "detour-budget->advance"])
+                g = guards.Guarded("advance", said + " " + CLOSING_ACK, False, "",
+                                   applied + ["detour-budget->advance"])
             else:
-                g = guards.Guarded("clarify", QUESTION_NOTED, False, "",
-                                   ["candidate-question->noted"])
+                # The decline already ends by inviting another; an answer does not, and
+                # without it the room goes quiet on a candidate who was told to ask.
+                if "detour-answered" in applied:
+                    said += " " + ANYTHING_ELSE
+                g = guards.Guarded("clarify", said, False, "", applied)
             return self._dispatch(g, utterance, Completion(text=""))
 
         if guards.user_asked_to_stop(utterance):
@@ -606,11 +650,12 @@ class Runner:
             self.answers_this_question.append(utterance)
             return self._dispatch(g, utterance, Completion(text=""))
 
-        # A user-questions phase is the candidate's turn to ask, so it does not go through
-        # the model at all: there is no probe to write and nothing to score. The generic loop
-        # used to run it, which captured their questions into `ask` and advanced past them.
+        # A user-questions phase is the candidate's turn to ask, so it does not go through the
+        # turn contract at all: there is no probe to write and nothing to score. The generic
+        # loop used to run it, which captured their questions into `ask` and advanced past
+        # them. With a corpus it makes one call of its own, on its own prompt (stage 5).
         if q.get("type") == "user_questions":
-            return self._user_questions_turn(utterance, q)
+            return await self._user_questions_turn(utterance, q)
 
         # Direction of talk, before focus, extraction and budget -- all three of which
         # treated a candidate's question as evidence for the question it interrupted.

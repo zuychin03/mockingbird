@@ -153,3 +153,24 @@ def is_candidate_question(utterance: str) -> bool:
 
     # Narrative in the asking part means they are recounting, not enquiring.
     return not NARRATIVE.search(scope)
+
+
+def asks_anything(utterance: str) -> bool:
+    """Any question at all, for the phase whose whole purpose is the candidate asking.
+
+    `is_candidate_question` is conservative on purpose, and the reason it gives is that a false
+    positive mid-interview deflects a real answer. Inside a `user_questions` phase there is no
+    answer to deflect: they have just been asked what they would like to know, so a question
+    mark is an enquiry and does not have to prove it by naming the team or the role.
+
+    That mattered the moment the phase could answer from documents (stage 5). "How do I delete
+    this afterwards?" carries no hiring-context marker, so the strict predicate read it as the
+    candidate being finished and the interview thanked them and closed.
+
+    Still not a question: a request to stop, which is a control utterance, and a request to
+    repeat, which is about the interview's own last line rather than anything they want to know.
+    """
+    text = utterance or ""
+    if CLARIFYING.search(text) or intent.asked_to_stop(text):
+        return False
+    return any(s.rstrip().endswith("?") for s in sentences(text))

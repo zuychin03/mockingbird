@@ -41,6 +41,34 @@ def test_a_stock_plan_can_be_started_without_a_model(started):
     assert started["stock_kinds"] == ["behavioural", "mixed", "technical"]
 
 
+def test_the_sheet_can_say_how_answers_will_be_scored_before_anyone_sits_it(started):
+    """12.9 wants the rubric on the way in. A report is only arguable if the person being
+    scored was told the criteria first."""
+    names = [c["name"] for c in started["rubric"]]
+    assert "sets_context" in names
+    assert all(c["label"] and c["description"] for c in started["rubric"])
+    # The plan's own wording, not the extractor's field name.
+    assert next(c for c in started["rubric"] if c["name"] == "sets_context")["label"] \
+        == "Sets the scene"
+
+
+def test_only_criteria_a_phase_declares_are_promised(started, client):
+    """The plan's rubric block lists more than any one interview applies -- `weighs_options`
+    and `technical_depth` are shown-not-scored (7.36). Listing those before the session would
+    promise a judgement that never happens."""
+    declared = {n for ph in started["phases"] for n in ph["criteria"]}
+    assert {c["name"] for c in started["rubric"]} == declared
+    assert "technical_depth" not in declared
+
+    # And each one says where it applies, so an unscored phase cannot be mistaken for scored.
+    for c in started["rubric"]:
+        assert c["phases"] and all(p in declared_phases(started) for p in c["phases"])
+
+
+def declared_phases(state):
+    return {ph["id"] for ph in state["phases"]}
+
+
 def test_the_ui_is_told_which_phases_it_may_edit(started):
     ids = {ph["id"]: ph["editable"] for ph in started["phases"]}
     assert ids["warmup"] is False and ids["closing"] is False
@@ -405,6 +433,108 @@ def test_refresh_forces_a_rebuild(client, monkeypatch, tmp_path):
     assert not calls, "served from cache without refresh"
     client.get("/api/sessions/20260101-000000-cache3/report?refresh=true")
     assert calls, "refresh=true did not rebuild"
+
+
+# ------------------------------------------------- 12.9's third layer: what the count rests on
+
+def _scored_session(root, sid="20260101-000000-quoted"):
+    """One answer, one scored phase. Enough for a rubric row to have evidence under it."""
+    d = root / sid
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "session.json").write_text(json.dumps({
+        "session_id": sid, "plan_id": "p", "started_at": "2026-01-01T00:00:00",
+        "status": "complete",
+        "plan_snapshot": {
+            "label": "A plan",
+            "rubric": {"sets_context": {"label": "Sets the scene"},
+                       "specific_detail": {"label": "Concrete rather than general"}},
+            "phases": [{"id": "behavioural_core",
+                        "rubric_criteria": ["sets_context", "specific_detail"],
+                        "questions": ["Tell me about a time you fixed something slow?"]}],
+        },
+        "questions": [{"phase": "behavioural_core", "question_id": "behavioural_core.1",
+                       "question": "Tell me about a time you fixed something slow?",
+                       "answers": ["We ran checkout on four boxes and it took eight seconds."]}],
+    }), encoding="utf-8")
+    return d
+
+
+@pytest.fixture()
+def scored(client, monkeypatch, tmp_path):
+    """The extractor is stubbed: what is under test is what the API does with an observation,
+    not whether the model produces one."""
+    from app import observe as observe_mod
+
+    root = tmp_path / "s"
+    _scored_session(root)
+    monkeypatch.setattr(api, "SESSIONS", root)
+
+    async def canned(provider, qid, question, answers):
+        return observe_mod.Observation(
+            question_id=qid, question=question, answers=list(answers),
+            situation="We ran checkout on four boxes",
+            action="", result="", specific_detail=True)
+
+    monkeypatch.setattr(api.observe, "observe", canned)
+    return client.get("/api/sessions/20260101-000000-quoted/report").json()
+
+
+def test_every_criterion_names_the_answers_behind_its_count(scored):
+    """12.9's third layer. A count with nothing under it has to be taken on trust, which is
+    the one thing a report built on model extraction has not earned."""
+    rows = {c["name"]: c for c in scored["rubric"]}
+    assert set(rows) == {"sets_context", "specific_detail"}
+    for row in rows.values():
+        assert len(row["evidence"]) == row["of"], "a row counted answers it did not name"
+        assert sum(e["met"] for e in row["evidence"]) == row["met"]
+
+
+def test_an_extracted_criterion_carries_the_candidates_words(scored):
+    got = next(c for c in scored["rubric"] if c["name"] == "sets_context")
+    assert got["evidence"][0]["quote"] == "We ran checkout on four boxes"
+    assert got["evidence"][0]["question_id"] == "behavioural_core.1"
+
+
+def test_a_deterministic_criterion_offers_no_quote_at_all(scored):
+    """`specific_detail` is a regex detection, not an extraction. `report._quote` refuses to
+    print "found in the answer" inside quotation marks for exactly this reason: it would
+    attribute our own sentence to the candidate."""
+    got = next(c for c in scored["rubric"] if c["name"] == "specific_detail")
+    assert got["met"] == 1
+    assert got["evidence"][0]["quote"] is None
+
+
+def test_the_rubric_row_is_labelled_from_the_plan_not_the_observation_field(scored):
+    """`score.CRITERIA[name][0]` is the field the criterion reads. Sent as `label` it put
+    "situation" on the row, which is the extractor's vocabulary, not the candidate's."""
+    got = next(c for c in scored["rubric"] if c["name"] == "sets_context")
+    assert got["label"] == "Sets the scene"
+    assert got["description"] == "said where, what system, or what the constraint was"
+
+
+def test_an_interview_can_be_taken_away_as_one_file(scored, client):
+    """12.9 makes export the sharing mechanism: everything is local, so there is no link to
+    send. The file has to stand on its own."""
+    r = client.get("/api/sessions/20260101-000000-quoted/export.html")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "attachment" in r.headers["content-disposition"]
+    assert "2026-01-01" in r.headers["content-disposition"]
+    assert "We ran checkout on four boxes" in r.text
+
+
+def test_the_sidecar_is_served_beside_it(scored, client):
+    r = client.get("/api/sessions/20260101-000000-quoted/export.json")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["session_id"] == "20260101-000000-quoted"
+    assert [c["name"] for c in body["rubric"]] == ["sets_context", "specific_detail"]
+
+
+def test_exporting_an_unknown_session_is_a_404(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "SESSIONS", tmp_path)
+    assert client.get("/api/sessions/nope/export.html").status_code == 404
+    assert client.get("/api/sessions/nope/export.json").status_code == 404
 
 
 # ------------------------------------------------- the answer's recording

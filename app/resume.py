@@ -58,7 +58,7 @@ def snapshot(r: Runner) -> dict[str, Any]:
 
 
 def restore(provider, plan: dict | None, data: dict, *, observe_fn=None,
-            similarity=None) -> Runner:
+            similarity=None, detour_for=None) -> Runner:
     """`plan` may be None for any snapshot that carries its own, which is all of them written
     since the plan was embedded. It is still accepted so a caller can resume an older file."""
     plan = plan if plan is not None else data["plan"]
@@ -67,8 +67,11 @@ def restore(provider, plan: dict | None, data: dict, *, observe_fn=None,
     state.turns = [sess.Turn(**t) for t in data["turns"]]
     state.questions = [sess.QuestionState(**q) for q in data["questions"]]
 
+    # The stage 5 corpus is rebuilt from the plan rather than stored, so a caller passes
+    # the builder and not the result: a snapshot of the passages would pin an edited
+    # policy document to whatever it said when the session started.
     r = Runner(provider, plan, state, pool=data["pool"], observe_fn=observe_fn,
-               similarity=similarity)
+               similarity=similarity, detour=detour_for(plan) if detour_for else None)
     for name in FIELDS:
         setattr(r, name, data[name])
     for name in SET_FIELDS:
@@ -89,6 +92,6 @@ def write(r: Runner, path: str | Path) -> None:
 
 
 def read(provider, plan: dict | None, path: str | Path, *, observe_fn=None,
-         similarity=None) -> Runner:
+         similarity=None, detour_for=None) -> Runner:
     return restore(provider, plan, json.loads(Path(path).read_text(encoding="utf-8")),
-                   observe_fn=observe_fn, similarity=similarity)
+                   observe_fn=observe_fn, similarity=similarity, detour_for=detour_for)

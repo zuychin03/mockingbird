@@ -49,8 +49,11 @@ def test_every_field_the_runner_carries_between_turns_is_persisted(tmp_path):
     belongs in the exemption list with a reason someone can read.
     """
     exempt = {
-        # Injected dependencies, supplied fresh on every restore.
-        "provider", "plan", "state", "observe_fn", "similarity", "history",
+        # Injected dependencies, supplied fresh on every restore. `detour` is one of them on
+        # purpose: it is derived from the plan and a document on disk, and a snapshot would pin
+        # an edited policy page to whatever it said when the session started. That it really
+        # does arrive back is pinned by `test_a_resumed_session_keeps_its_corpus`.
+        "provider", "plan", "state", "observe_fn", "similarity", "history", "detour",
         # Derived from the plan or the state, never independently mutated.
         "questions", "pace", "max_say_words",
         # A live asyncio task. It cannot cross a process and is re-created by the next turn.

@@ -123,6 +123,16 @@
   const total = $derived(rows.reduce((t, r) => t + r.phase.secs, 0));
   const proposals = $derived(plan?.proposals ?? []);
 
+  // Only what a phase actually declares. The plan's rubric block lists more than any one
+  // interview applies, and showing those would promise a judgement that never happens.
+  const scoring = $derived(plan?.rubric ?? []);
+  const unscoredPhases = $derived(
+    (plan?.phases ?? []).filter((p) => !p.criteria?.length).map((p) => p.id.replace(/_/g, ' '))
+  );
+
+  const list = (xs) =>
+    xs.length < 2 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs.at(-1)}`;
+
   $effect(() => {
     load();
   });
@@ -383,6 +393,31 @@
             </button>
           </div>
         {/each}
+      </section>
+    {/if}
+
+    <!-- 12.9: said before the interview, not only after it. Telling someone how they will be
+         judged is ordinary assessment practice, and it is what makes the report afterwards
+         something they can argue with rather than something to accept. -->
+    {#if scoring.length}
+      <section class="block scoring">
+        <h2>How the answers are scored</h2>
+        <p class="note">
+          Each of these is a fact about what you said, checked against the answer itself. The
+          report names the answer behind every one of them, so you can disagree with it.
+          {#if unscoredPhases.length}
+            Nothing in {list(unscoredPhases)} is scored.
+          {/if}
+        </p>
+        <dl class="criteria">
+          {#each scoring as c}
+            <div>
+              <dt>{c.label}</dt>
+              <dd>{c.description}</dd>
+              <dd class="where">{list(c.phases.map((p) => p.replace(/_/g, ' ')))}</dd>
+            </div>
+          {/each}
+        </dl>
       </section>
     {/if}
 
@@ -664,6 +699,36 @@
     font-size: var(--step--1);
     max-width: var(--measure);
     margin-top: var(--s-3);
+  }
+
+  /* Two columns where there is room, one where there is not. Six criteria in a single column
+     push the button that starts the interview off the sheet. */
+  .criteria {
+    margin: var(--s-4) 0 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: var(--s-4) var(--s-5);
+  }
+  .criteria > div {
+    border-top: 1px solid var(--rule);
+    padding-top: var(--s-2);
+  }
+  .criteria dt {
+    font-family: var(--font-structure);
+    font-size: var(--step--1);
+    font-weight: 500;
+  }
+  .criteria dd {
+    margin: 2px 0 0;
+    font-size: var(--step--1);
+    color: var(--fg-quiet);
+    line-height: 1.5;
+  }
+  .criteria .where {
+    font-family: var(--font-data);
+    font-size: var(--step--2);
+    letter-spacing: 0.04em;
+    color: var(--fg-faint);
   }
 
   .reqs {

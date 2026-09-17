@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,7 +31,8 @@ sys.path.insert(0, str(ROOT))
 
 from api import voice  # noqa: E402
 from app import bank as bank_mod  # noqa: E402
-from app import (contract, embed, observe, planner, provenance,  # noqa: E402
+from app import (contract, detour as detour_mod, embed,  # noqa: E402
+                 export as export_mod, observe, planner, provenance,
                  provider as prov, report as report_mod, resume, review,
                  score as score_mod, session as sess)
 
@@ -52,6 +53,34 @@ def _draft() -> review.Draft:
     if not DRAFT.exists():
         raise HTTPException(404, "no draft in progress")
     return review.read_draft(DRAFT, _bank())
+
+
+def _rubric_preview(plan: dict) -> list[dict]:
+    """How answers will be scored, for the sheet to show before anyone sits the interview.
+
+    12.9 asks for this on the way in, not only in the report. Saying up front how someone will
+    be judged is ordinary assessment practice, and it is what makes the report arguable
+    afterwards instead of something to be taken on trust.
+
+    Only criteria a phase actually declares appear. The plan's rubric block lists more than any
+    one interview applies -- several are shown-not-scored -- and listing those here would
+    promise a judgement that never happens.
+    """
+    labels = plan.get("rubric") or {}
+    order: list[str] = []
+    where: dict[str, list[str]] = {}
+    for ph in plan.get("phases", []):
+        for name in ph.get("rubric_criteria") or []:
+            if name not in where:
+                order.append(name)
+                where[name] = []
+            where[name].append(ph["id"])
+    return [{
+        "name": name,
+        "label": (labels.get(name) or {}).get("label") or name.replace("_", " "),
+        "description": score_mod.CRITERIA.get(name, (None, ""))[1],
+        "phases": where[name],
+    } for name in order]
 
 
 def _state(d: review.Draft) -> dict:
@@ -91,6 +120,7 @@ def _state(d: review.Draft) -> dict:
                       for q in d.proposals],
         "competencies": d.bank.competencies,
         "stock_kinds": sorted(planner.STOCK),
+        "rubric": _rubric_preview(d.plan),
     }
 
 
@@ -188,6 +218,18 @@ def _extractor(p):
     return fn
 
 
+def _detour(plan: dict) -> list:
+    """Stage 5's corpus: the plan, the description it was read from, and the policy document.
+
+    FR-32 wants every subsystem to have a kill switch that restores the previous behaviour
+    exactly. An empty corpus is that switch -- `_user_questions_turn` falls back to the line it
+    always said, because there is no second code path to keep in step.
+    """
+    if os.environ.get("MOCKINGBIRD_NO_DETOUR"):
+        return []
+    return detour_mod.corpus(plan)
+
+
 def _runner():
     """The snapshot carries its own plan, so nothing here has to know which one was running.
     A session started by the terminal harness resumes here and vice versa."""
@@ -196,7 +238,7 @@ def _runner():
     p = prov.LMStudio()
     try:
         return resume.read(p, None, LIVE, observe_fn=_extractor(p),
-                           similarity=embed.similarity)
+                           similarity=embed.similarity, detour_for=_detour)
     except KeyError as e:
         raise HTTPException(
             409, "this session predates the self-describing snapshot and cannot be resumed "
@@ -287,7 +329,8 @@ async def session_start(plan_path: str = Body(..., embed=True)) -> dict:
             503, "%s is not loaded under that exact identifier in LM Studio" % prov.MODEL)
     state = sess.new_session(plan, provenance.snapshot(model))
     p = prov.LMStudio()
-    r = resume.Runner(p, plan, state, observe_fn=_extractor(p), similarity=embed.similarity)
+    r = resume.Runner(p, plan, state, observe_fn=_extractor(p), similarity=embed.similarity,
+                      detour=_detour(plan))
     LIVE.parent.mkdir(parents=True, exist_ok=True)
     # Called for the effect, not the text: `ask` is the only place the rolling history
     # refreshes, and `_pending` derives the line to show.
@@ -629,6 +672,36 @@ def session_audio(session_id: str, name: str) -> FileResponse:
     return FileResponse(target, media_type="audio/wav")
 
 
+def _rubric(rep: score_mod.Report, plan: dict) -> list[dict]:
+    """The rubric as data, each criterion carrying the answers that decided it.
+
+    12.9's third layer wants a criterion judgement to name the span of the answer that drove
+    it. `score.py` has recorded one per question all along and nothing was sending it, so the
+    surface could show 4/6 and never what the four rest on -- which is the half of a scored
+    report that makes it disputable rather than authoritative.
+
+    `quote` is null where there is none. The deterministic criteria are detections rather than
+    extractions, and putting "found in the answer" inside quotation marks would attribute our
+    own sentence to the candidate. `report._quote` draws the same line for the text renderer.
+    """
+    labels = plan.get("rubric") or {}
+    return [{
+        "name": name,
+        # The plan's own wording. `score.CRITERIA[name][0]` is the observation field the
+        # criterion reads, not a label, and sending it put "situation" on the row.
+        "label": (labels.get(name) or {}).get("label") or name.replace("_", " "),
+        "description": score_mod.CRITERIA[name][1],
+        "met": met,
+        "of": of,
+        "evidence": [{
+            "question_id": qs.question_id,
+            "question": qs.question,
+            "met": qs.met[name],
+            "quote": qs.evidence.get(name) if name in qs.quoted else None,
+        } for qs in rep.scores if name in qs.met],
+    } for name, (met, of) in sorted(rep.totals.items())]
+
+
 @app.get("/api/sessions/{session_id}/report")
 async def session_report(session_id: str, refresh: bool = False) -> dict:
     """Extraction and scoring run here, not during the interview. They are offline work by
@@ -688,16 +761,65 @@ async def session_report(session_id: str, refresh: bool = False) -> dict:
         "scored": len(rep.scores),
         "asked": len(states),
         "answered": sum(1 for q in states if q.answers),
-        # The rubric as data, so the report can be laid out rather than printed. The labels
-        # live in `score.CRITERIA` and are the same strings the text renderer uses; sending
-        # them keeps one wording, not two that drift.
-        "rubric": [{"name": k, "label": score_mod.CRITERIA[k][0],
-                    "description": score_mod.CRITERIA[k][1], "met": m, "of": n}
-                   for k, (m, n) in sorted(rep.totals.items())],
+        # The rubric as data, so the report can be laid out rather than printed, and each row
+        # naming the answers behind its count.
+        "rubric": _rubric(rep, plan),
         # Sent as data as well as prose so 12.9's surface can lay it out per answer, and
         # never merged into `rubric`: FR-36 keeps delivery out of the score.
         "delivery": spoken,
     })
+
+
+def _recorded_turns(d: Path) -> list[dict]:
+    """The transcript on disk. `_turns` is the live runner's dialogue for the session view;
+    this is the finished record, which is what an export copies."""
+    try:
+        return json.loads((d / "transcript.json").read_text(encoding="utf-8")).get("turns") or []
+    except (OSError, ValueError, KeyError):
+        return []
+
+
+def _export_name(session_id: str, report: dict, suffix: str) -> str:
+    """Named for the day it was sat, so a folder of these sorts by interview rather than by
+    download order."""
+    day = (report.get("started_at") or "")[:10] or session_id[:8]
+    return "mockingbird-%s-%s.%s" % (day, session_id[-6:], suffix)
+
+
+@app.get("/api/sessions/{session_id}/export.html")
+async def export_html(session_id: str, audio: bool = True) -> Response:
+    """One interview as a single file, with its recordings inside it (12.9).
+
+    Everything here is local, so export is the sharing mechanism -- there is no link to send.
+    That is what makes self-contained the requirement rather than a nicety: this has to open on
+    a machine that never had Mockingbird installed, with the app long gone.
+
+    `audio=false` for a copy that travels by email. It is the same document minus the one thing
+    that makes it large, and the document says which it is.
+    """
+    d = SESSIONS / session_id
+    report = await session_report(session_id)
+    raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
+    page = export_mod.html_document(report, raw, _recorded_turns(d), d, embed_audio=audio)
+    return Response(
+        content=page, media_type="text/html; charset=utf-8",
+        headers={"content-disposition": 'attachment; filename="%s"'
+                 % _export_name(session_id, report, "html")})
+
+
+@app.get("/api/sessions/{session_id}/export.json")
+async def export_json(session_id: str) -> Response:
+    """The sidecar: the same interview without the presentation, so the export is not a dead
+    end. Diffable, re-scorable, and readable by something that is not a browser."""
+    d = SESSIONS / session_id
+    report = await session_report(session_id)
+    raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
+    body = export_mod.sidecar(report, raw, _recorded_turns(d))
+    return Response(
+        content=json.dumps(body, indent=1, ensure_ascii=False),
+        media_type="application/json",
+        headers={"content-disposition": 'attachment; filename="%s"'
+                 % _export_name(session_id, report, "json")})
 
 
 async def _guard_async(fn, *args, **kwargs):

@@ -34,7 +34,7 @@ from tools._console import utf8  # noqa: E402
 
 utf8()
 
-from app import (contract, embed, observe, provenance, provider as prov,
+from app import (contract, detour, embed, observe, provenance, provider as prov,
                  resume, session as sess)  # noqa: E402
 from app.runner import Runner  # noqa: E402
 
@@ -55,7 +55,8 @@ def extractor(p):
 def restore(p, plan) -> Runner:
     # `plan` is ignored for a snapshot that carries its own, which is what makes a session
     # started here resumable in the browser and the other way round.
-    return resume.read(p, None, STATE, observe_fn=extractor(p), similarity=embed.similarity)
+    return resume.read(p, None, STATE, observe_fn=extractor(p),
+                       similarity=embed.similarity, detour_for=detour.corpus)
 
 
 def show(r: Runner, line: str) -> None:
@@ -93,7 +94,8 @@ async def main() -> int:
             return 1
         state = sess.new_session(plan, provenance.snapshot(model))
         print("model %s" % model["id"])
-        r = Runner(p, plan, state, observe_fn=extractor(p), similarity=embed.similarity)
+        r = Runner(p, plan, state, observe_fn=extractor(p), similarity=embed.similarity,
+                   detour=detour.corpus(plan))
         await p.warmup(contract.SYSTEM, contract.render(r.current["question"], "", ""))
         spoken = await r.ask()
         save(r)
