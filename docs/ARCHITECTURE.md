@@ -25,7 +25,7 @@ terminal CLI --> Runner --> deterministic policy and guards --> candidate-visibl
                     |                    |
                     |                    +--> budgets, focus, intent, phase rules
                     |
-                    +--> LM Studio: bounded turn proposal and quote extraction
+                    +--> llama-server (qwen): bounded turn proposal and quote extraction
                     |
                     +--> local session files --> observations --> arithmetic score --> report
 ```
@@ -37,7 +37,7 @@ the model's six-action JSON object is advisory input to that orchestrator.
 
 - A 14-question, six-phase software-engineering interview plan, and a planner that produces one from a job description or from a stock template at a chosen length.
 - Terminal-based text interviews through `python -m app.cli`.
-- LM Studio integration with structured output, enum posteriors, timing and health checks.
+- llama-server integration with structured output, enum posteriors, timing and health checks.
 - Exact-identity, Qwen3-4B-Instruct-2507 runtime with a measured 35-word speech cap.
 - Deterministic consent, refusal, clarification, repetition, speech and budget controls.
 - Focus-aware creative probing, hypothetical-design tense repair and one action-locked
@@ -169,16 +169,18 @@ silent -- a competency the description asked for simply never appears in the pla
 
 The runtime requires Python 3.12 but has no third-party runtime dependencies. It uses `asyncio`,
 `urllib`, `json`, dataclasses and local files. Pytest and research/audio dependencies are optional.
-LM Studio is the only live external process, reached on `http://127.0.0.1:1234`.
+The live external processes are three `llama-server` instances, started together by
+`python -m app.servers`: the language model on `http://127.0.0.1:8091` (required), the voice
+on 8092 and the embedder on 8093, on the CPU.
 
 ## 3. Runtime topology
 
 ```text
-Process A: terminal application                    Process B: LM Studio
+Process A: terminal application                    Process B: llama-server (qwen)
 -----------------------------------------------   -------------------------------
-app.cli                                            exact runtime identifier
-  preflight ------------------------------------> /api/v0/models
-  canary ---------------------------------------> /api/v0/chat/completions
+app.cli                                            exact alias and model file
+  preflight ------------------------------------> /props
+  canary ---------------------------------------> /v1/chat/completions (timings)
   warm prompt cache ----------------------------> /v1/chat/completions
   Runner.submit()
     decide structured turn ---------------------> /v1/chat/completions + logprobs
@@ -191,7 +193,7 @@ app.cli                                            exact runtime identifier
 The browser surface adds one process and changes nothing below it:
 
 ```text
-Process C: browser                Process D: uvicorn                 Process B: LM Studio
+Process C: browser                Process D: uvicorn                 Process B: llama-server
 -------------------------------   --------------------------------   --------------------
 SvelteKit SPA (adapter-static)
   fetch /api/... --------------->  api.main
@@ -227,11 +229,15 @@ already reported by the real call.
 `127.0.0.1` is intentional. Using `localhost` previously attempted IPv6 before IPv4 and added a
 large client-side stall that server timing could not see.
 
-The provider port uses two endpoints because the API surfaces are complementary:
+The provider port uses two endpoints:
 
-- `/v1/chat/completions` supplies structured completion output and token log probabilities.
-- `/api/v0/chat/completions` supplies server timing data for the canary.
-- `/api/v0/models` supplies the loaded catalogue used to verify the exact product identifier.
+- `/v1/chat/completions` supplies structured output, token log probabilities, and the server's
+  own `timings`, which the canary reads.
+- `/props` supplies the alias and the model file, both checked to verify the exact product model.
+
+Every turn sends a 1.1 repeat penalty, the default of the runtime every measurement behind the
+contract was taken on; `llama-server` defaults to none. With it, decisions matched on 176 of 178
+fixtures and real answers, and the remaining wording differences were near-ties.
 
 ## 4. Component map
 
@@ -239,10 +245,11 @@ The provider port uses two endpoints because the API surfaces are complementary:
 
 | Module | Responsibility | Main inputs | Main outputs |
 |---|---|---|---|
-| [`app/cli.py`](../app/cli.py) | Terminal entry point, preflight, warm-up and interview loop | Plan path, stdin, LM Studio | Candidate speech and session paths |
+| [`app/cli.py`](../app/cli.py) | Terminal entry point, preflight, warm-up and interview loop | Plan path, stdin, the model server | Candidate speech and session paths |
 | [`app/runner.py`](../app/runner.py) | Owns the turn loop, precedence, state transitions and dispatch | Candidate utterance, plan, provider, state | `TurnOutcome`, persisted turn |
 | [`app/contract.py`](../app/contract.py) | Normal turn and speech-only repair schemas, prompts and severity utility | Current question, answer, summary | Structured model request |
-| [`app/provider.py`](../app/provider.py) | LM Studio transport, metrics, posteriors and exact runtime identity | System/user prompts and schema | `Completion` or `ProviderError` |
+| [`app/provider.py`](../app/provider.py) | llama-server transport, metrics, posteriors and exact model identity (alias and file) | System/user prompts and schema | `Completion` or `ProviderError` |
+| [`app/servers.py`](../app/servers.py) | Starts the three `llama-server` processes in order with their measured flags; `python -m app.servers` | Model files under `models/` | Servers on 8091, 8092 and 8093 |
 | [`app/intent.py`](../app/intent.py) | Clause-aware control parsing | Candidate utterance | stop, continue, skip or unclear |
 | [`app/direction.py`](../app/direction.py) | Separates candidate questions from answers | Candidate utterance | Role decision and optional answer prefix |
 | [`app/guards.py`](../app/guards.py) | Validates model proposal and sanitises speech | Raw model JSON and utterance | `Guarded` effective proposal |
@@ -264,7 +271,7 @@ The provider port uses two endpoints because the API surfaces are complementary:
 | [`app/audio.py`](../app/audio.py) | PCM framing, the voice wire protocol, and where to cut a growing answer so a slice ends in a pause | Wire frames, raw samples | Frames, `Utterance`, `Speech`, the heard/unheard split |
 | [`app/speech.py`](../app/speech.py) | The TTS port: a protocol onto LFM3-Audio, female or male voice | A line to say | Float32 mono at the engine's rate |
 | [`app/listen.py`](../app/listen.py) | The ASR port: a protocol onto LFM3-Audio, one slice at a time | A slice of speech | Verbatim text |
-| [`app/lfm3.py`](../app/lfm3.py) | LFM3-Audio-2B through one resident `llama-server` on `127.0.0.1:8092`: recognition over `/v1/chat/completions`, speech over `/tts`; `python -m app.lfm3` starts it | Audio slices, lines | Text, 24 kHz float32 |
+| [`app/lfm3.py`](../app/lfm3.py) | LFM3-Audio-2B through one resident `llama-server` on `127.0.0.1:8092`: recognition over `/v1/chat/completions`, speech over `/tts`; started by `app/servers.py` | Audio slices, lines | Text, 24 kHz float32 |
 | [`app/endpoint.py`](../app/endpoint.py) | Live mode's endpointer: Silero VAD windows, speech spans, and the pause that ends an answer | 16 kHz frames as they arrive | Ended or not, where the current pause began |
 | [`app/delivery.py`](../app/delivery.py) | Fluency from the waveform: syllables, rates, pauses and where they fall. Observation only (FR-36) | Answer samples, optionally a word count | `Delivery`, or the reason it could not be measured |
 
@@ -317,8 +324,9 @@ an assessment leaking into a surface that must not carry one.
 
 `app.cli.run()` establishes the runtime in this order:
 
-1. Create an `LMStudio` provider for the exact identifier `qwen3-4b-instruct-2507`.
-2. Query loaded models and refuse to start unless that exact product model is loaded.
+1. Create a `LlamaServer` provider for the exact alias `qwen3-4b-instruct-2507`.
+2. Read the served model and refuse to start unless both its alias and its file are the
+   product's.
 3. Run the canary unless disabled. It checks prefill time, decode throughput and transport
    overhead separately.
 4. Load and validate the interview plan.
@@ -610,7 +618,7 @@ and the counting is checkable, but a model still selected which words counted as
 | Past-premised design speech | Finite tense rewrite, then a future-conditional design template | No false claim of prior implementation |
 | Background live observation failure | Swallowed by `_settle()` | Adaptive pacing loses one evidence update |
 | Corrupt observation cache | Ignore and re-extract | Extra offline model work |
-| LM Studio unavailable at preflight | CLI refuses to start | No session begins |
+| Model server unavailable at preflight | CLI refuses to start | No session begins |
 | Provider failure during a normal turn | Propagates to CLI's provider handler | Current process exits; recovery is limited to saved files |
 | Ctrl+C/EOF | Mark abandoned and checkpoint | Transcript retained |
 
@@ -759,15 +767,14 @@ and record both byte-for-byte retention and accepted repair rates.
 
 ## 15. Operational runbook
 
-### Start LM Studio and load a model
+### Start the model servers
 
 ```powershell
-lms server start
-lms load qwen3-4b-instruct-2507 --context-length 8192 --identifier qwen3-4b-instruct-2507 -y
+python -m app.servers
 ```
 
-The identifier is a product contract, not an interchangeable alias. Preflight rejects any other
-loaded model rather than applying unmeasured model-specific behaviour.
+The alias and the model file are a product contract. Preflight rejects any other served model
+rather than applying unmeasured model-specific behaviour.
 
 ### Run a terminal interview
 

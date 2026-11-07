@@ -56,9 +56,8 @@ organisations under US$10 million in annual revenue (qualifying non-profits are 
 non-commercial and research use). That limit applies to anyone running Mockingbird with this
 model. Any redistribution of the model must include a copy of its licence.
 
-## Runtimes, installed separately
+## Runtime, installed separately
 
 | Runtime | Used for | Licence |
 |---|---|---|
-| llama.cpp (`llama-server`) | the voice server | MIT |
-| LM Studio | serving the interviewer model | Proprietary, under LM Studio's own terms; not redistributable |
+| llama.cpp (`llama-server`) | all three model servers: the interviewer, the voice and the embedder | MIT |

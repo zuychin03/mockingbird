@@ -90,28 +90,32 @@ is weak will change their answer, and the assessment stops measuring what it cla
 
 ## Running it
 
-Needs Python 3.12 and [LM Studio](https://lmstudio.ai/) with a local model loaded.
+Needs Python 3.12, a llama.cpp build at b11960 or later, and the model files below. Every
+model runs in llama.cpp's `llama-server` on loopback, one process each, started together and
+before the app:
 
 ```bash
-lms server start
-lms load qwen3-4b-instruct-2507 --context-length 8192 --identifier qwen3-4b-instruct-2507 -y
+python -m app.servers
 ```
 
-One small embedding model is optional and worth loading. Two of the speech controls compare
-what a probe MEANS rather than how it is spelled, and without it they fall back to comparing
-words, which is quieter and weaker rather than an error:
+| Server | Model file | Where it goes | Port |
+|---|---|---|---|
+| Language model, required | `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` from [`lmstudio-community/Qwen3-4B-Instruct-2507-GGUF`](https://huggingface.co/lmstudio-community/Qwen3-4B-Instruct-2507-GGUF) | `models/qwen3-4b-instruct-2507/` | 8091 |
+| Voice | the LFM3-Audio files in the voice section below | `models/lfm3-audio/` | 8092 |
+| Embedder, optional | `all-MiniLM-L6-v2-Q8_0.gguf` from [`second-state/All-MiniLM-L6-v2-Embedding-GGUF`](https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF) | `models/all-minilm-l6-v2/` | 8093 |
 
-```bash
-lms get -y https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF
-lms load text-embedding-all-minilm-l6-v2-embedding -y
-```
+Point `MOCKINGBIRD_LLAMA_SERVER` at `llama-server.exe` if it is not at the default path. The
+language model is started under its exact alias and checked by alias and file before an
+interview starts, so a different model cannot quietly take its place. All three fit a 6 GB
+card together.
 
-`lms get` needs the full Hugging Face URL; a bare model name searches LM Studio's own catalogue
-and fails. The model was chosen by measuring six candidates on labelled probe pairs from real
-sessions rather than by leaderboard: all-MiniLM-L6-v2 at 22M parameters beat nomic-embed-v1.5,
-mxbai-embed-large and embeddinggemma-300m, because those are tuned for matching a short query to
-a long document while this compares two questions of the same shape. It costs 25MB on disk and
-about 164MiB of VRAM.
+The embedder is optional and worth having. Two of the speech controls compare what a probe
+MEANS rather than how it is spelled, and without it they fall back to comparing words, which is
+quieter and weaker rather than an error. The model was chosen by measuring six candidates on
+labelled probe pairs from real sessions rather than by leaderboard: all-MiniLM-L6-v2 at 22M
+parameters beat nomic-embed-v1.5, mxbai-embed-large and embeddinggemma-300m, because those are
+tuned for matching a short query to a long document while this compares two questions of the
+same shape. It costs 25MB on disk and runs on the CPU, at about 11 ms a comparison.
 
 Then plan an interview. There are three ways in.
 
@@ -202,6 +206,8 @@ app/
   focus.py         picks what to ask ABOUT; the model only words it
   budget.py        per-question cap plus a shared session pool
   observe.py       quote extraction, with grounding
+  provider.py      the language model over llama-server: turns, posteriors, the exact-model gate
+  servers.py       starts the three llama-server processes, in order
   embed.py         OPTIONAL local sentence similarity; returns None when absent
   score.py         the rubric, as arithmetic
   report.py        the feedback, and the rules about how it is worded
@@ -346,24 +352,20 @@ straight away, so by the time the pause has run out the answer is usually alread
 
 Both directions run on [LFM3-Audio-2B](https://huggingface.co/LiquidAI/LFM3-Audio-2B) in one
 resident `llama-server` process on `127.0.0.1:8092`, so nothing reloads between calls. It fits
-beside the language model on a 6 GB card in either load order (5,965 of 6,144 MiB at peak).
-Start it before the app:
-
-```bash
-python -m app.lfm3
-```
+beside the language model on a 6 GB card in either load order (5,965 of 6,144 MiB at peak), and
+`python -m app.servers` starts it with the others.
 
 Measured on mains with the language model resident: an 84 s answer recognised in 2.2 s, a
 spoken line rendered in about a fifth of its own length, and the language model's turns no
 slower. Inside one answer, a word on a slice boundary can come back twice.
 
-Voice needs three things this repository does not ship, because none of them are ours:
+Voice needs two things this repository does not ship, because neither is ours, besides the
+llama.cpp build the language model already needs:
 
 | What | Where it goes |
 |---|---|
 | `LFM3-Audio-2B-Q8_0.gguf` and `mmproj-LFM3-Audio-2B-BF16.gguf` from [`LiquidAI/LFM3-Audio-2B-GGUF`](https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF) | `models/lfm3-audio/` |
 | Silero VAD, for live mode only: [`silero_vad.onnx`](https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx) | `models/vad/` |
-| A llama.cpp build at b11960 or later | anywhere; point `MOCKINGBIRD_LLAMA_SERVER` at `llama-server.exe` |
 
 The server is checked at connect time and reported rather than assumed: without it the interview
 runs on typed answers and says so on screen, and the interviewer does not speak. Its model is

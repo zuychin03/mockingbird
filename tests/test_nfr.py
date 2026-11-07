@@ -44,7 +44,7 @@ def test_no_module_on_the_live_path_names_a_foreign_host():
 
 def test_provider_is_pinned_to_loopback():
     """`localhost` is banned outright: it resolves to ::1 first and costs 2 s a call (log 8.6)."""
-    assert provider.BASE == "http://127.0.0.1:1234"
+    assert provider.BASE == "http://127.0.0.1:8091"
     assert "localhost" not in provider.BASE
 
 

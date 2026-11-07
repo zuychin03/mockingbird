@@ -89,7 +89,7 @@ def show(d: review.Draft) -> None:
 
 async def start(jd_path: Path, minutes: int | None = None) -> review.Draft:
     b = bank_mod.load(BANK)
-    p = prov.LMStudio()
+    p = prov.LlamaServer()
     spec = await planner.read_jd(p, b, jd_path.read_text(encoding="utf-8"))
     return review.from_assembled(planner.assemble(spec, b, minutes=minutes), b, spec)
 
@@ -102,7 +102,7 @@ def stock(kind: str, minutes: int | None) -> review.Draft:
 
 
 async def propose(d: review.Draft, competency: str) -> review.Draft:
-    p = prov.LMStudio()
+    p = prov.LlamaServer()
     evidence = next((r.evidence for r in (d.spec.requirements if d.spec else ())
                      if r.name == competency), competency)
     q = await planner.propose_question(p, d.bank, competency, evidence,

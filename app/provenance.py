@@ -52,7 +52,7 @@ def contract_hash() -> str:
 
 
 def snapshot(model: dict | None = None) -> dict:
-    """`model` is one entry from `provider.loaded_models()`, or None when it is unavailable."""
+    """`model` is what `provider.served_model()` returned, or None when it is unavailable."""
     m = model or {}
     return {
         "code_revision": code_revision(),
@@ -63,5 +63,5 @@ def snapshot(model: dict | None = None) -> dict:
         "model_path": m.get("path"),
         "quantization": m.get("quantization"),
         "context_length": m.get("loaded_context_length"),
-        "model_arch": m.get("arch"),
+        "model_runtime": m.get("runtime"),
     }

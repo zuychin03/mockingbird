@@ -93,7 +93,6 @@ def test_a_session_records_which_engine_it_used():
 
 def test_the_server_is_reached_by_loopback_address():
     assert lfm3.BASE.startswith("http://127.0.0.1:")
-    assert "--parallel" in lfm3.command() and "127.0.0.1" in lfm3.command()
 
 
 # --- hearing -----------------------------------------------------------------------------
@@ -128,7 +127,7 @@ def test_a_failed_read_is_an_empty_slice_not_an_exception(stub, status):
 
 def test_a_server_that_is_not_there_is_reported_before_the_session():
     why = lfm3.Listener("http://127.0.0.1:9").available()
-    assert why and "python -m app.lfm3" in why
+    assert why and "python -m app.servers" in why
     assert lfm3.Listener("http://127.0.0.1:9").transcribe(tone(1.0), 16000) == ""
 
 

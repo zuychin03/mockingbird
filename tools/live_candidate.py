@@ -80,17 +80,17 @@ async def main() -> int:
     ap.add_argument("--plan", default=str(ROOT / "config" / "interview_swe_general.json"))
     a = ap.parse_args()
 
-    p = prov.LMStudio()
+    p = prov.LlamaServer()
     plan = sess.load_plan(a.plan)
 
     if a.start:
         try:
-            loaded = prov.loaded_models()
-        except Exception:
-            loaded = []
-        model = prov.product_model(loaded)
+            model = prov.product_model()
+        except prov.ProviderError as e:
+            print(e)
+            return 1
         if model is None:
-            print("Llama 3.2 is not loaded as %s" % prov.MODEL)
+            print("the model server is not serving %s. %s" % (prov.MODEL, prov.START_HINT))
             return 1
         state = sess.new_session(plan, provenance.snapshot(model))
         print("model %s" % model["id"])

@@ -6,8 +6,8 @@ codebase were most relevant" and "those paths" are one question with no token in
 every deterministic proxy for that was measured and rejected (causal markers carry no signal
 against their own base rate; focus adjacency alone is 42% false positives).
 
-This is the semantic test those needed. It runs against the LM Studio instance already on
-127.0.0.1, so nothing leaves the machine and no package is added.
+This is the semantic test those needed. It runs on its own `llama-server` on 127.0.0.1, on the
+CPU (`app/servers.py`), so nothing leaves the machine and no package is added.
 
 **It is optional by construction.** Every entry point returns None when the model is not
 loaded, and `rewords` falls back to the word-overlap test. An interview must not fail, or
@@ -31,13 +31,12 @@ the same reason and are not used.
 
 from __future__ import annotations
 
+import http.client
 import json
-import urllib.error
 import urllib.request
 
-from .provider import BASE
-
-MODEL = "text-embedding-all-minilm-l6-v2-embedding"
+BASE = "http://127.0.0.1:8093"
+MODEL = "all-minilm-l6-v2"
 
 # Above this, two probes on confusable focuses are the same question. Chosen from 17 stored
 # pairs the confusable gate admits: the redundant ones score 0.267-0.794 and the rest
@@ -63,7 +62,7 @@ def _vector(text: str) -> list[float] | None:
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             vec = json.loads(r.read())["data"][0]["embedding"]
-    except (urllib.error.URLError, KeyError, IndexError, ValueError, TimeoutError):
+    except (OSError, http.client.HTTPException, KeyError, IndexError, ValueError):
         # Absent, unloadable or malformed all mean the same thing to the caller.
         vec = None
     _CACHE[key] = vec

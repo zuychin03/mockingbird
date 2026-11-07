@@ -66,7 +66,7 @@ async def main() -> int:
             order.append(t["question_id"])
         by_q[t["question_id"]].append(t["utterance"])
 
-    p = prov.LMStudio()
+    p = prov.LlamaServer()
     print("session %s -- %d questions, %d answers\n" % (sid, len(order), len(turns)))
 
     items = [(qid, meta.get(qid, {}).get("question", qid), by_q[qid],

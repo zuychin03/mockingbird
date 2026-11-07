@@ -767,7 +767,7 @@ def test_a_detour_that_fails_declines_rather_than_ending_the_interview(tmp_path)
         async def complete(self, system, user, schema=None, max_tokens=400, **kw):
             from app import detour
             if schema == detour.SCHEMA:
-                raise ProviderError("LM Studio is not answering")
+                raise ProviderError("the model server is not answering")
             return await ScriptedProvider.complete(self, system, user, schema, max_tokens, **kw)
 
     session.SESSIONS = tmp_path / "sessions"

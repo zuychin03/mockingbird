@@ -1,7 +1,7 @@
 /* Turning a failure into something a person can act on.
  *
  * The three pages used to render `String(e)`, so the most likely failure of a local-only app
- * -- LM Studio not serving -- reached the screen as the words "TypeError: Failed to fetch".
+ * -- the model server not running -- reached the screen as the words "TypeError: Failed to fetch".
  * A refusal the server wrote is different: those sentences exist to explain a reason, so they
  * are shown as written and never dressed up. */
 
@@ -13,10 +13,10 @@ const UNREACHABLE = {
 };
 
 const NO_MODEL = {
-  title: 'The model is not loaded',
+  title: 'The model is not running',
   detail:
-    'Mockingbird talks to LM Studio on this machine. Start its server and load the model, ' +
-    'then try again.'
+    'Mockingbird talks to its model servers on this machine. Start them with ' +
+    'python -m app.servers, then try again.'
 };
 
 /** A network-level failure: the request never reached the server. */

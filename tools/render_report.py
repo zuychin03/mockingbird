@@ -166,7 +166,7 @@ async def one(sid: str, plan, re_extract: bool = False):
         if t["question_id"] not in by_q:
             order.append(t["question_id"])
         by_q[t["question_id"]].append(t["utterance"])
-    p = prov.LMStudio()
+    p = prov.LlamaServer()
     items = [(q, meta.get(q, {}).get("question", q), by_q[q],
               meta.get(q, {}).get("observation_shape", "star")) for q in order]
     obs, _ = await observe.observe_all(p, items, cache=d / "observations.json",

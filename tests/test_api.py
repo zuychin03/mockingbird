@@ -35,7 +35,7 @@ def started(client):
 
 def test_a_stock_plan_can_be_started_without_a_model(started):
     """FR-4 makes no model call: there is no description to read, so the whole path is
-    selection over reviewed text. The API should not need LM Studio for it either."""
+    selection over reviewed text. The API should not need the model server for it either."""
     assert started["phases"]
     assert started["label"]
     assert started["stock_kinds"] == ["behavioural", "mixed", "technical"]
@@ -190,7 +190,8 @@ def test_starting_a_session_needs_the_exact_model_loaded(client, monkeypatch, tm
     """The exact-identity gate is the product's, not the API's. A wrong model must not be
     able to receive an interview's controls just because the request came over HTTP."""
     monkeypatch.setattr(api, "LIVE", tmp_path / "live.json")
-    monkeypatch.setattr(api.prov, "loaded_models", lambda: [{"id": "something-else"}])
+    monkeypatch.setattr(api.prov, "served_model",
+                        lambda: {"id": "something-else", "path": "models/other.gguf"})
     r = client.post("/api/session/start",
                     json={"plan_path": "config/interview_swe_general.json"})
     assert r.status_code == 503
@@ -211,7 +212,8 @@ def test_an_answers_extraction_reaches_the_next_answer_over_http(monkeypatch, tm
     monkeypatch.setattr(api, "ROOT", tmp_path)
     monkeypatch.setattr(api, "LIVE", tmp_path / "live.json")
     monkeypatch.setattr(api.sess, "SESSIONS", tmp_path / "sessions")
-    monkeypatch.setattr(api.prov, "loaded_models", lambda: [{"id": api.prov.MODEL}])
+    monkeypatch.setattr(api.prov, "served_model",
+                        lambda: {"id": api.prov.MODEL, "path": "models/" + api.prov.MODEL_FILE})
     monkeypatch.setattr(api.embed, "similarity", lambda a, b: None)
     monkeypatch.setattr(api, "_detour", lambda plan: [])
     monkeypatch.setattr(api, "_warm", lambda p, plan: None)
@@ -233,7 +235,7 @@ def test_an_answers_extraction_reaches_the_next_answer_over_http(monkeypatch, tm
             return Completion(text=json.dumps(
                 {"act": "probe", "say": next(probes), "ok": False, "ask": ""}))
 
-    monkeypatch.setattr(api.prov, "LMStudio", Model)
+    monkeypatch.setattr(api.prov, "LlamaServer", Model)
     read = []
 
     def extractor(p):
@@ -330,18 +332,18 @@ def test_a_report_for_an_unknown_session_is_a_404(client, monkeypatch, tmp_path)
 
 def test_the_runtime_being_down_is_a_503_with_the_provider_sentence(client, monkeypatch,
                                                                     tmp_path):
-    """It already names the host it tried and suggests `lms server start`, which is the whole
+    """It already names the host it tried and how to start the servers, which is the whole
     answer. Unhandled it was an opaque 500 and the page said "Internal Server Error"."""
     monkeypatch.setattr(api, "LIVE", tmp_path / "live.json")
 
     def down():
-        raise api.prov.ProviderError("cannot reach LM Studio at http://127.0.0.1:1234. "
-                                     "Is `lms server start` running?")
-    monkeypatch.setattr(api.prov, "loaded_models", down)
+        raise api.prov.ProviderError("cannot reach the model server at http://127.0.0.1:8091. "
+                                     + api.prov.START_HINT)
+    monkeypatch.setattr(api.prov, "served_model", down)
     r = client.post("/api/session/start",
                     json={"plan_path": "config/interview_swe_general.json"})
     assert r.status_code == 503
-    assert "lms server start" in r.json()["detail"]
+    assert "python -m app.servers" in r.json()["detail"]
 
 
 def _one_turn_runner(act, say, said_this_question):
@@ -660,13 +662,13 @@ def test_an_unreachable_model_says_so_when_building_a_report(client, monkeypatch
     monkeypatch.setattr(api, "SESSIONS", root)
 
     async def down(*a, **k):
-        raise api.prov.ProviderError("cannot reach LM Studio at http://127.0.0.1:1234. "
-                                     "Is `lms server start` running?")
+        raise api.prov.ProviderError("cannot reach the model server at http://127.0.0.1:8091. "
+                                     + api.prov.START_HINT)
     monkeypatch.setattr(api.observe, "observe", down)
 
     r = client.get("/api/sessions/%s/report" % sid)
     assert r.status_code == 503, r.text
-    assert "lms server start" in r.json()["detail"]
+    assert "python -m app.servers" in r.json()["detail"]
 
 
 def test_an_answers_recording_is_served_for_playback(client, monkeypatch, tmp_path):

@@ -130,7 +130,7 @@ def _guard(fn, *args, **kwargs):
         return fn(*args, **kwargs)
     except prov.ProviderError as e:
         # 503, and the provider's own sentence: it already says which host it tried and
-        # suggests `lms server start`, which is the whole answer. Without this the runtime
+        # says how to start the model servers, which is the whole answer. Without this the runtime
         # being down is an opaque 500 and the page says "Internal Server Error".
         raise HTTPException(503, str(e)) from e
     except (ValueError, IndexError) as e:
@@ -148,7 +148,7 @@ def get_plan() -> dict:
 async def from_description(text: str = Body(..., embed=True),
                            minutes: int | None = Body(None, embed=True)) -> dict:
     b = _bank()
-    spec = await _guard_async(planner.read_jd, prov.LMStudio(), b, text)
+    spec = await _guard_async(planner.read_jd, prov.LlamaServer(), b, text)
     a = _guard(planner.assemble, spec, b, minutes=minutes)
     return _state(review.from_assembled(a, b, spec))
 
@@ -186,7 +186,7 @@ async def propose(competency: str = Body(..., embed=True)) -> dict:
     d = _draft()
     evidence = next((r.evidence for r in (d.spec.requirements if d.spec else ())
                      if r.name == competency), competency)
-    q = await _guard_async(planner.propose_question, prov.LMStudio(), d.bank, competency,
+    q = await _guard_async(planner.propose_question, prov.LlamaServer(), d.bank, competency,
                            evidence, similarity=embed.similarity)
     return _state(review.propose_into_bank(d, q))
 
@@ -250,7 +250,7 @@ def _runner():
     A session started by the terminal harness resumes here and vice versa."""
     if not LIVE.exists():
         raise HTTPException(404, "no session in progress")
-    p = prov.LMStudio()
+    p = prov.LlamaServer()
     try:
         r = resume.read(p, None, LIVE, observe_fn=_extractor(p),
                         similarity=embed.similarity, detour_for=_detour)
@@ -307,7 +307,7 @@ def _session_state(r) -> dict:
     }
 
 
-def _warm(p: prov.LMStudio, plan: dict) -> None:
+def _warm(p: prov.LlamaServer, plan: dict) -> None:
     """Prefill llama.cpp's prefix cache while the candidate reads question one.
 
     `cli.py` warms before the first question and the browser never did, so every interview sat
@@ -340,12 +340,13 @@ async def session_start(plan_path: str = Body(..., embed=True)) -> dict:
     if ROOT not in target.parents:
         raise HTTPException(400, "a plan is loaded from inside the project")
     plan = _guard(sess.load_plan, target)
-    model = prov.product_model(_guard(prov.loaded_models))
+    model = prov.product_model(_guard(prov.served_model))
     if model is None:
         raise HTTPException(
-            503, "%s is not loaded under that exact identifier in LM Studio" % prov.MODEL)
+            503, "the model server is not serving %s from %s. %s"
+            % (prov.MODEL, prov.MODEL_FILE, prov.START_HINT))
     state = sess.new_session(plan, provenance.snapshot(model))
-    p = prov.LMStudio()
+    p = prov.LlamaServer()
     r = resume.Runner(p, plan, state, observe_fn=_extractor(p), similarity=embed.similarity,
                       detour=_detour(plan))
     LIVE.parent.mkdir(parents=True, exist_ok=True)
@@ -755,13 +756,13 @@ async def session_report(session_id: str, refresh: bool = False) -> dict:
     criteria_for.update({qs.question_id: next(
         (ph.get("rubric_criteria", []) for ph in plan.get("phases", [])
          if qs.question_id.startswith(ph["id"])), []) for qs in states})
-    p = prov.LMStudio()
+    p = prov.LlamaServer()
 
     observations = []
     for qs in states:
         if not qs.answers:
             continue
-        # Guarded like every other model call here. Unguarded, an unreachable LM Studio came
+        # Guarded like every other model call here. Unguarded, an unreachable model server came
         # back as an opaque 500 and the page said "Internal Server Error" -- the same failure
         # `/api/session/start` was already fixed for, and the provider's own sentence names the
         # host it tried and how to start it.

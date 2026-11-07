@@ -2,12 +2,9 @@
 
 Nothing else in the app talks to a model directly.
 
-Two LM Studio endpoints, because neither is sufficient alone (log 7.1):
-  /v1        carries `logprobs`, and nothing else does
-  /api/v0    carries `stats.time_to_first_token`, and nothing else does
-
-Turns go to /v1 so the enum posterior can be logged every turn. The prefix-cache canary
-is a periodic /api/v0 health check instead of riding along on each turn.
+The model runs in llama.cpp's `llama-server` on loopback, started by `app/servers.py`. Turns go
+to /v1/chat/completions, which carries `logprobs`, so the enum posterior is logged every turn,
+and `timings`, which the periodic canary reads.
 
 Stdlib HTTP inside a thread rather than httpx: the client really is this small, and the
 async signature is what phase 2 needs. Swap the transport, not the interface.
@@ -23,17 +20,23 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
-# 127.0.0.1, never "localhost". `localhost` resolves to ::1 first, LM Studio listens only
-# on IPv4, and every request then waits ~2s for the IPv6 connection to fail before falling
-# back. Measured: 2,109 ms per call against 66 ms. It is invisible in LM Studio's own
-# `stats` -- ttft still reads 30 ms -- so only wall-clock timing catches it.
-BASE = "http://127.0.0.1:1234"
-# Mockingbird deliberately supports one measured runtime. Keeping the API model id identical
-# to the LM Studio instance id makes both routing and stored provenance unambiguous.
+# 127.0.0.1, never "localhost". `localhost` resolves to ::1 first, the server listens only on
+# IPv4, and every request then waits ~2s for the IPv6 connection to fail before falling back.
+# Measured: 2,109 ms per call against 66 ms. It is invisible in the server's own timings --
+# ttft still reads 30 ms -- so only wall-clock timing catches it.
+BASE = "http://127.0.0.1:8091"
+# Mockingbird deliberately supports one measured model. The server is started with this alias
+# and this file, and both are checked before an interview starts.
 MODEL = "qwen3-4b-instruct-2507"
-TOP_LOGPROBS = 20          # server rejects anything higher (log 7.2)
+MODEL_FILE = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
+# Every measurement behind the contract was taken under a 1.1 repeat penalty, the previous
+# runtime's default; llama-server's is off. Without it 26 of 60 fixture turns came back worded
+# differently, with it 10, all near-ties (07/11/2026).
+REPEAT_PENALTY = 1.1
+TOP_LOGPROBS = 20          # log 7.2
 CANARY_WARN_MS = 150.0     # a warm TTFT above this means the GPU clock dropped (log 7.23)
 # `clock_ok` watches TTFT, which is PREFILL, and 8.8 measured the turn as essentially all
 # DECODE -- warm prefill is ~0 ms while decode runs at 8-16 tok/s throttled. So the check was
@@ -43,8 +46,10 @@ CANARY_WARN_MS = 150.0     # a warm TTFT above this means the GPU clock dropped 
 DECODE_FLOOR_TPS = 25.0
 TRANSPORT_WARN_MS = 250.0  # wall clock minus what the server says it spent. A healthy
                            # loopback runs 20-40 ms; the IPv6 stall was 2,080 (log 8.6)
-CANARY_TOKENS = 8          # not 1: at one token `generation_time` rounds to zero and the
-                           # server reports `tokens_per_second` as 1e6
+CANARY_TOKENS = 8          # not 1: one token is too short to time decode
+
+
+START_HINT = "Start it with `python -m app.servers`."
 
 
 class ProviderError(RuntimeError):
@@ -81,13 +86,15 @@ def _post(path: str, body: dict, timeout: float) -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
-        raise ProviderError("LM Studio %s: %s" % (e.code, e.read()[:200].decode("utf-8", "replace")))
+        raise ProviderError("the model server %s: %s"
+                            % (e.code, e.read()[:200].decode("utf-8", "replace")))
     except urllib.error.URLError as e:
-        raise ProviderError("cannot reach LM Studio at %s (%s)" % (BASE, e.reason))
+        raise ProviderError("cannot reach the model server at %s (%s). %s"
+                            % (BASE, e.reason, START_HINT))
     except (OSError, http.client.HTTPException, ValueError) as e:
         # A read timeout is TimeoutError and a dropped connection a ConnectionError or an
         # http.client error; none is a URLError, and a timeout escaped as a 500 (07/11/2026).
-        raise ProviderError("LM Studio at %s did not answer (%s: %s)"
+        raise ProviderError("the model server at %s did not answer (%s: %s)"
                             % (BASE, type(e).__name__, e))
 
 
@@ -121,10 +128,10 @@ def _posterior(entries: list[dict], field_name: str, values: list[str]) -> dict[
     return {k: v / total for k, v in agg.items()} if total > 0 else {}
 
 
-class LMStudio:
+class LlamaServer:
     """Local provider. Default, and the point of the project."""
 
-    name = "lmstudio"
+    name = "llama-server"
 
     def __init__(self, model: str = MODEL, seed: int = 42, timeout: float = 120.0):
         self.model, self.seed, self.timeout = model, seed, timeout
@@ -135,6 +142,7 @@ class LMStudio:
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
             "max_tokens": max_tokens, "temperature": 0.0, "seed": self.seed, "stream": False,
+            "repeat_penalty": REPEAT_PENALTY,
         }
         if schema:
             body["response_format"] = {"type": "json_schema",
@@ -183,13 +191,13 @@ class LMStudio:
         return round((time.perf_counter() - t0) * 1000, 1)
 
     def canary(self, warm: bool = True) -> dict[str, Any]:
-        """Clock and transport health, on /api/v0 because /v1 omits `stats`.
+        """Clock, decode and transport health, from the server's own `timings`.
 
         Sampled, not per turn. Two independent failures, each silent on its own:
 
         clock      a warm TTFT over CANARY_WARN_MS means the GPU memory clock dropped back
                    to its idle P-state, which quadruples every latency (log 7.23)
-        transport  wall clock minus what the server says it spent. `stats` is reported BY
+        transport  wall clock minus what the server says it spent. `timings` is reported BY
                    the server ABOUT the server, so it reads healthy through anything that
                    goes wrong before the request lands -- DNS, connection setup, a proxy.
                    The `localhost` IPv6 stall put 2,080 ms here while TTFT read 30 ms, and
@@ -203,44 +211,47 @@ class LMStudio:
                 "max_tokens": CANARY_TOKENS, "temperature": 0.0, "seed": self.seed,
                 "stream": False}
         if warm:
-            _post("/api/v0/chat/completions", body, 30.0)
+            _post("/v1/chat/completions", body, 30.0)
         t0 = time.perf_counter()
-        d = _post("/api/v0/chat/completions", body, 30.0)
+        d = _post("/v1/chat/completions", body, 30.0)
         wall = (time.perf_counter() - t0) * 1000
-        stats = d.get("stats") or {}
-        ttft = (stats.get("time_to_first_token") or 0) * 1000
-        served = max(ttft, (stats.get("generation_time") or 0) * 1000)
+        timings = d.get("timings") or {}
+        ttft = timings.get("prompt_ms") or 0
+        served = ttft + (timings.get("predicted_ms") or 0)
         transport = wall - served
+        tps = timings.get("predicted_per_second") or 0
         return {"ttft_ms": round(ttft, 1),
-                "tokens_per_second": round(stats.get("tokens_per_second") or 0, 1),
+                "tokens_per_second": round(tps, 1),
                 "wall_ms": round(wall, 1),
                 "transport_ms": round(transport, 1),
                 "clock_ok": ttft <= CANARY_WARN_MS,
-                "decode_ok": (stats.get("tokens_per_second") or 0) >= DECODE_FLOOR_TPS,
+                "decode_ok": tps >= DECODE_FLOOR_TPS,
                 "transport_ok": transport <= TRANSPORT_WARN_MS}
 
 
-def all_models() -> list[dict]:
-    """Every failure in this module surfaces as ProviderError, including this one."""
+def served_model() -> dict:
+    """What the server is running, from `/props`. Every failure here is a ProviderError too."""
     try:
-        with urllib.request.urlopen(BASE + "/api/v0/models", timeout=20) as r:
-            return json.loads(r.read())["data"]
-    except (OSError, http.client.HTTPException, ValueError, KeyError) as e:
-        raise ProviderError("cannot reach LM Studio at %s (%s). Is `lms server start` running?"
-                            % (BASE, getattr(e, "reason", e)))
+        with urllib.request.urlopen(BASE + "/props", timeout=20) as r:
+            props = json.loads(r.read())
+    except (OSError, http.client.HTTPException, ValueError) as e:
+        raise ProviderError("cannot reach the model server at %s (%s). %s"
+                            % (BASE, getattr(e, "reason", e), START_HINT))
+    return {"id": props.get("model_alias"), "path": props.get("model_path"),
+            "quantization": props.get("model_ftype"),
+            "loaded_context_length": (props.get("default_generation_settings") or {}).get("n_ctx"),
+            "runtime": props.get("build_info")}
 
 
-def loaded_models() -> list[dict]:
-    return [m for m in all_models() if m.get("state") == "loaded"]
+def product_model(model: dict | None = None) -> dict | None:
+    """The served model when it is exactly the supported one, never an alias or a fallback.
 
-
-def product_model(models: list[dict] | None = None) -> dict | None:
-    """Return the exact supported LM Studio instance, never an alias or a fallback.
-
-    Earlier multi-model runs tried to infer the weights behind an instance alias from model
-    metadata. That became ambiguous when two installed revisions shared the same metadata.
-    The single-runtime product instead requires its identifier to be exact; a wrong model is
-    rejected before an interview starts rather than silently receiving another's controls.
+    Earlier multi-model runs tried to infer the weights behind an alias from model metadata.
+    That became ambiguous when two installed revisions shared the same metadata. The product
+    instead requires both its alias and its file to match; a wrong model is rejected before an
+    interview starts rather than silently receiving another's controls.
     """
-    available = loaded_models() if models is None else models
-    return next((model for model in available if model.get("id") == MODEL), None)
+    m = served_model() if model is None else model
+    if m.get("id") == MODEL and Path(m.get("path") or "").name == MODEL_FILE:
+        return m
+    return None

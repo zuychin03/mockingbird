@@ -81,7 +81,7 @@ class Said:
 
     async def complete(self, system, user, schema=None, max_tokens=400, **kw):
         if self.fail:
-            raise ProviderError("LM Studio is not answering")
+            raise ProviderError("the model server is not answering")
         self.calls.append((system, user))
         return Completion(text=json.dumps({"quote": self.answer}))
 

@@ -6,8 +6,8 @@ The model can also run the whole conversation itself over `/v1/realtime`. That i
 not wired in: its speech would reach the candidate without passing `guards.apply()` or the
 runner's policy.
 
-Started before the app (`python -m app.lfm3`). It fits beside the language model on a 6 GB card
-in either load order: 5965 of 6144 MiB at peak.
+Started before the app with the other model servers (`python -m app.servers`). It fits beside
+the language model on a 6 GB card in either load order: 5965 of 6144 MiB at peak.
 """
 
 from __future__ import annotations
@@ -15,9 +15,7 @@ from __future__ import annotations
 import base64
 import io
 import json
-import os
 import re
-import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -30,11 +28,9 @@ ROOT = Path(__file__).resolve().parent.parent
 DIR = ROOT / "models" / "lfm3-audio"
 MODEL = DIR / "LFM3-Audio-2B-Q8_0.gguf"
 MMPROJ = DIR / "mmproj-LFM3-Audio-2B-BF16.gguf"
-SERVER = Path(os.environ.get("MOCKINGBIRD_LLAMA_SERVER",
-                             r"C:\src\llama.cpp-b11981\llama-server.exe"))
 PORT = 8092
 BASE = "http://127.0.0.1:%d" % PORT
-CONTEXT = 8192
+CONTEXT = 8192             # covers a capped answer
 
 # Model card contracts: the ASR system prompt, and the TTS voices and locales llama.cpp maps.
 ASR_PROMPT = "Perform ASR in English."
@@ -46,13 +42,6 @@ SEED = 7
 TIMEOUT = 300
 
 THINK = re.compile(r"<think>.*?</think>", re.S)
-
-
-def command(port: int = PORT) -> list[str]:
-    # --parallel 1: one KV slot, as for LM Studio (dev gotchas). Context covers a capped answer.
-    return [str(SERVER), "-m", str(MODEL), "--mmproj", str(MMPROJ),
-            "--host", "127.0.0.1", "--port", str(port), "-c", str(CONTEXT),
-            "--parallel", "1", "-ngl", "99", "--jinja"]
 
 
 def _post(base: str, path: str, body: dict, timeout: float = TIMEOUT):
@@ -72,7 +61,7 @@ def health(base: str = BASE) -> str | None:
         # 503 while the model is still loading.
         return "llama-server is not ready on %s (%d)" % (base, e.code)
     except (OSError, ValueError):
-        return ("llama-server is not running on %s (start it with `python -m app.lfm3`)"
+        return ("llama-server is not running on %s (start it with `python -m app.servers`)"
                 % base)
 
 
@@ -153,10 +142,3 @@ def describe_voice(voice: str | None = None) -> dict:
 def describe_asr() -> dict:
     return {"engine": "lfm3-audio/llama.cpp", "model": MODEL.name, "mmproj": MMPROJ.name,
             "prompt": ASR_PROMPT, "verbatim": True}
-
-
-if __name__ == "__main__":
-    for f in (SERVER, MODEL, MMPROJ):
-        if not f.exists():
-            sys.exit("missing %s" % f)
-    sys.exit(subprocess.call(command()))

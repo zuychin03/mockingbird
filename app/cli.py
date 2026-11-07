@@ -30,18 +30,18 @@ def _say(text: str) -> None:
     print("\n  interviewer: %s" % text)
 
 
-def _preflight(p: prov.LMStudio, skip: bool) -> dict | None:
-    """The loaded model on success, None on a failure the session cannot start through."""
+def _preflight(p: prov.LlamaServer, skip: bool) -> dict | None:
+    """The served model on success, None on a failure the session cannot start through."""
     try:
-        loaded = prov.loaded_models()
-    except Exception as e:
-        print("cannot reach LM Studio: %s" % e)
+        served = prov.served_model()
+    except prov.ProviderError as e:
+        print(e)
         return None
-    model = prov.product_model(loaded)
+    model = prov.product_model(served)
     if model is None:
-        print("Qwen3-4B-Instruct is not loaded under Mockingbird's required identifier. run: "
-              "lms load qwen3-4b-instruct-2507 --context-length 8192 "
-              "--identifier qwen3-4b-instruct-2507 -y")
+        print("the model server is running %s from %s, not %s from %s. %s"
+              % (served.get("id"), served.get("path"), prov.MODEL, prov.MODEL_FILE,
+                 prov.START_HINT))
         return None
     m = dict(model)
     print("model: %s (%s, ctx %s)" % (m["id"], m.get("quantization"), m.get("loaded_context_length")))
@@ -64,7 +64,7 @@ def _preflight(p: prov.LMStudio, skip: bool) -> dict | None:
 
 
 async def run(plan_path: Path, skip_canary: bool) -> int:
-    p = prov.LMStudio()
+    p = prov.LlamaServer()
     model = _preflight(p, skip_canary)
     if model is None:
         return 1
