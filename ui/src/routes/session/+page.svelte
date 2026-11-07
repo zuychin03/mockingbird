@@ -324,6 +324,20 @@
           Nothing was judged while you were talking. The reading happens now, and it is under
           <a href="/history">History</a>.
         </p>
+        <!-- A finished interview stays live until another starts, and the picker only showed
+             when nothing was live -- so after one interview there was no way to sit a second. -->
+        <Problem {problem} />
+        <div class="again">
+          <span class="again-label">Start another</span>
+          <div class="plans">
+            {#each PLANS as p}
+              <button class="plan" disabled={busy} onclick={() => start(p.path)}>
+                <span class="plan-name">{p.name}</span>
+                <span class="plan-note">{p.note}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
       </div>
     {:else}
       <div class="stage">
@@ -753,6 +767,20 @@
   }
   .closed a {
     color: var(--signal);
+  }
+  .again {
+    margin-top: var(--s-6);
+  }
+  .again .plans {
+    margin: var(--s-3) 0 0;
+  }
+  .again-label {
+    font-family: var(--font-structure);
+    font-size: var(--step--2);
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
   }
 
   @media (max-width: 40rem) {

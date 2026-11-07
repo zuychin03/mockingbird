@@ -3,6 +3,7 @@
   // API reports and sends back what the reviewer did; it never decides whether something is
   // allowed. When the server refuses, its own sentence is shown, because those sentences were
   // written to explain the reason and a rewrite here would lose it.
+  import { tick } from 'svelte';
   import Icon from '$lib/Icon.svelte';
   import { goto } from '$app/navigation';
 
@@ -61,6 +62,7 @@
   }
 
   async function apply(promise) {
+    leaving = null;
     const got = await promise;
     if (got) {
       plan = got;
@@ -89,14 +91,63 @@
     }
   }
 
+  /* "Save and start" used to save and navigate, and start nothing. The interview page resumes
+   * whatever interview is live, so it reopened an unfinished one from weeks earlier instead of
+   * the plan just saved -- and its plan picker only appears when there is no interview at all,
+   * so there was no way past it. It now starts the saved plan itself.
+   *
+   * An unfinished interview is replaced, not resumed, so that takes a second press, the same
+   * as deleting one: the first press says what will be left behind. Nothing is lost -- the
+   * record stays in History with whatever was answered -- but it should not happen unseen. */
+  let leaving = $state(null);
+  let goButton = $state(null);
+
+  async function unfinished() {
+    try {
+      const res = await fetch('/api/session');
+      const live = res.ok ? await res.json() : null;
+      return live && !live.done ? live : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const PLAN_PATH = 'data/interview_reviewed.json';
+
   async function save(thenRun) {
+    // Read at the press, before anything awaits. The save disables this button, a disabled
+    // button loses focus, and the blur used to disarm it -- so every second press arrived as a
+    // first one and armed it again.
+    const confirmed = leaving !== null;
     // This endpoint answers with a receipt, not a plan. Assigning it to `plan` threw on the
     // next read of `plan.gaps` and froze the page mid-render.
-    const got = await send('/api/plan/save', { path: 'data/interview_reviewed.json' });
+    const got = await send('/api/plan/save', { path: PLAN_PATH });
     if (!got) return;
     saved = true;
-    if (thenRun) goto('/session');
+    if (!thenRun) {
+      leaving = null;
+      return;
+    }
+    if (!confirmed) {
+      const live = await unfinished();
+      if (live) {
+        leaving = live;
+        // Focus went with the disabling. Without it back, the button can never blur, and it
+        // would stay armed however far away the next click lands.
+        await tick();
+        goButton?.focus();
+        return;
+      }
+    }
+    // A refusal here -- the model not loaded, say -- stays on this page with the server's own
+    // sentence, rather than arriving at an interview page with nothing on it.
+    if (!(await send('/api/session/start', { plan_path: PLAN_PATH }))) return;
+    leaving = null;
+    goto('/session');
   }
+
+  const day = (iso) =>
+    iso ? new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '';
 
   function clock(secs) {
     const m = Math.floor(secs / 60);
@@ -424,13 +475,26 @@
     <section class="block finish">
       <h2>Ready when you are</h2>
       <div class="finish-row">
-        <button class="go" disabled={busy} onclick={() => save(true)}>
-          Save and start the interview
+        <button
+          class="go"
+          class:armed={leaving}
+          disabled={busy}
+          bind:this={goButton}
+          onclick={() => save(true)}
+          onblur={() => {
+            if (!busy) leaving = null;
+          }}
+        >
+          {leaving ? 'Leave it and start this one' : 'Save and start the interview'}
         </button>
         <button disabled={busy} onclick={() => save(false)}>Save only</button>
       </div>
-      <p class="note">
-        {#if saved}
+      <p class="note" role={leaving ? 'alert' : undefined}>
+        {#if leaving}
+          An interview from {day(leaving.started_at)} is unfinished, at question
+          {leaving.question_number} of {leaving.question_total}. Press again to leave it and start
+          this plan instead. It stays in History with whatever was answered.
+        {:else if saved}
           Saved. This plan is the one the interview will run.
         {:else}
           Saving keeps this running order for the interview and for later.
@@ -951,6 +1015,17 @@
   }
   .finish-row .go {
     margin-top: 0;
+  }
+  /* Armed: inverted rather than recoloured, since the button is already the decision colour.
+     The same second-press pattern as deleting an interview. */
+  .finish-row .go.armed {
+    background: transparent;
+    color: var(--signal);
+    border-color: var(--signal);
+  }
+  .finish-row .go.armed:hover:not(:disabled) {
+    background: transparent;
+    border-color: var(--signal-fill-hover);
   }
 
   .finish {
