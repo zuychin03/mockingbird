@@ -44,7 +44,8 @@ TOP = ["fastapi==0.141.1", "uvicorn==0.52.4", "websockets==17.1", "numpy==2.5.2"
        "annotated-doc==0.0.5", "annotated-types==0.8.0", "typing-extensions==4.16.0",
        "typing-inspection==0.4.4"]
 
-SHIP = ["app", "api", "config", "ui/build", "LICENSE", "THIRD_PARTY_NOTICES.md", "README.md"]
+SHIP = ["app", "api", "config", "ui/build", "LICENSE", "LICENSES", "THIRD_PARTY_NOTICES.md",
+        "README.md"]
 ISCC_GUESSES = [Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe",
                 Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
                 Path(r"C:\Program Files\Inno Setup 6\ISCC.exe")]

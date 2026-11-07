@@ -12,13 +12,15 @@ What it needs
 
 Licences
 
-  Mockingbird's own code is MIT. The models and libraries it downloads carry their own
-  licences, listed in THIRD_PARTY_NOTICES.md in the install folder. Two to know about:
+  Mockingbird's own code is MIT. The models and libraries it ships or downloads carry their
+  own licences, listed in THIRD_PARTY_NOTICES.md in the install folder. Three to know about:
 
   * The voice model, LFM3-Audio, is under the LFM Open License v1.0. It is free to use, but
     commercial use is not licensed for organisations with US$10 million or more in annual
     revenue.
   * Delivery measurements use Parselmouth (GPL-3.0), which the first start installs from PyPI.
+  * Live mode's voice detection uses sherpa-onnx, whose files contain espeak-ng (GPL-3.0).
+    The GPL text is in the LICENSES folder, and THIRD_PARTY_NOTICES.md links its source.
 
 Uninstalling
 

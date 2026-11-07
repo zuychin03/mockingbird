@@ -259,6 +259,7 @@ config/            interview plans, the question bank, and what the interview ma
                    about itself (about.md)
 installer/         the Windows installer: build script, Inno Setup script, locked wheels, and
                    the app icon with the script that renders it from the logo
+LICENSES/          licence texts for third-party code the installer ships (GPL-3.0)
 tests/             deterministic unit and integration coverage
 tools/shots.sh     screenshots every surface at both widths, for design review
 ```
@@ -505,6 +506,8 @@ MIT, in [LICENSE](LICENSE).
 That covers the code in this repository and nothing else. The typefaces are under the SIL Open
 Font License (`ui/static/fonts/OFL.txt`), and the models, Python packages and runtimes are
 downloaded separately, are not redistributed here, and carry their own licences.
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists each one. Two need care before shipping
-anything built on this: Parselmouth is GPL-3.0-or-later, and LFM3-Audio's licence does not cover
-commercial use by organisations with US$10M or more in annual revenue.
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists each one. Three need care before
+shipping anything built on this: Parselmouth is GPL-3.0-or-later; sherpa-onnx's binaries contain
+espeak-ng, also GPL-3.0-or-later, so the Windows installer carries it with its licence text
+([`LICENSES/`](LICENSES)) and the exact sources named in the notices; and LFM3-Audio's licence
+does not cover commercial use by organisations with US$10M or more in annual revenue.

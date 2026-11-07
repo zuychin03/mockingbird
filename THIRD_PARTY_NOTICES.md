@@ -44,7 +44,7 @@ bundled package keeps its own licence file in `python\Lib\site-packages\<package
 | typing-extensions | `web` | PSF-2.0 | yes |
 | websockets | `voice` | BSD-3-Clause | yes |
 | NumPy | `voice` | BSD-3-Clause, with bundled parts under 0BSD, MIT, Zlib and CC0-1.0 | yes |
-| sherpa-onnx, sherpa-onnx-core | `voice` | Apache-2.0 | yes |
+| sherpa-onnx, sherpa-onnx-core | `voice` | Apache-2.0; its binaries also contain espeak-ng (GPL-3.0-or-later) and piper-phonemize (MIT), below | yes |
 | praat-parselmouth | `voice` | GPL-3.0-or-later | no, installed from PyPI on first run |
 | pytest, HTTPX | `test` | MIT, BSD-3-Clause | no |
 
@@ -52,6 +52,24 @@ bundled package keeps its own licence file in `python\Lib\site-packages\<package
 Mockingbird, as the README describes and as the installer's first run does from PyPI on the
 user's machine, leaves Mockingbird's licence as it is. A distribution that bundles it must meet
 GPL-3.0 for that bundle: include the GPL text and make Parselmouth's source available.
+
+**sherpa-onnx's binaries contain espeak-ng, which is GPL-3.0-or-later, so the installer ships
+GPL code.** The sherpa-onnx 1.13.6 wheel declares only Apache-2.0, but its compiled libraries
+(`_sherpa_onnx*.pyd`, `sherpa-onnx-c-api.dll`, `sherpa-onnx-cxx-api.dll`) build in espeak-ng and
+piper-phonemize for text-to-speech phonemisation. Mockingbird uses sherpa-onnx for live mode's
+voice-activity detection and does not call that code, but the installer distributes it all the
+same. The GPL text is in [`LICENSES/GPL-3.0-or-later.txt`](LICENSES/GPL-3.0-or-later.txt), which
+the installer carries, and the source of each part, at the exact revision built into 1.13.6, is:
+
+| Part | Licence | Source |
+|---|---|---|
+| sherpa-onnx 1.13.6 | Apache-2.0 | <https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.6> |
+| espeak-ng, k2-fsa's fork | GPL-3.0-or-later | <https://github.com/csukuangfj/espeak-ng/archive/ed530aa113046142eb5115cf2fc9157854d0ffe1.zip>, SHA-256 `e4e262cbe34f7fe21f91f1ba3397f2728e1f30eafbae7853f2b753a9ed13f0dd` |
+| piper-phonemize, k2-fsa's fork | MIT, Copyright (c) 2023 Michael Hansen | <https://github.com/csukuangfj/piper-phonemize/archive/f3ff95afc03640bc1399e113e83361192a2fafb4.zip>, SHA-256 `d9cca4e2bdc7d6dd8dffb96a4668283dbd3f77a9c194a3e530c1e8eba9406a5d` |
+
+The revisions and hashes are the ones sherpa-onnx's own build pins, in
+`cmake/espeak-ng-for-piper.cmake` and `cmake/piper-phonemize.cmake` at v1.13.6. As with
+Parselmouth, this leaves Mockingbird's own code under MIT.
 
 ## Models, downloaded on first run
 
