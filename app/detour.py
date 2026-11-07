@@ -14,10 +14,11 @@ Three properties this has to keep, and they are the reason it is not simply a se
                     is structural rather than remembered: this call has its own system prompt,
                     and what it produces is spoken, never appended to the history the turn
                     decision reads.
-  grounded          the model is given one passage and asked to answer from it. What comes
-                    back is checked against that passage before it is said, the same rule
-                    `observe._grounded` applies to quotes. An answer that drifts off the
-                    document is replaced by the document.
+  quoted            the model is given one passage and asked which of its sentences answer the
+                    question, word for word. What comes back is checked against that passage
+                    by `observe._grounded`, the guard that has let no invented quote into a
+                    score, and only a quote that passes is spoken. The model never composes,
+                    so it has nothing to invent with.
   it declines       there is no employer behind a practice interview. A question the corpus
                     does not answer gets the honest line it already got, because inventing an
                     answer about a real workplace is the one thing this must never do -- and a
@@ -33,6 +34,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .observe import _grounded
 from .provider import Completion, Provider  # noqa: F401
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -43,15 +45,14 @@ POLICY = ROOT / "config" / "about.md"
 # that always answers is indistinguishable from one that invents.
 MIN_SCORE = 0.22
 
-# How much of a composed answer has to come from the passage. A paraphrase is expected, so this
-# is over content words and not over the whole string.
-#
-# 0.70 was a guess and it was wrong in the expensive direction. Measured against qwen on the
-# shipped corpus: a faithful answer to "where do the recordings go?" scored 0.64 and was thrown
-# away, and the fallback then read a whole paragraph of documentation aloud. The answers that
-# genuinely drift score far lower -- an invented "not available for download or copying"
-# measured 0.30 -- so the floor sits between them with room on both sides.
-MIN_GROUNDED = 0.5
+# There is no grounding threshold of this module's own any more, and that is the fix. The model
+# used to COMPOSE an answer that was checked by the share of its content words found in the
+# passage. That told a candidate "Your recording is deleted immediately after the interview" --
+# false; recordings stay until the user deletes them -- because generic words carried it:
+# "interview", "else" and "happens" matched, "nothing" near-matched "not", and the claim itself
+# ("record", "deleted", "immediately") appeared nowhere, for exactly 0.50 against a floor of
+# 0.50. No share of words can separate that from a faithful paraphrase, and a false sentence
+# built entirely from the passage's own words passes any of them. A verbatim quote cannot.
 
 # A heading ending in this marks a section that exists to say the product cannot answer
 # something. Written in the document rather than detected here: which questions have no answer
@@ -66,22 +67,28 @@ MAX_TOKENS = 320
 
 SCHEMA = {
     "type": "object",
-    "properties": {"answer": {"type": "string"}},
-    "required": ["answer"],
+    "properties": {"quote": {"type": "string"}},
+    "required": ["quote"],
     "additionalProperties": False,
 }
 
-SYSTEM = """You answer a candidate's question during a practice job interview, using only the note you are given.
+SYSTEM = """A candidate has asked a question. You are given one note.
 
-Rules:
-- Use only what the note says. Do not add anything from your own knowledge.
-- If the note does not answer the question, reply with an empty answer.
-- Two sentences at most. Plain, direct, spoken aloud.
-- Never invent a company, a team, a salary, a location or a person."""
+Copy the one or two sentences from the note that answer the question, exactly as they are written.
+Do not change, shorten, combine or add any words.
+If no sentence in the note answers the question, return an empty quote."""
 
-STOP = frozenset("""a an and are as at be been but by can could did do does for from had has
-have how i if in into is it its me my of on or our so than that the their them then there
-these they this to was we were what when where which who why will with would you your""".split())
+# Generic words carry no subject, and several were steering retrieval: "happens" put "what
+# happens to my recording?" on the paragraph about what this is, "anything" put "is anything
+# sent to the cloud?" on the refusal paragraph, and "any" answered "do you have any tips?" with
+# where the recordings are stored. Rare in this corpus is not the same as meaningful. "else" is
+# deliberately NOT here: it is what joins "does anyone else see how I did?" to "nobody else
+# sees how it went", and stopping it made that question decline.
+STOP = frozenset("""a an and any anybody anyone anything are as at be been but by can could
+did do does either every everybody everyone everything for from get gets got had happen happens
+has have how i if in into is it its just like lot me my nobody nothing of on or our so some
+somebody someone something than that the their them then there these they thing things this to
+very was way we were what when where which who why will with would you your""".split())
 
 _WORD = re.compile(r"[a-z0-9][a-z0-9'_-]*")
 
@@ -281,35 +288,26 @@ def _phrases(question: str, passage: Passage) -> int:
     return sum(1 for a, b in zip(q, q[1:]) if "%s %s" % (a, b) in body)
 
 
-def grounded(answer: str, passage: str) -> bool:
-    """Is what it said actually in the note it was given?
+def quoted(quote: str, passage: Passage) -> bool:
+    """Is this the passage's own words, and a real sentence rather than a fragment?
 
-    Content words only: a paraphrase is expected and function words are shared by every
-    sentence in English, so matching the whole string would reject good answers and pass empty
-    ones. A sentence assembled from the passage scores near 1; one that brings in a team size
-    or a salary from nowhere drops below the floor on exactly those words.
+    `observe._grounded` measures how much of the quote the passage covers in long matching
+    runs, which is what separates copying from composing: a sentence rebuilt from the passage's
+    own words -- "recordings are removed when the interview ends" -- matches only in scraps, and
+    a true sentence with a false clause appended carries the clause's length unmatched. It
+    tolerates the tidying a model does while copying, and nothing more.
     """
-    words = _terms(answer)
-    if not words:
-        return False
-    have = set(_terms(passage))
-    hits = sum(1 for w in words if w in have)
-    if hits / len(words) >= MIN_GROUNDED:
-        return True
-    # Close variants -- plural for singular, hyphen for space -- are the model tidying as it
-    # copies, which is the same allowance `observe._grounded` makes for quotes.
-    near = sum(1 for w in words
-               if w in have or difflib.get_close_matches(w, have, n=1, cutoff=0.85))
-    return near / len(words) >= MIN_GROUNDED
+    return _grounded(quote, passage.shown)
 
 
 async def answer(provider: Provider, question: str,
                  passages: list[Passage]) -> tuple[str, str] | None:
-    """One candidate question in, one grounded reply and its citation out, or None to decline.
+    """One candidate question in, the passage's own sentence and its citation out, or None.
 
-    The cascade is bounded and every step down is a step towards the document: compose from the
-    passage, and if the composition drifts, say the passage itself. There is no step that
-    invents.
+    Every way down ends at the honest line rather than at something assembled: no passage, a
+    refusal paragraph, an empty quote and a quote that is not the passage's own words all
+    decline. A declined answer the corpus could have given costs one "I can't answer"; a
+    composed one that is wrong costs a candidate a false fact about their own recordings.
     """
     hit = find(passages, question)
     if hit is None:
@@ -329,19 +327,44 @@ async def answer(provider: Provider, question: str,
         "Note (%s):\n%s\n\nThe candidate asked: %s" % (passage.cite, passage.text, question),
         schema=SCHEMA, max_tokens=MAX_TOKENS)
     try:
-        said = (json.loads(out.text or "{}").get("answer") or "").strip()
+        said = " ".join((json.loads(out.text or "{}").get("quote") or "").split())
     except ValueError:
         said = ""
-
-    if said and grounded(said, passage.shown):
-        return said, passage.cite
-    if said:
-        # It answered off the document. The document is still the better answer than nothing,
-        # and quoting it is the one reply that cannot be wrong about what the document says.
-        return _first_sentences(passage.text), passage.cite
-    return None
+    if not said or not quoted(said, passage):
+        return None
+    spoken = _sentences_around(said, passage.text)
+    return (spoken, passage.cite) if spoken else None
 
 
-def _first_sentences(text: str, keep: int = 2) -> str:
-    parts = re.split(r"(?<=[.!?])\s+", text.strip())
-    return " ".join(parts[:keep]).strip()
+# Opens a sentence that leans on the one before it. Spoken alone, "It removes that interview's
+# directory" answered "how do I delete an interview?" without ever saying what "it" was.
+_LEANS_BACK = re.compile(r"^(?:it|its|this|that|these|those|they|their)\b", re.I)
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _sentences_around(quote: str, text: str) -> str:
+    """The passage's own whole sentences that the quote was taken from.
+
+    The quote only LOCATES the answer; what is spoken is the document's text, so a model that
+    tidies while copying never puts its tidying into the room. Measured live: asked what happens
+    to their recording, the model quoted a clause from the middle of a sentence -- "says how
+    much space it is using, and states whether..." -- which is true and cannot be said aloud.
+    """
+    sentences = [s for s in _SENTENCE.split(text.strip()) if s]
+    spans, at = [], 0
+    for s in sentences:
+        start = text.find(s, at)
+        spans.append((start, start + len(s)))
+        at = start + len(s)
+    blocks = [b for b in difflib.SequenceMatcher(None, text.lower(), quote.lower(),
+                                                 autojunk=False).get_matching_blocks()
+              if b.size >= 12]
+    # Nothing to locate means nothing to say. Falling back to the quote itself would speak the
+    # model's words after all, which is the one thing this function exists to prevent.
+    if not blocks:
+        return ""
+    lo, hi = blocks[0].a, blocks[-1].a + blocks[-1].size
+    picked = [i for i, (a, b) in enumerate(spans) if a < hi and b > lo]
+    if picked and picked[0] > 0 and _LEANS_BACK.match(sentences[picked[0]]):
+        picked.insert(0, picked[0] - 1)
+    return " ".join(sentences[i] for i in picked)

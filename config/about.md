@@ -31,8 +31,8 @@ never shows a judgement while it is happening.
 
 In a folder on the machine running this, one directory per interview, holding the transcript
 and any audio. The history page names the exact path, says how much space it is using, and
-states whether anything is leaving the machine for the model or for hosting - read it there
-rather than here, because that answer depends on how this copy is configured and this page
+states whether anything is sent off the machine, to a cloud model or for hosting - read it
+there rather than here, because that answer depends on how this copy is configured and this page
 cannot know.
 
 # Deleting an interview

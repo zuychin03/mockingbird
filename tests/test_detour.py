@@ -83,7 +83,7 @@ class Said:
         if self.fail:
             raise ProviderError("LM Studio is not answering")
         self.calls.append((system, user))
-        return Completion(text=json.dumps({"answer": self.answer}))
+        return Completion(text=json.dumps({"quote": self.answer}))
 
 
 def run(coro):
@@ -194,6 +194,22 @@ def test_a_phrase_decides_a_tie_that_corpus_order_would_get_wrong(real_corpus):
     assert hit[1].title == "What it cannot tell you"
 
 
+@pytest.mark.parametrize("asked,want", [
+    # "happens" put this on the paragraph about what Mockingbird is, where it was answered with
+    # "Your recording is deleted immediately" -- false
+    ("What happens to my recording after this?", "Where the recordings and transcripts are"),
+    # "anything" put this on the refusal paragraph, so a question the documents answer declined
+    ("Is anything sent to the cloud?", "Where the recordings and transcripts are"),
+    # "else" is NOT a stop word: it is what joins these two
+    ("Does anyone else see how I did?", "What this is"),
+    # "any" answered this with where the recordings are stored
+    ("Do you have any tips for me?", None),
+])
+def test_a_generic_word_does_not_steer_retrieval(real_corpus, asked, want):
+    hit = detour.find(real_corpus, asked)
+    assert (hit[1].title if hit else None) == want, (asked, hit and hit[1].title)
+
+
 def test_different_forms_of_a_word_still_match(real_corpus):
     """The document says "exported"; nobody asks that way. Without folding, the only paragraph
     about exporting matched nothing the question said and lost a tie to SCORING."""
@@ -208,46 +224,89 @@ def test_a_common_word_decides_nothing(passages):
     assert hit and hit[1].title == "Sections and length"
 
 
-# --- grounding -------------------------------------------------------------------------------
+# --- only the document's own words are ever spoken --------------------------------------------
+# The old check measured what share of a COMPOSED answer's words appeared in the passage. It let
+# through "Your recording is deleted immediately after the interview" -- false -- because
+# generic words carried it. These are the fabrications that reached, or could reach, a candidate.
 
-def test_an_answer_assembled_from_the_note_is_grounded():
-    assert detour.grounded("The history page has a delete button on every row.",
-                           POLICY)
-
-
-def test_an_answer_that_brings_in_facts_from_nowhere_is_not():
-    assert not detour.grounded(
-        "The team is eight engineers in Manchester and the salary is 75000 pounds.", POLICY)
-
-
-def test_tidying_as_it_copies_is_still_grounded():
-    """The model rewrites "recordings included" as "including recordings" and pluralises as it
-    goes. `observe._grounded` makes the same allowance for quotes, and for the same reason."""
-    assert detour.grounded("It removes that interview directory, including the recording.",
-                           POLICY)
-
-
-def test_a_faithful_paraphrase_is_not_thrown_away(passages):
-    """The exact answer qwen gave on 17/09/2026, which the first floor of 0.70 rejected at
-    0.64 -- and the fallback then read a whole paragraph of documentation aloud."""
-    where = next(x for x in passages if x.title == "Where the recordings are")
-    assert detour.grounded(
-        "The recordings are stored in a folder on this machine, within a directory for each "
-        "interview.", where.shown)
+FABRICATIONS = [
+    # the one that was spoken, 21/09/2026, retrieved against the wrong paragraph
+    ("What happens to my recording after this?",
+     "Your recording is deleted immediately after the interview. Nothing else happens to it."),
+    # rebuilt from the deletion paragraph's own words, false, and it scores well on any overlap
+    ("What happens to my recording after this?",
+     "Your recordings are removed from the history page when the interview ends."),
+    # a true sentence with a false clause appended
+    ("How do I delete an interview?",
+     "The history page has a delete button on every row, and recordings are deleted after a "
+     "week anyway."),
+    # facts from nowhere
+    ("How big is the team?", "The team is eight engineers in Manchester on 75000 pounds."),
+]
 
 
-def test_an_answer_is_grounded_against_the_title_as_well_as_the_body(passages):
-    """The title travels in the citation line of the prompt, so it is part of what the model
-    was shown. Checking only the body marked the model's own words as invented."""
-    where = next(x for x in passages if x.title == "Where the recordings are")
-    assert "recordings" not in where.text.lower()
-    assert "recordings" in where.shown.lower()
+@pytest.mark.parametrize("asked,said", FABRICATIONS)
+def test_a_fabrication_is_never_spoken(real_corpus, asked, said):
+    got = run(detour.answer(Said(said), asked, real_corpus))
+    assert got is None or said not in got[0], got
+
+
+def test_what_is_spoken_is_the_documents_text_not_the_models(passages):
+    """The quote only LOCATES the answer. A model that tidies while copying -- a possessive
+    dropped, a comma lost -- never puts its tidying into the room."""
+    p = Said("It removes that interview directory, recordings included and it is not "
+             "reversible.")
+    said, _ = run(detour.answer(p, "How do I delete an interview?", passages))
+    assert "that interview's directory, recordings included, and" in said
+
+
+def test_a_paraphrase_is_not_a_quote(passages):
+    """Reordering is composing. "including the recordings" for "recordings included" is a
+    small change, and it is exactly the kind a model makes when it is writing its own sentence
+    rather than copying -- so it declines, the same line `observe._grounded` draws for scores."""
+    p = Said("It removes that interview's directory, including the recordings, and it is not "
+             "reversible.")
+    assert run(detour.answer(p, "How do I delete an interview?", passages)) is None
+
+
+def test_a_fragment_is_spoken_as_its_whole_sentence(real_corpus):
+    """Measured live: the model quoted a clause from the middle of a sentence -- "says how much
+    space it is using, and states whether..." -- which is true and cannot be said aloud."""
+    p = Said("says how much space it is using, and states whether anything is sent off the "
+             "machine")
+    said, _ = run(detour.answer(p, "What happens to my recording after this?", real_corpus))
+    assert said.startswith("The history page names the exact path")
+    assert said.endswith(".")
+
+
+def test_a_sentence_that_leans_back_brings_the_one_it_leans_on(passages):
+    """Spoken alone, "It removes that interview's directory" answered "how do I delete an
+    interview?" without ever saying what "it" was."""
+    p = Said("It removes that interview's directory, recordings included, and it is not "
+             "reversible.")
+    said, _ = run(detour.answer(p, "How do I delete an interview?", passages))
+    assert said.startswith("The history page has a delete button on every row.")
+
+
+def test_a_quote_that_cannot_be_located_is_never_spoken_as_itself():
+    """Unreachable while `quoted` holds, and kept for the day it does not: with nothing to
+    locate, speaking the quote would put the model's own words into the room after all."""
+    assert detour._sentences_around("totally unrelated words about something else",
+                                    "The history page has a delete button on every row.") == ""
+
+
+def test_a_quote_that_is_not_in_the_note_declines_rather_than_falling_back(passages):
+    """There used to be a fallback that read out the passage's first sentences, which answered
+    "do you have any tips?" with where the recordings are stored. A decline is honest; an
+    unrelated true sentence only sounds like an answer."""
+    p = Said("You should practise your answers out loud every day.")
+    assert run(detour.answer(p, "How do I delete an interview?", passages)) is None
 
 
 # --- answering -------------------------------------------------------------------------------
 
-def test_a_grounded_answer_is_spoken_with_its_source(passages):
-    p = Said("The history page has a delete button on every row, and it is not reversible.")
+def test_a_quoted_answer_is_spoken_with_its_source(passages):
+    p = Said("The history page has a delete button on every row.")
     got = run(detour.answer(p, "How do I delete an interview?", passages))
     assert got is not None
     said, cite = got
@@ -256,24 +315,13 @@ def test_a_grounded_answer_is_spoken_with_its_source(passages):
 
 
 def test_the_note_is_what_the_model_is_given_and_nothing_else(passages):
-    p = Said("Anything.")
+    p = Said("")
     run(detour.answer(p, "How do I delete an interview?", passages))
     system, user = p.calls[0]
     assert "delete button" in user
     # One passage, not the corpus: the other documents must not be in the prompt at all.
     assert "payment reconciliation" not in user
-    assert system is not detour.SYSTEM or "only what the note says" in system
-
-
-def test_an_ungrounded_answer_is_replaced_by_the_document(passages):
-    """The bounded cascade. Every step down is a step towards the document, and no step
-    invents."""
-    p = Said("The team is eight engineers in Manchester on 75000 pounds.")
-    got = run(detour.answer(p, "How do I delete an interview?", passages))
-    assert got is not None
-    said, _ = got
-    assert "Manchester" not in said
-    assert "delete button" in said
+    assert "exactly as they are written" in system
 
 
 def test_an_empty_answer_declines(passages):

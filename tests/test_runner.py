@@ -646,7 +646,7 @@ class _Detour(ScriptedProvider):
         if schema == detour.SCHEMA:
             self.prompts.append(user)
             self.systems.append(system)
-            return Completion(text=json.dumps({"answer": self.answer}))
+            return Completion(text=json.dumps({"quote": self.answer}))
         return await super().complete(system, user, schema, max_tokens, **kw)
 
 
