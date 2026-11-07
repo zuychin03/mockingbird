@@ -8,9 +8,13 @@ connection timing out before the request ever landed (log 8.6). A health check b
 
 from __future__ import annotations
 
+import socket
 import sys
+import threading
 import time
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -89,3 +93,32 @@ def test_preflight_rejects_a_loaded_non_product_model(monkeypatch, capsys):
 
     assert cli._preflight(provider.LMStudio(), skip=True) is None
     assert provider.MODEL in capsys.readouterr().out
+
+
+@pytest.fixture()
+def lm_studio(monkeypatch):
+    """A listening socket standing in for LM Studio, pointed at by provider.BASE."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(4)
+    monkeypatch.setattr(provider, "BASE", "http://127.0.0.1:%d" % srv.getsockname()[1])
+    yield srv
+    srv.close()
+
+
+def test_a_server_that_never_answers_is_a_provider_error(lm_studio):
+    """A read timeout is TimeoutError, not URLError, so it escaped `_post` and the HTTP app
+    answered 500 when the laptop slept mid-request (07/11/2026)."""
+    with pytest.raises(provider.ProviderError, match="did not answer"):
+        provider._post("/v1/chat/completions", {}, 0.3)
+
+
+def test_a_server_that_hangs_up_mid_request_is_a_provider_error(lm_studio):
+    def hang_up():
+        conn, _ = lm_studio.accept()
+        conn.recv(65536)
+        conn.close()
+
+    threading.Thread(target=hang_up, daemon=True).start()
+    with pytest.raises(provider.ProviderError, match="did not answer"):
+        provider._post("/v1/chat/completions", {}, 5.0)

@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import budget, contract, focus, guards, intent, observe, result_check, session  # noqa: E402
 from app import runner as runner_mod  # noqa: E402
-from app.provider import Completion  # noqa: E402
+from app.provider import Completion, ProviderError  # noqa: E402
 from app.runner import CONFIRM_NARROW, Runner, live_view  # noqa: E402
 
 
@@ -211,6 +211,27 @@ def test_history_is_refreshed_only_after_a_question_closes(tmp_path):
     run(r.submit("b"))
     run(r.ask())                          # refresh happens when the next question opens
     assert r.history.render() != ""
+
+
+class _SummaryDown(ScriptedProvider):
+    async def complete(self, system, user, schema=None, max_tokens=400, **kw):
+        if schema is None:
+            raise ProviderError("the model server did not answer within 120 s (timed out)")
+        return await super().complete(system, user, schema, max_tokens, **kw)
+
+
+def test_a_failed_history_refresh_still_opens_the_next_question(tmp_path):
+    """The summary is context for the next turn, not the turn. A summariser call that timed out
+    raised through ask() and the HTTP app answered 500 mid-interview (07/11/2026)."""
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(PLAN)
+    r = Runner(_SummaryDown([d("advance", "Good.")]), PLAN, state)
+    run(r.ask())
+    run(r.submit("a full answer"))
+    opened = run(r.ask())
+    assert opened.text == "Question two?"
+    assert r.history.render() == ""
+    assert r.history.stale, "a failed refresh is retried at the next boundary"
 
 
 # ------------------------------------------- clarify liveness (live find)

@@ -16,6 +16,7 @@ async signature is what phase 2 needs. Swap the transport, not the interface.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json
 import math
 import time
@@ -83,6 +84,11 @@ def _post(path: str, body: dict, timeout: float) -> dict:
         raise ProviderError("LM Studio %s: %s" % (e.code, e.read()[:200].decode("utf-8", "replace")))
     except urllib.error.URLError as e:
         raise ProviderError("cannot reach LM Studio at %s (%s)" % (BASE, e.reason))
+    except (OSError, http.client.HTTPException, ValueError) as e:
+        # A read timeout is TimeoutError and a dropped connection a ConnectionError or an
+        # http.client error; none is a URLError, and a timeout escaped as a 500 (07/11/2026).
+        raise ProviderError("LM Studio at %s did not answer (%s: %s)"
+                            % (BASE, type(e).__name__, e))
 
 
 def _posterior(entries: list[dict], field_name: str, values: list[str]) -> dict[str, float]:
@@ -219,7 +225,7 @@ def all_models() -> list[dict]:
     try:
         with urllib.request.urlopen(BASE + "/api/v0/models", timeout=20) as r:
             return json.loads(r.read())["data"]
-    except urllib.error.URLError as e:
+    except (OSError, http.client.HTTPException, ValueError, KeyError) as e:
         raise ProviderError("cannot reach LM Studio at %s (%s). Is `lms server start` running?"
                             % (BASE, getattr(e, "reason", e)))
 

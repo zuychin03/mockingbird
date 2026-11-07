@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .provider import ProviderError
+
 SUMMARISER = ("You maintain a running note of an interview for the interviewer's reference. "
               "Four sentences maximum. Say what ground has been covered. "
               "Do not evaluate the candidate.")
@@ -56,7 +58,12 @@ class History:
         """Regenerate the summary from completed questions. No-op when nothing closed."""
         if not self._dirty or not self._completed:
             return
-        out = await provider.complete(SUMMARISER, self.source_text(), max_tokens=250)
+        try:
+            out = await provider.complete(SUMMARISER, self.source_text(), max_tokens=250)
+        except ProviderError:
+            # Context for the next turn, not the turn: the old summary stands and the next
+            # boundary tries again. Raising here failed a request mid-interview (07/11/2026).
+            return
         text = (out.text or "").strip()
         if text:
             self.summary = text
