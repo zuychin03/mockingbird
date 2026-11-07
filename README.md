@@ -257,7 +257,8 @@ ui/
   static/fonts/    the three faces, self-hosted so the app renders offline
 config/            interview plans, the question bank, and what the interview may say
                    about itself (about.md)
-installer/         the Windows installer: build script, Inno Setup script, locked wheels
+installer/         the Windows installer: build script, Inno Setup script, locked wheels, and
+                   the app icon with the script that renders it from the logo
 tests/             deterministic unit and integration coverage
 tools/shots.sh     screenshots every surface at both widths, for design review
 ```

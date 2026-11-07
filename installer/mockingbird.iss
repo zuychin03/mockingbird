@@ -27,17 +27,20 @@ OutputBaseFilename=Mockingbird-Setup-{#AppVersion}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile={#Repo}\installer\mockingbird.ico
 UninstallDisplayName=Mockingbird
+UninstallDisplayIcon={app}\mockingbird.ico
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Files]
 Source: "{#Staging}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#Repo}\installer\mockingbird.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Mockingbird"; Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; Comment: "Practise a software-engineering interview"
-Name: "{autodesktop}\Mockingbird"; Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\Mockingbird"; Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; IconFilename: "{app}\mockingbird.ico"; Comment: "Practise a software-engineering interview"
+Name: "{autodesktop}\Mockingbird"; Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; IconFilename: "{app}\mockingbird.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; Description: "Start Mockingbird now (the first start downloads about 5 GB)"; Flags: postinstall nowait skipifsilent
