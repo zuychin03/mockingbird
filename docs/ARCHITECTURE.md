@@ -250,6 +250,8 @@ fixtures and real answers, and the remaining wording differences were near-ties.
 | [`app/contract.py`](../app/contract.py) | Normal turn and speech-only repair schemas, prompts and severity utility | Current question, answer, summary | Structured model request |
 | [`app/provider.py`](../app/provider.py) | llama-server transport, metrics, posteriors and exact model identity (alias and file) | System/user prompts and schema | `Completion` or `ProviderError` |
 | [`app/servers.py`](../app/servers.py) | Starts the three `llama-server` processes in order with their measured flags; `python -m app.servers` | Model files under `models/` | Servers on 8091, 8092 and 8093 |
+| [`app/download.py`](../app/download.py) | First-run downloads: every model and the llama.cpp runtime pinned to an exact revision and SHA-256; Parselmouth from PyPI, hash-pinned | Network, or local copies via `--from` | Files under `models/` and `runtime/` |
+| [`app/launch.py`](../app/launch.py) | What the installed shortcut runs: download what is missing, start the servers sharing its console, serve the app, open the browser | An install folder | A running app; closing the window stops it |
 | [`app/intent.py`](../app/intent.py) | Clause-aware control parsing | Candidate utterance | stop, continue, skip or unclear |
 | [`app/direction.py`](../app/direction.py) | Separates candidate questions from answers | Candidate utterance | Role decision and optional answer prefix |
 | [`app/guards.py`](../app/guards.py) | Validates model proposal and sanitises speech | Raw model JSON and utterance | `Guarded` effective proposal |

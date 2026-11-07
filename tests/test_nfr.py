@@ -27,8 +27,13 @@ from app.runner import Runner  # noqa: E402
 from test_runner import PLAN, ScriptedProvider, d  # noqa: E402
 
 APP = Path(__file__).resolve().parent.parent / "app"
+API = APP.parent / "api"
 ALLOWED_HOSTS = {"127.0.0.1"}
 HOST_RE = re.compile(r"https?://([A-Za-z0-9._-]+)")
+# The first-run setup is the one place that reaches off the machine: before any interview, for
+# pinned public files, with the user told the size first. Its hosts are named here, not waved
+# through, and nothing on the live path may import it.
+SETUP_HOSTS = {"download.py": {"huggingface.co", "github.com"}}
 
 
 # --------------------------------------------------------------- NFR-4: egress
@@ -36,10 +41,18 @@ def test_no_module_on_the_live_path_names_a_foreign_host():
     """Catches a telemetry call, a CDN font, or a cloud fallback added by hand."""
     offenders = []
     for f in sorted(APP.glob("*.py")):
+        allowed = ALLOWED_HOSTS | SETUP_HOSTS.get(f.name, set())
         for host in HOST_RE.findall(f.read_text(encoding="utf-8")):
-            if host not in ALLOWED_HOSTS:
+            if host not in allowed:
                 offenders.append("%s -> %s" % (f.name, host))
     assert not offenders, "foreign hosts on the live path: %s" % offenders
+
+
+def test_only_the_launcher_can_reach_the_first_run_downloads():
+    imports = re.compile(r"from\s+(?:app|\.)\s+import[^\n]*\bdownload\b|import\s+app\.download\b")
+    users = sorted(f.name for f in [*APP.glob("*.py"), *API.glob("*.py")]
+                   if imports.search(f.read_text(encoding="utf-8")))
+    assert users == ["launch.py"]
 
 
 def test_provider_is_pinned_to_loopback():

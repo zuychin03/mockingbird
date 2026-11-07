@@ -88,15 +88,37 @@ completeness verdict, action posteriors, guard names, rubric results — go to s
 report and never cross the live channel. Someone who can watch the agent deciding their answer
 is weak will change their answer, and the assessment stops measuring what it claims to.
 
-## Running it
+## Installing it on Windows
 
-Needs Python 3.12, a llama.cpp build at b11960 or later, and the model files below. Every
-model runs in llama.cpp's `llama-server` on loopback, one process each, started together and
-before the app:
+`python installer/build.py` builds `dist/Mockingbird-Setup-<version>.exe`, a 33 MB installer
+carrying its own Python, the app and the built interface. It needs Inno Setup 6 and the
+interface built first (`npm --prefix ui run build`). The installer:
+
+* installs for the current user only, with no admin rights, into
+  `%LOCALAPPDATA%\Programs\Mockingbird`, and adds a Start-menu shortcut;
+* on first start downloads about 5 GB once: the models from Hugging Face and the llama.cpp
+  runtime from GitHub, each pinned to an exact revision and checked against SHA-256 before it
+  is used, and Parselmouth from PyPI;
+* then starts the model servers and the app and opens it. Closing its window stops everything.
+
+It needs a 6 GB NVIDIA GPU. Uninstalling removes the program, the models and the runtime and
+keeps the interviews in `data\`. The installer is not code-signed yet, so Windows SmartScreen
+warns before running it.
+
+## Running it from source
+
+Needs Python 3.12. Every model runs in llama.cpp's `llama-server` on loopback, one process
+each. Fetch the models and the runtime once, then start the servers before the app:
 
 ```bash
+python -m app.download
 python -m app.servers
 ```
+
+`app.download` puts every file below in place, each checked against a pinned SHA-256, and skips
+whatever is already there; `--from DIR` takes matching files from a folder that already holds
+them. Point `MOCKINGBIRD_LLAMA_SERVER` at an existing `llama-server.exe` instead of fetching the
+runtime into `runtime/`.
 
 | Server | Model file | Where it goes | Port |
 |---|---|---|---|
@@ -104,8 +126,7 @@ python -m app.servers
 | Voice | the LFM3-Audio files in the voice section below | `models/lfm3-audio/` | 8092 |
 | Embedder, optional | `all-MiniLM-L6-v2-Q8_0.gguf` from [`second-state/All-MiniLM-L6-v2-Embedding-GGUF`](https://huggingface.co/second-state/All-MiniLM-L6-v2-Embedding-GGUF) | `models/all-minilm-l6-v2/` | 8093 |
 
-Point `MOCKINGBIRD_LLAMA_SERVER` at `llama-server.exe` if it is not at the default path. The
-language model is started under its exact alias and checked by alias and file before an
+The language model is started under its exact alias and checked by alias and file before an
 interview starts, so a different model cannot quietly take its place. All three fit a 6 GB
 card together.
 
@@ -208,6 +229,8 @@ app/
   observe.py       quote extraction, with grounding
   provider.py      the language model over llama-server: turns, posteriors, the exact-model gate
   servers.py       starts the three llama-server processes, in order
+  download.py      first-run downloads: pinned sources, SHA-256 checks
+  launch.py        what the installed shortcut runs: download, servers, app, browser
   embed.py         OPTIONAL local sentence similarity; returns None when absent
   score.py         the rubric, as arithmetic
   report.py        the feedback, and the rules about how it is worded
@@ -234,6 +257,7 @@ ui/
   static/fonts/    the three faces, self-hosted so the app renders offline
 config/            interview plans, the question bank, and what the interview may say
                    about itself (about.md)
+installer/         the Windows installer: build script, Inno Setup script, locked wheels
 tests/             deterministic unit and integration coverage
 tools/shots.sh     screenshots every surface at both widths, for design review
 ```
@@ -360,12 +384,12 @@ spoken line rendered in about a fifth of its own length, and the language model'
 slower. Inside one answer, a word on a slice boundary can come back twice.
 
 Voice needs two things this repository does not ship, because neither is ours, besides the
-llama.cpp build the language model already needs:
+llama.cpp build the language model already needs. `python -m app.download` fetches both:
 
 | What | Where it goes |
 |---|---|
-| `LFM3-Audio-2B-Q8_0.gguf` and `mmproj-LFM3-Audio-2B-BF16.gguf` from [`LiquidAI/LFM3-Audio-2B-GGUF`](https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF) | `models/lfm3-audio/` |
-| Silero VAD, for live mode only: [`silero_vad.onnx`](https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx) | `models/vad/` |
+| `LFM3-Audio-2B-Q8_0.gguf` and `mmproj-LFM3-Audio-2B-BF16.gguf` from [`LiquidAI/LFM3-Audio-2B-GGUF`](https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF), at revision `b0d3187e`: the projector was replaced afterwards, and the voice was measured on this one | `models/lfm3-audio/` |
+| Silero VAD, for live mode only: [`silero_vad.onnx`](https://github.com/snakers4/silero-vad/raw/v6.2.3/src/silero_vad/data/silero_vad.onnx) from v6.2.3 | `models/vad/` |
 
 The server is checked at connect time and reported rather than assumed: without it the interview
 runs on typed answers and says so on screen, and the interviewer does not speak. Its model is

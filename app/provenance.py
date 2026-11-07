@@ -19,9 +19,12 @@ from pathlib import Path
 from . import contract
 
 ROOT = Path(__file__).resolve().parent.parent
+BUILD = ROOT / "BUILD"     # written by installer/build.py: an install has no git to ask
 
 
 def code_revision() -> str:
+    if BUILD.is_file():
+        return BUILD.read_text(encoding="utf-8").strip() or "unknown"
     try:
         out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT,
                              capture_output=True, text=True, timeout=5)

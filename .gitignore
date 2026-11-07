@@ -23,6 +23,7 @@ credentials/
 *.log
 
 models/
+runtime/
 council/
 
 # Session artifacts and generated reports.

@@ -28,8 +28,9 @@ from app import embed, lfm3, provider
 
 ROOT = Path(__file__).resolve().parent.parent
 MODELS = ROOT / "models"
+# Where `python -m app.download` puts the llama.cpp release; the variable points elsewhere.
 BINARY = Path(os.environ.get("MOCKINGBIRD_LLAMA_SERVER",
-                             r"C:\src\llama.cpp-b11981\llama-server.exe"))
+                             ROOT / "runtime" / "llama.cpp" / "llama-server.exe"))
 LLM_FILE = MODELS / "qwen3-4b-instruct-2507" / provider.MODEL_FILE
 EMBED_FILE = MODELS / "all-minilm-l6-v2" / "all-MiniLM-L6-v2-Q8_0.gguf"
 READY_SECONDS = 120
@@ -89,40 +90,57 @@ def _wait(s: Server, proc: subprocess.Popen) -> bool:
     return False
 
 
+Started = list[tuple[Server, subprocess.Popen]]
+
+
+def start(log=None) -> tuple[Started, str | None]:
+    """Start whichever servers are not already answering, one at a time. Returns what was
+    started, and why the required one could not be when it could not. `log` takes the servers'
+    output instead of the console."""
+    started: Started = []
+    for s in ALL:
+        if healthy(s.base):
+            print("%s: already running on %s" % (s.name, s.base), flush=True)
+            continue
+        if gone := missing(s):
+            why = "%s: not started, missing %s" % (s.name, ", ".join(map(str, gone)))
+            print(why, flush=True)
+            if s.required:
+                return started, why
+            continue
+        print("%s: starting on %s" % (s.name, s.base), flush=True)
+        proc = subprocess.Popen(command(s), stdout=log, stderr=subprocess.STDOUT if log else None)
+        started.append((s, proc))
+        # One at a time, so a load failure is this server's and not a contended allocation.
+        if not _wait(s, proc):
+            why = "%s: did not become ready" % s.name
+            print(why, flush=True)
+            if s.required:
+                return started, why
+            continue
+        print("%s: ready" % s.name, flush=True)
+    return started, None
+
+
+def stop(started: Started) -> None:
+    for _, p in started:
+        if p.poll() is None:
+            p.terminate()
+
+
 def main() -> int:
-    started: list[tuple[Server, subprocess.Popen]] = []
+    started: Started = []
     try:
-        for s in ALL:
-            if healthy(s.base):
-                print("%s: already running on %s" % (s.name, s.base), flush=True)
-                continue
-            if gone := missing(s):
-                print("%s: not started, missing %s" % (s.name, ", ".join(map(str, gone))),
-                      flush=True)
-                if s.required:
-                    return 1
-                continue
-            print("%s: starting on %s" % (s.name, s.base), flush=True)
-            proc = subprocess.Popen(command(s))
-            started.append((s, proc))
-            # One at a time, so a load failure is this server's and not a contended allocation.
-            if not _wait(s, proc):
-                print("%s: did not become ready" % s.name, flush=True)
-                if s.required:
-                    return 1
-                continue
-            print("%s: ready" % s.name, flush=True)
-        if not started:
-            return 0
+        started, why = start()
+        if why or not started:
+            return 1 if why else 0
         while any(p.poll() is None for _, p in started):
             time.sleep(1)
         return 0
     except KeyboardInterrupt:
         return 0
     finally:
-        for _, p in started:
-            if p.poll() is None:
-                p.terminate()
+        stop(started)
 
 
 if __name__ == "__main__":
