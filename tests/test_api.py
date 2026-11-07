@@ -197,6 +197,70 @@ def test_starting_a_session_needs_the_exact_model_loaded(client, monkeypatch, tm
     assert api.prov.MODEL in r.json()["detail"]
 
 
+def test_an_answers_extraction_reaches_the_next_answer_over_http(monkeypatch, tmp_path):
+    """Every request rebuilds the Runner from the snapshot, and the extraction one answer
+    started was never handed to the next, so `observations-complete` could not fire in the
+    browser: 0 of ~100 question closes over 8 sessions on 07/11/2026."""
+    from app import contract, observe
+    from app.provider import Completion
+
+    plan = {"id": "http-pacing", "phases": [{
+        "id": "p1", "type": "adaptive_discussion", "answer_shape": "open", "probe_budget": 6,
+        "scored": False, "questions": ["Question one?", "Question two?"]}]}
+    (tmp_path / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    monkeypatch.setattr(api, "ROOT", tmp_path)
+    monkeypatch.setattr(api, "LIVE", tmp_path / "live.json")
+    monkeypatch.setattr(api.sess, "SESSIONS", tmp_path / "sessions")
+    monkeypatch.setattr(api.prov, "loaded_models", lambda: [{"id": api.prov.MODEL}])
+    monkeypatch.setattr(api.embed, "similarity", lambda a, b: None)
+    monkeypatch.setattr(api, "_detour", lambda plan: [])
+    monkeypatch.setattr(api, "_warm", lambda p, plan: None)
+
+    # Always a probe, never the same line twice, so only the observation rule can close it.
+    probes = iter(["How long did the rollback take?", "Who else did you bring in?",
+                   "What would you change about it now?"])
+
+    class Model:
+        def __init__(self, *a, **k):
+            pass
+
+        async def complete(self, system, user, schema=None, max_tokens=400,
+                           enum_field=None, enum_values=None):
+            if schema is None:
+                return Completion(text="Covered one question so far.")
+            if schema == contract.SPEECH_SCHEMA:
+                return Completion(text=json.dumps({"say": ""}))
+            return Completion(text=json.dumps(
+                {"act": "probe", "say": next(probes), "ok": False, "ask": ""}))
+
+    monkeypatch.setattr(api.prov, "LMStudio", Model)
+    read = []
+
+    def extractor(p):
+        async def fn(question_id, question, utterance):
+            read.append(utterance)
+            o = observe.Observation(question_id=question_id, question=question,
+                                    answers=[utterance])
+            o.situation, o.action, o.result = "the outage", "I rolled it back", "we shipped it"
+            return o
+        return fn
+
+    monkeypatch.setattr(api, "_extractor", extractor)
+
+    with TestClient(api.app) as c:
+        started = c.post("/api/session/start", json={"plan_path": "plan.json"})
+        assert started.status_code == 200, started.text
+        c.post("/api/session/answer", json={"text": "The whole story, start to finish."})
+        c.get("/api/session")      # a page poll between answers must not drop it
+        state = c.post("/api/session/answer", json={"text": "That's my example."}).json()
+
+    assert read == ["The whole story, start to finish."]
+    rows = [json.loads(x) for x in next((tmp_path / "sessions").glob("*/decisions.jsonl"))
+            .read_text(encoding="utf-8").splitlines()]
+    assert "observations-complete->advance" in rows[-1]["guards"]
+    assert state["question_number"] == 2
+
+
 def test_a_plan_outside_the_project_cannot_be_loaded(client, monkeypatch, tmp_path):
     monkeypatch.setattr(api, "LIVE", tmp_path / "live.json")
     r = client.post("/api/session/start", json={"plan_path": "../../elsewhere.json"})

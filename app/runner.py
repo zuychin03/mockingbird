@@ -671,7 +671,12 @@ class Runner:
                 self.answers_this_question.append(answered)
                 applied.append("answer-part-kept")
             g = guards.Guarded("clarify", QUESTION_DEFERRED, False, "", applied)
-            return self._dispatch(g, utterance, Completion(text=""))
+            outcome = self._dispatch(g, utterance, Completion(text=""))
+            # Kept but never read, the story could not count as complete, so "that's my
+            # example" was judged alone and probed (junior script Q10, 07/11/2026).
+            if "answer-part-kept" in applied:
+                self._observe_later(answered)
+            return outcome
 
         # Pick what to ASK ABOUT before asking. The model still writes the sentence; it no
         # longer chooses the sentence's purpose, which is where the repertoire ran out

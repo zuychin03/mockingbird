@@ -52,7 +52,11 @@ CHANGE = re.compile(
     r"agreed|convinc(?:e|ed)|kept our|we kept|switch(?:ed)?|mov(?:e|ed) to"
     r")\b"
     # No trailing boundary: "got reviewed" has no break between the stem and its suffix.
-    r"|\bgot \w*(?:review|merg|approv|fix|shipp|sign)\w*", re.I)
+    r"|\bgot \w*(?:review|merg|approv|fix|shipp|sign)\w*"
+    # Only these forms. Bare "passed"/"committed" let through 7 of 16 non-results, among them
+    # "nothing gets committed until I've used it live" and "Redis errors passed 1%".
+    r"|\bpassed (?:all|every|each|\w+ (?:out )?of)\b"
+    r"|\bcommitted (?:it|the|that|this|my|our)\b", re.I)
 
 
 def states_change(quote: str) -> bool:

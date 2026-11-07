@@ -557,6 +557,36 @@ def test_an_answer_with_a_question_on_the_end_keeps_its_answer(tmp_path):
     assert r.questions_asked == [mixed]
 
 
+def test_a_question_quoted_inside_the_answer_does_not_cut_it_short(tmp_path):
+    """Found sitting the junior script (07/11/2026): the cut fell at the quoted question, so
+    the result -- the part the follow-up then asked for -- was discarded with the real one."""
+    mixed = ("All the tests passed, then it broke in four ways the tests couldn't catch. A token "
+             "limit cut the answer off, so \"how am I scored?\" came back as a refusal. I fixed "
+             "all four, it passed nine out of nine live checks, and then I committed it. Sorry, "
+             "can I ask how code review works on the team here?")
+    r, state = build([d("probe", "Tell me more.")], tmp_path)
+    run(r.ask())
+    run(r.submit(mixed))
+    assert "answer-part-kept" in state.turns[-1].guards
+    kept = r.answers_this_question[0]
+    assert 'so "how am I scored?" came back' in kept, "the candidate's words, unrespaced"
+    assert kept.endswith("and then I committed it.")
+    assert "code review" not in kept
+
+
+def test_the_first_of_two_enumerated_questions_is_not_an_answer(tmp_path):
+    """From a stored session. Cutting at the hiring-context question, the first fix tried for
+    the quote, kept this first question as evidence because only the second names the team."""
+    asked = ("Two. How many people could review a change to your routing service on its merits "
+             "today? And what happened the last time someone on the team was wrong about an "
+             "architecture decision - how did that get resolved?")
+    r, state = build([d("probe", "Tell me more.")], tmp_path)
+    run(r.ask())
+    run(r.submit(asked))
+    assert "candidate-question->defer" in state.turns[-1].guards
+    assert r.answers_this_question == []
+
+
 def test_a_bare_question_records_no_answer(tmp_path):
     r, _ = build([d("probe", "Tell me more.")], tmp_path)
     run(r.ask())
@@ -2037,6 +2067,22 @@ def test_a_complete_triple_closes_the_question_before_the_cap(tmp_path):
     run(r.ask())
     run(r.submit("a complete answer"))          # extraction queued
     out = run(r.submit("more"))                 # settled at the top of this turn
+    assert "observations-complete->advance" in state.turns[-1].guards
+    assert out.closed_question
+
+
+def test_the_answer_in_front_of_a_deferred_question_is_read(tmp_path):
+    """Junior script Q10 (07/11/2026): the answer part was kept but never extracted, so the
+    story could not count as complete and "that's my example" was judged alone and probed."""
+    parts = Parts(("situation", "action", "result"))
+    r, state = adaptive([d("probe", "And how did that go?")], parts, tmp_path)
+    run(r.ask())
+    run(r.submit("CI took forty minutes, so I split the suite by package and cached "
+                 "dependencies, and it dropped to nine. How does code review work on the team "
+                 "here?"))
+    assert "answer-part-kept" in state.turns[-1].guards
+    out = run(r.submit("Oh, sure, sorry. Yeah, that's my example for that one."))
+    assert parts.calls == 1, "the kept part, and nothing yet for the line just given"
     assert "observations-complete->advance" in state.turns[-1].guards
     assert out.closed_question
 

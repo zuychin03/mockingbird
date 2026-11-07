@@ -36,6 +36,7 @@ import re
 from . import intent
 
 _SENTENCE = re.compile(r"[^.!?]+[.!?]?")
+CLOSING_QUOTES = ("\"", "'", "”", "’")
 
 # Asking about the place they would be working. Present or future, and about the interviewer's
 # side of the table rather than the candidate's history.
@@ -98,16 +99,22 @@ def answer_part(utterance: str) -> str:
     Empty when the utterance opens on a question, and empty when nothing is punctuated as
     one: an announced question ("Two. First, what the on-call rota ...") has no answer in
     front of it, and returning the whole utterance there would score a question as an answer.
+
+    A question mark straight before a closing quote is one they are reporting, not asking.
+    Found sitting the junior script: "...so "how am I scored?" came back as a refusal. I fixed
+    all four, it passed nine out of nine live checks ..." lost everything after the quote, the
+    result included, and the interviewer then probed for what it had been told. Cutting at the
+    hiring-context question instead was tried and kept the first of two enumerated questions
+    ("Two. How many people could review a change ...? And ...") as an answer. The text is
+    sliced, not re-joined, because the splitter breaks inside the quote.
     """
-    parts = sentences(utterance)
-    if not any(s.rstrip().endswith("?") for s in parts):
+    text = utterance or ""
+    spans = [m for m in _SENTENCE.finditer(text) if m.group().strip()]
+    asking = [m for m in spans if m.group().endswith("?")]
+    if not asking:
         return ""
-    kept: list[str] = []
-    for s in parts:
-        if s.rstrip().endswith("?"):
-            break
-        kept.append(s)
-    return " ".join(kept)
+    theirs = [m for m in asking if text[m.end():m.end() + 1] not in CLOSING_QUOTES]
+    return text[:(theirs or asking)[0].start()].strip()
 
 
 def is_candidate_question(utterance: str) -> bool:

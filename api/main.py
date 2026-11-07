@@ -230,6 +230,21 @@ def _detour(plan: dict) -> list:
     return detour_mod.corpus(plan)
 
 
+# An extraction still in flight cannot go into the snapshot, and the Runner is rebuilt from the
+# snapshot on every request, so it is held here until the next answer's `_settle` folds it in.
+# Without it the observation stop rules never fired in the browser: 0 of ~100 question closes
+# over 8 sessions on 07/11/2026, against 93 in-process. One live session, so one entry.
+_PENDING: dict[str, asyncio.Future] = {}
+
+
+def _hold_pending(r) -> None:
+    """Called only by the endpoints that create or advance a session. A read-only request
+    restoring an older task here could overwrite the one an answer just started."""
+    _PENDING.clear()
+    if r._pending is not None:
+        _PENDING[r.state.session_id] = r._pending
+
+
 def _runner():
     """The snapshot carries its own plan, so nothing here has to know which one was running.
     A session started by the terminal harness resumes here and vice versa."""
@@ -237,12 +252,14 @@ def _runner():
         raise HTTPException(404, "no session in progress")
     p = prov.LMStudio()
     try:
-        return resume.read(p, None, LIVE, observe_fn=_extractor(p),
-                           similarity=embed.similarity, detour_for=_detour)
+        r = resume.read(p, None, LIVE, observe_fn=_extractor(p),
+                        similarity=embed.similarity, detour_for=_detour)
     except KeyError as e:
         raise HTTPException(
             409, "this session predates the self-describing snapshot and cannot be resumed "
                  "here; finish it in the terminal or start a new one (%s)" % e) from e
+    r._pending = _PENDING.get(r.state.session_id)
+    return r
 
 
 def _turns(r) -> list[dict]:
@@ -336,6 +353,7 @@ async def session_start(plan_path: str = Body(..., embed=True)) -> dict:
     # refreshes, and `_pending` derives the line to show.
     await _guard_async(r.ask)
     _warm(p, plan)
+    _hold_pending(r)
     return _session_state(r)
 
 
@@ -370,6 +388,9 @@ async def session_answer(text: str = Body(..., embed=True),
     out = await _guard_async(r.submit, text, _recording(r, audio))
     if out.closed_question and not r.done and not out.end_session:
         await _guard_async(r.ask)
+    # Only on success: a failed request leaves the snapshot as it was, and the task it had
+    # already folded in is folded in again by the retry, which is then correct.
+    _hold_pending(r)
     return _session_state(r)
 
 
