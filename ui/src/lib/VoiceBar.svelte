@@ -12,7 +12,16 @@
    * bar can hide.
    */
   import Icon from '$lib/Icon.svelte';
-  import { voice, LABELS, enable, toggleTalking, toggleCaptions } from '$lib/audio/voice.svelte.js';
+  import {
+    voice,
+    LABELS,
+    PAUSES,
+    enable,
+    toggleTalking,
+    toggleCaptions,
+    setLive,
+    setPause
+  } from '$lib/audio/voice.svelte.js';
 
   // Only the talk control waits on the API. Switching voice *on* during a routine fetch is
   // harmless, and gating it on `busy` made the button silently swallow the first click while
@@ -82,7 +91,8 @@
       </div>
 
       <p class="state" aria-live="polite">
-        {label}{#if voice.phase === 'thinking'}<span class="num"> {elapsed.toFixed(0)}s</span>{/if}
+        {label}{#if voice.phase === 'thinking'}<span class="num">{' '}{elapsed.toFixed(0)}s</span
+          >{/if}
       </p>
 
       {#if talking}
@@ -139,12 +149,54 @@
     <div class="controls">
       <button class="talk" class:live={talking} onclick={toggleTalking} disabled={busy}>
         <Icon name="mic" size={14} />
-        {talking ? 'Stop answering' : 'Tap to answer'}
+        {talking ? (voice.live ? 'Finish answer' : 'Stop answering') : 'Tap to answer'}
       </button>
+
+      <!-- FR-26: tap-to-talk is the default and live is the opt-in, with the pause a setting
+           rather than a constant, because thinking pauses are personal (12.8). -->
+      <div class="turns" role="group" aria-label="How an answer ends">
+        <button class="mode" aria-pressed={!voice.live} onclick={() => setLive(false)}>Tap</button>
+        <button
+          class="mode"
+          aria-pressed={voice.live}
+          onclick={() => setLive(true)}
+          disabled={!voice.liveReady}
+          title={voice.liveReady ? 'Hands-free, like a conversation' : voice.liveWhy}
+        >
+          Live
+        </button>
+      </div>
+
+      {#if voice.live}
+        <label class="pause">
+          Sent after
+          <select value={voice.pause} onchange={(e) => setPause(Number(e.currentTarget.value))}>
+            {#each PAUSES as p (p)}
+              <option value={p}>{p} s quiet</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+
       <span class="keyhint">
-        <b>Space</b> talks · <b>Esc</b> stops the interviewer · or type below
+        {#if voice.live}
+          <b>Space</b> finishes early · <b>Esc</b> stops the interviewer · or type below
+        {:else}
+          <b>Space</b> talks · <b>Esc</b> stops the interviewer · or type below
+        {/if}
       </span>
     </div>
+
+    {#if voice.live}
+      <!-- 12.6.2 makes correcting the transcript before scoring a fairness requirement; live
+           mode trades it for flow, so the trade is stated where it is made. -->
+      <p class="live-note">
+        The microphone opens after each question, and your answer is sent as it was heard once
+        you have been quiet for {voice.pause} s. Tap mode lets you correct it before it is sent.
+      </p>
+    {:else if !voice.liveReady && voice.liveWhy}
+      <p class="live-note">Live mode is unavailable: {voice.liveWhy}.</p>
+    {/if}
   {/if}
 </div>
 
@@ -302,6 +354,69 @@
     align-items: center;
     gap: var(--s-3);
     flex-wrap: wrap;
+  }
+
+  .turns {
+    display: inline-flex;
+  }
+
+  .mode {
+    font: inherit;
+    font-family: var(--font-structure);
+    font-size: var(--step--1);
+    border: 1px solid var(--rule-strong);
+    background: transparent;
+    color: var(--fg-quiet);
+    padding: var(--s-2) var(--s-3);
+    cursor: pointer;
+  }
+
+  .mode + .mode {
+    border-left: none;
+  }
+
+  .mode[aria-pressed='true'] {
+    border-color: var(--signal);
+    color: var(--signal);
+  }
+
+  /* The pressed half draws its full border; the shared edge would otherwise stay grey. */
+  .mode[aria-pressed='true'] + .mode,
+  .mode + .mode[aria-pressed='true'] {
+    border-left: 1px solid var(--signal);
+  }
+
+  .mode:hover:not(:disabled):not([aria-pressed='true']) {
+    color: var(--fg);
+  }
+
+  .mode:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .pause {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-2);
+    font-size: var(--step--1);
+    color: var(--fg-quiet);
+  }
+
+  .pause select {
+    font: inherit;
+    font-family: var(--font-data);
+    color: var(--fg);
+    background: var(--bg-raised);
+    border: 1px solid var(--rule-strong);
+    padding: var(--s-1) var(--s-2);
+  }
+
+  .live-note {
+    margin: 0;
+    max-width: var(--measure);
+    font-size: var(--step--2);
+    color: var(--fg-quiet);
   }
 
   .keyhint {

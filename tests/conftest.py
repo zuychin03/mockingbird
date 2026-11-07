@@ -33,3 +33,55 @@ def _sessions_in_tmp(tmp_path, monkeypatch):
     monkeypatch.setattr(voice, "LOOSE", tmp_path / "voice")
     monkeypatch.setattr(voice, "ROOT", tmp_path)
     return d
+
+
+class FakeVad:
+    """Silero as sherpa-onnx applies it -- speech only once it has lasted MIN_SPEECH, silence
+    only once it has lasted MIN_SILENCE -- over energy instead of a model, so a tone is speech,
+    zeros are silence, and the live-mode tests know every boundary exactly."""
+
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.at = 0
+        self.triggered = False
+        self.start = 0
+        self.end = 0
+        self.resets = getattr(self, "resets", 0) + 1
+
+    def is_speech(self, window) -> bool:
+        # Imported here: the text-only suite runs without numpy, and this file loads for it.
+        import numpy as np
+
+        from app import endpoint
+
+        assert len(window) == endpoint.WINDOW
+        loud = float(np.sqrt(np.mean(window ** 2))) > 0.05
+        self.at += len(window)
+        min_speech = int(endpoint.MIN_SPEECH * endpoint.MIC_RATE)
+        min_silence = int(endpoint.MIN_SILENCE * endpoint.MIC_RATE)
+        if not self.triggered:
+            if not loud:
+                self.start = 0
+                return False
+            if not self.start:
+                self.start = self.at
+            if self.at - self.start >= min_speech:
+                self.triggered, self.end = True, 0
+                return True
+            return False
+        if loud:
+            self.end = 0
+            return True
+        if not self.end:
+            self.end = self.at
+        if self.at - self.end < min_silence:
+            return True
+        self.triggered, self.start, self.end = False, 0, 0
+        return False
+
+
+@pytest.fixture()
+def fake_vad():
+    return FakeVad

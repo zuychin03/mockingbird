@@ -112,13 +112,13 @@ export class Voice {
     if (m.pcm && this.ws?.readyState === WebSocket.OPEN) this.ws.send(m.pcm);
   }
 
-  /* Tap-to-talk, not open mic: 12.6 makes this the default because interview answers are long
-   * and full of thinking pauses, which is exactly where energy VAD false-cuts, and a false cut
-   * truncates the answer being scored. */
-  startTalking() {
+  /* Tap-to-talk by default: 12.6 makes it so because interview answers are long and full of
+   * thinking pauses, and a false cut truncates the answer being scored. `live` asks the server
+   * to end the turn itself after `pause` seconds of quiet (FR-26's opt-in). */
+  startTalking({ live = false, pause } = {}) {
     if (this.open) return;
     this.open = true;
-    this.send({ t: 'mic_open' });
+    this.send(live ? { t: 'mic_open', live: true, pause } : { t: 'mic_open' });
     this.node?.port.postMessage({ running: true });
   }
 
@@ -127,6 +127,20 @@ export class Voice {
     this.open = false;
     this.node?.port.postMessage({ running: false });
     this.send({ t: 'mic_close' });
+  }
+
+  /* The server ended the turn -- a live pause or the length cap -- so there is nothing to
+   * close, only this side's flag to bring into line. Left set, the next press returns early
+   * from startTalking and the microphone never reopens. */
+  ended() {
+    if (!this.open) return;
+    this.open = false;
+    this.node?.port.postMessage({ running: false });
+  }
+
+  /* Live switched off mid-answer: the answer now ends when the candidate says so. */
+  manual() {
+    if (this.open) this.send({ t: 'manual' });
   }
 
   /* --- speech ---------------------------------------------------------------------- */

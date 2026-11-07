@@ -215,6 +215,7 @@ app/
   audio.py         PCM framing, the wire protocol, where to cut a growing answer
   speech.py        the TTS port: one Piper voice through sherpa-onnx
   listen.py        the ASR port: nemotron through transcribe.cpp, a slice at a time
+  endpoint.py      live mode's endpointer: when an answer has ended, from silence
   delivery.py      fluency from the waveform; observation, never a score
 api/
   main.py          the HTTP surface, and the static host for the built interface
@@ -329,13 +330,29 @@ Recognition is verbatim, filled pauses included, because the report reads fluenc
 content. It is also imperfect on jargon -- `PostgreSQL` comes back as `Postgre SQL` -- which is
 the other reason the transcript is yours to edit.
 
-Voice needs three things this repository does not ship, because none of them are ours to
-redistribute:
+**Live mode** is the opt-in alternative to tapping, for an interview that runs like a
+conversation. The microphone opens when the interviewer finishes, your answer ends once you have
+been quiet for a pause you choose (2.5 s by default; 1.5, 4 and 6 are offered), and it is sent
+as it was heard. Space still finishes early, and switching back to Tap mid-answer hands the end
+back to you. It trades away correcting the transcript before it is scored, and says so where it
+is switched on.
+
+The end of an answer is decided by silence length alone, measured by Silero VAD. A semantic
+turn detector (Smart Turn v3.2) was replayed over recorded answers first and could not tell a
+pause between sentences from the end of an answer -- it called 7 of 10 mid-answer pauses
+finished -- while no pause inside any answer reached 2 s. At a 1.5 s setting one answer was cut
+at a pause between sentences; at 2.5 s none were. Any pause long enough to be the end is read
+straight away, so by the time the pause has run out the answer is often already transcribed:
+**0.97 s** from the end of the pause to the transcript when that read had finished, **4.4 s**
+when a regular slice was still running.
+
+Voice needs four things this repository does not ship, because none of them are ours:
 
 | What | Where it goes |
 |---|---|
 | Two Piper voices, `en_US-hfc_female-medium` and `en_US-ryan-medium` | `models/vits-piper-<voice>/` |
 | `nemotron-3.5-asr-streaming-0.6b` Q8_0 GGUF | `models/nemotron-asr/` |
+| Silero VAD, for live mode only: [`silero_vad.onnx`](https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx) | `models/vad/` |
 | A `transcribe.cpp` build | anywhere; point `MOCKINGBIRD_TRANSCRIBE` at `transcribe-cli.exe` |
 
 Each is checked at connect time and reported rather than assumed: a missing recogniser leaves

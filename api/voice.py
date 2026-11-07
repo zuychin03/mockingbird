@@ -12,16 +12,19 @@ measured 362 ms of acoustic round trip against 487 ms through WebRTC.
 
     hello {rate, settings}     what the browser actually granted, not what we asked for
     mic_open / mic_close       one press-to-talk turn; binary frames arrive between them
+    mic_open {live, pause}     live mode: the server ends the turn itself after `pause` s quiet
+    manual                     live switched off mid-answer; this turn now ends on mic_close
     say {text}                 render and stream this line down
     cut {id, heard_ms}         barge-in: the candidate spoke over us
     played {id, heard_ms}      playback finished on its own
 
 Down:
 
-    ready {frame_ms, rate, voice, asr, asr_ready}
+    ready {frame_ms, rate, voice, asr, asr_ready, live_ready}
     partial {text}             the answer so far, recognised while it is still being given
-    transcript {text}          the whole answer, once the tail has been read
-    utterance {seconds, peak, path}
+    transcript {text, answer}  the whole answer, once the tail has been read; `answer` is false
+                               for silence or noise alone, which live mode must not send
+    utterance {seconds, peak, path, ended}   ended: None (released), "cap" or "pause"
     speech {id, rate, seconds} then binary chunks, then speech_end {id}
     interrupted {id, heard, unheard}   after a cut, the line split where it was cut
 
@@ -42,7 +45,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app import audio, listen, speech
+from app import audio, endpoint, listen, speech
 
 ROOT = Path(__file__).resolve().parent.parent
 LIVE = ROOT / "data" / "live_session.json"
@@ -66,6 +69,13 @@ SLICE_MAX = 14.0
 # stuck turns and nothing else, and it ends them by closing the turn the normal way, so the
 # audio and the transcript both survive.
 UTTERANCE_MAX = 300.0
+
+# Live mode reads the answer up to any pause this long straight away, instead of waiting for a
+# 6 s slice. The pause may be the end, and every invocation costs ~2.5 s however short the
+# slice, so starting it here puts that cost inside the wait for the endpoint rather than after.
+PAUSE_SLICE = 0.8
+# Into the silence, so the slice does not clip the last word's release.
+PAUSE_PAD = 0.2
 
 
 def audio_dir() -> Path:
@@ -109,10 +119,13 @@ class Link:
     """One browser, one socket, for the length of a session."""
 
     def __init__(self, ws: WebSocket, engine: speech.TtsEngine,
-                 asr: listen.AsrEngine | None = None) -> None:
+                 asr: listen.AsrEngine | None = None, vad: endpoint.Silero | None = None) -> None:
         self.ws = ws
         self.engine = engine
         self.asr = asr
+        self.vad_engine = vad
+        self.vad: endpoint.Vad | None = None
+        self.endpointer: endpoint.Endpointer | None = None
         self.utterance: audio.Utterance | None = None
         self.speech: audio.Speech | None = None
         self.task: asyncio.Task | None = None
@@ -127,9 +140,16 @@ class Link:
 
     async def run(self) -> None:
         why = self.asr.available() if hasattr(self.asr, "available") else None
+        live_why = (self.vad_engine.available() if self.vad_engine is not None
+                    else "voice activity detection is not configured")
+        # Live mode sends answers nobody reviewed first, so it needs the recogniser as well as
+        # the endpointer: an answer that ends by itself with no text would have nothing to send.
+        if live_why is None and (self.asr is None or why is not None):
+            live_why = "speech recognition is not available"
         await self.send(t="ready", frame_ms=audio.FRAME_MS, rate=audio.MIC_RATE,
                         voice=speech.describe(), asr=listen.describe(),
-                        asr_ready=self.asr is not None and why is None, asr_why=why)
+                        asr_ready=self.asr is not None and why is None, asr_why=why,
+                        live_ready=live_why is None, live_why=live_why)
         while True:
             msg = await self.ws.receive()
             if msg["type"] == "websocket.disconnect":
@@ -151,7 +171,9 @@ class Link:
         # something the other end knows.
         self.utterance.add(pcm)
         if self.utterance.seconds >= UTTERANCE_MAX:
-            await self.finish_utterance(capped=True)
+            await self.finish_utterance(ended="cap")
+        elif self.endpointer is not None and self.endpointer.add(self.utterance.chunks[-1]):
+            await self.finish_utterance(ended="pause")
 
     async def on_control(self, m: dict) -> bool:
         kind = m.get("t")
@@ -160,10 +182,13 @@ class Link:
         elif kind == "mic_open":
             self.utterance = audio.Utterance()
             self.heard, self.committed = [], 0
+            self.endpointer = self.endpointer_for(m) if m.get("live") else None
             if self.asr is not None:
                 self.asr_task = asyncio.create_task(self.read_along())
         elif kind == "mic_close":
             await self.finish_utterance()
+        elif kind == "manual":
+            self.endpointer = None
         elif kind == "say":
             await self.say(str(m.get("text") or ""))
         elif kind in ("cut", "played"):
@@ -173,6 +198,28 @@ class Link:
         elif kind == "bad":
             await self.send(t="error", why=m.get("why", "bad control frame"))
         return False
+
+    def endpointer_for(self, m: dict) -> endpoint.Endpointer | None:
+        """None leaves the turn to the client, exactly as tap-to-talk: a live request the
+        server cannot honour degrades to a turn that ends when the candidate says so."""
+        if self.vad_engine is None or self.asr is None or self.vad_engine.available():
+            return None
+        if self.vad is None:
+            self.vad = self.vad_engine.load()
+        return endpoint.Endpointer(self.vad, endpoint.clamp_pause(m.get("pause")))
+
+    def next_cut(self, u: audio.Utterance) -> int | None:
+        """How many uncommitted samples to read next, or None to wait for more."""
+        ep = self.endpointer
+        if ep is not None:
+            onset = ep.pause_onset(PAUSE_SLICE)
+            if onset is not None and ep.speech_between(self.committed, onset):
+                return min(onset + int(PAUSE_PAD * u.rate), u.length) - self.committed
+        pending = u.seconds - self.committed / u.rate
+        if pending < SLICE_MIN:
+            return None
+        region = u.samples[self.committed:]
+        return audio.split_at_pause(region, u.rate, SLICE_MIN - 2.0, min(pending, SLICE_MAX))
 
     async def read_along(self) -> None:
         """Read the answer in slices while it is still being given.
@@ -185,16 +232,12 @@ class Link:
         """
         u = self.utterance
         while self.utterance is u and u is not None:
-            pending = u.seconds - self.committed / u.rate
-            if pending < SLICE_MIN:
-                await asyncio.sleep(0.4)
-                continue
-            region = u.samples[self.committed:]
-            cut = audio.split_at_pause(region, u.rate, SLICE_MIN - 2.0, min(pending, SLICE_MAX))
+            cut = self.next_cut(u)
             if cut is None:
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.2 if self.endpointer is not None else 0.4)
                 continue
-            text = await asyncio.to_thread(self.asr.transcribe, region[:cut], u.rate)
+            region = u.samples[self.committed:self.committed + cut]
+            text = await asyncio.to_thread(self.asr.transcribe, region, u.rate)
             self.committed += cut
             if text:
                 self.heard.append(text)
@@ -203,33 +246,44 @@ class Link:
             if text:
                 await self.send(t="partial", text=" ".join(self.heard))
 
-    async def finish_utterance(self, capped: bool = False) -> None:
+    async def finish_utterance(self, ended: str | None = None) -> None:
         u, self.utterance = self.utterance, None
         if u is None:
             return
-        if self.asr_task is not None:
-            # Let the slice in flight finish rather than racing it: it is reading seconds the
-            # tail pass would otherwise have to read again.
-            await self.asr_task
-            self.asr_task = None
+        ep, self.endpointer = self.endpointer, None
         path = ""
         if u.seconds > 0:
             d = audio_dir()
             d.mkdir(parents=True, exist_ok=True)
             f = write_answer(d, u.wav())
             path = str(f.relative_to(ROOT)).replace("\\", "/")
-        await self.send(t="utterance", seconds=round(u.seconds, 2),
-                        peak=round(u.peak, 4), path=path, capped=capped)
+        # Announced before the slice in flight is awaited. When the server ended the turn, the
+        # browser still shows "Listening" until it hears this, and a slice can take seconds:
+        # long enough to keep talking into a microphone that is no longer recording.
+        await self.send(t="utterance", seconds=round(u.seconds, 2), peak=round(u.peak, 4),
+                        path=path, capped=ended == "cap", ended=ended)
+        if self.asr_task is not None:
+            # Let the slice in flight finish rather than racing it: it is reading seconds the
+            # tail pass would otherwise have to read again.
+            await self.asr_task
+            self.asr_task = None
         if self.asr is None:
             return
         tail = u.samples[self.committed:]
-        text = await asyncio.to_thread(self.asr.transcribe, tail, u.rate) if len(tail) else ""
+        # After a live answer the tail is usually just the pause that ended it, its words
+        # already read by the pause slice. Reading silence would cost the full ~2.5 s load,
+        # which is the dead air live mode exists to remove.
+        silent = ep is not None and not ep.speech_between(self.committed, u.length)
+        text = ""
+        if len(tail) and not silent:
+            text = await asyncio.to_thread(self.asr.transcribe, tail, u.rate)
         if text:
             self.heard.append(text)
+        whole = " ".join(self.heard).strip()
         # Sent even when empty: silence has to read as "nothing was recognised" rather than as
         # a transcript that never arrived.
-        await self.send(t="transcript", text=" ".join(self.heard).strip(),
-                        seconds=round(u.seconds, 2))
+        await self.send(t="transcript", text=whole, seconds=round(u.seconds, 2),
+                        answer=endpoint.is_answer(whole))
 
     async def say(self, text: str) -> None:
         if not text.strip():
@@ -292,7 +346,7 @@ async def voice(ws: WebSocket) -> None:
     await ws.accept()
     engine = speech.engine()
     asr = listen.engine()
-    link = Link(ws, engine, asr if asr.available() is None else None)
+    link = Link(ws, engine, asr if asr.available() is None else None, endpoint.engine())
     # Same reasoning as the prompt-cache warm in session_start: the model load and ONNX's lazy
     # setup are real time, and they should not land on the first thing the interviewer says.
     warm = asyncio.create_task(asyncio.to_thread(engine.warm))

@@ -64,6 +64,11 @@ the model's six-action JSON object is advisory input to that orchestrator.
   and the longer ones offered as seek targets.
 - A cap on how long one press-to-talk turn may run, so a microphone left open ends the turn
   the normal way instead of recording until something else stops it.
+- Live mode, FR-26's opt-in beside tap-to-talk: the microphone opens when the interviewer
+  finishes, the server ends the answer after a pause the candidate chooses (Silero VAD through
+  sherpa-onnx, silence length only), and the transcript is sent without a press. Half-duplex,
+  so the candidate's voice never interrupts the interviewer and no false-barge-in guard is
+  needed; any pause long enough to be the end is read at once, so its cost lands inside the wait.
 - Progress across interviews: the same criteria laid out for every session that has been read,
   with the denominators kept and deliberately no trend line -- the scores are a model reading
   and how far two readings of one interview drift has not been measured.
@@ -75,9 +80,13 @@ the model's six-action JSON object is advisory input to that orchestrator.
 
 ### What is not implemented
 
-- Voice activity detection and open-mic turn-taking. Turn control is tap-to-talk, which is a
-  decision rather than a gap: interview answers are long and full of thinking pauses, which is
-  exactly where energy VAD false-cuts, and a false cut truncates the answer being scored.
+- A semantic turn detector. 11.7 planned Smart Turn v3 for live mode; replayed over recorded
+  answers it called 7 of 10 mid-answer pauses finished, so the end is decided by silence length
+  alone. Tap-to-talk stays the default for the reason 12.6 gives: a false cut truncates the
+  answer being scored.
+- Voice barge-in in live mode. The talk button and Space still cut the interviewer off.
+- Correcting a live-mode transcript before it is scored (FR-31); live mode says so where it is
+  switched on, and tap mode keeps the correction.
 - The pre-flight audio wizard: loop-back test, device picker, empirical echo detection and a
   persisted choice. The permission gate explains before it prompts; the rest is not built.
 - Word-level alignment, and so seeking to a word in the transcript. Playback seeks to pauses,
@@ -255,10 +264,11 @@ The provider port uses two endpoints because the API surfaces are complementary:
 | [`app/audio.py`](../app/audio.py) | PCM framing, the voice wire protocol, and where to cut a growing answer so a slice ends in a pause | Wire frames, raw samples | Frames, `Utterance`, `Speech`, the heard/unheard split |
 | [`app/speech.py`](../app/speech.py) | The TTS port: a protocol, a voice dictionary and one Piper/sherpa-onnx implementation | A line to say | Float32 mono at the engine's rate |
 | [`app/listen.py`](../app/listen.py) | The ASR port: nemotron through `transcribe.cpp`, one slice at a time | A slice of speech | Verbatim text |
+| [`app/endpoint.py`](../app/endpoint.py) | Live mode's endpointer: Silero VAD windows, speech spans, and the pause that ends an answer | 16 kHz frames as they arrive | Ended or not, where the current pause began |
 | [`app/delivery.py`](../app/delivery.py) | Fluency from the waveform: syllables, rates, pauses and where they fall. Observation only (FR-36) | Answer samples, optionally a word count | `Delivery`, or the reason it could not be measured |
 
-`audio.py`, `speech.py`, `listen.py` and `delivery.py` are the one place `app/` reaches past the
-standard library, and they need the `voice` extra. Nothing on the text path imports them, so a text
+`audio.py`, `speech.py`, `listen.py`, `endpoint.py` and `delivery.py` are the one place `app/`
+reaches past the standard library, and they need the `voice` extra. Nothing on the text path imports them, so a text
 interview still runs on the standard library alone -- `tests/test_nfr.py` enforces that in a
 subprocess rather than trusting the claim.
 

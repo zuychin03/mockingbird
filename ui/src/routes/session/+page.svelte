@@ -182,14 +182,23 @@
 
   // A recognised answer lands in the composer rather than being sent: 12.6 makes correcting
   // the transcript before scoring a fairness requirement, because unedited ASR scores its own
-  // accent bias rather than the person.
+  // accent bias rather than the person. Live mode is the opt-in exception (FR-26) and says so
+  // where it is switched on: it sends what was heard, and noise it declined to send is not
+  // left behind in the box either.
   $effect(() => {
     const got = voice.transcript;
     if (!got || got.id === adopted) return;
     adopted = got.id;
-    if (!got.text) return;
+    if (!got.text || (got.live && !got.send)) return;
     answer = answer.trim() ? answer.trim() + ' ' + got.text : got.text;
-    queueMicrotask(() => composer?.focus());
+    if (!got.send) {
+      queueMicrotask(() => composer?.focus());
+    } else if (busy) {
+      // Something else holds the page. Left in the box it can still be sent; dropped it is gone.
+      setThinking(false);
+    } else {
+      submit();
+    }
   });
 
   // 12.8: Space talks, Esc stops the interviewer. Space is only ours when the caret is not in

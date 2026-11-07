@@ -471,3 +471,214 @@ def test_two_answers_in_the_same_millisecond_do_not_overwrite_each_other(tmp_pat
 def test_an_answer_is_named_to_the_millisecond(tmp_path):
     assert re.fullmatch(r"answer-\d{8}-\d{6}-\d{3}\.wav",
                         voice_mod.write_answer(tmp_path, b"x").name)
+
+
+# --- live mode: the server ends the answer ----------------------------------------------------
+
+class FakeVadEngine:
+    def __init__(self, vad_cls) -> None:
+        self.vad_cls = vad_cls
+
+    def available(self) -> None:
+        return None
+
+    def load(self):
+        return self.vad_cls()
+
+
+@pytest.fixture()
+def live_link(engine, asr, fake_vad):
+    return voice_mod.Link(FakeWS(), engine, asr, FakeVadEngine(fake_vad))
+
+
+def quiet(seconds: float) -> np.ndarray:
+    return np.zeros(int(seconds * audio.MIC_RATE), dtype=np.float32)
+
+
+async def speak(link, x: np.ndarray) -> None:
+    """20 ms frames, as the worklet sends them."""
+    for i in range(0, len(x), audio.FRAME_SAMPLES):
+        await link.on_audio(audio.to_int16(x[i:i + audio.FRAME_SAMPLES]))
+
+
+async def until(check, seconds: float = 3.0) -> None:
+    for _ in range(int(seconds / 0.05)):
+        if check():
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError("timed out")
+
+
+def live(pause: float) -> dict:
+    return {"t": "mic_open", "live": True, "pause": pause}
+
+
+def test_a_live_answer_ends_itself_after_the_chosen_pause(live_link):
+    rate = audio.MIC_RATE
+
+    async def go():
+        await live_link.on_control(live(1.5))
+        await speak(live_link, tone(2.0, rate))
+        await speak(live_link, quiet(1.0))
+        assert not sent(live_link, "utterance"), "a pause shorter than the setting is not the end"
+        await speak(live_link, quiet(1.0))
+        done = sent(live_link, "utterance")
+        assert len(done) == 1
+        assert done[0]["ended"] == "pause" and done[0]["capped"] is False
+        assert live_link.utterance is None
+        assert [m["text"] for m in sent(live_link, "transcript")] == ["slice1"]
+
+    asyncio.run(go())
+
+
+def test_thinking_before_the_first_word_is_not_an_answer(live_link):
+    async def go():
+        await live_link.on_control(live(1.0))
+        await speak(live_link, quiet(10.0))
+        assert not sent(live_link, "utterance")
+        assert live_link.utterance is not None, "still listening"
+
+    asyncio.run(go())
+
+
+def test_a_pause_is_read_while_waiting_so_the_end_costs_no_extra_pass(live_link, asr):
+    """Every recogniser call carries a fixed ~2.5 s load. Read after the endpoint, the last
+    words would add that to the silence the candidate has already waited through."""
+    rate = audio.MIC_RATE
+
+    async def go():
+        await live_link.on_control(live(2.0))
+        await speak(live_link, tone(2.0, rate))
+        await speak(live_link, quiet(1.0))
+        await until(lambda: asr.calls)
+        assert asr.calls[0] == pytest.approx(2.0 + voice_mod.PAUSE_PAD, abs=0.1)
+        await speak(live_link, quiet(1.2))
+        assert sent(live_link, "utterance")[-1]["ended"] == "pause"
+        assert len(asr.calls) == 1, "the silent tail was sent to the recogniser"
+        assert sent(live_link, "transcript")[-1]["text"] == "slice1"
+
+    asyncio.run(go())
+
+
+def test_speaking_again_after_a_read_pause_is_kept(live_link, asr):
+    rate = audio.MIC_RATE
+
+    async def go():
+        await live_link.on_control(live(2.0))
+        await speak(live_link, tone(2.0, rate))
+        await speak(live_link, quiet(1.0))
+        await until(lambda: asr.calls)
+        await speak(live_link, tone(1.5, rate))
+        await speak(live_link, quiet(2.5))
+        assert sent(live_link, "transcript")[-1]["text"] == "slice1 slice2"
+        # Everything up to the last word was read, and nothing twice.
+        assert 4.5 <= sum(asr.calls) <= sent(live_link, "utterance")[-1]["seconds"] + 1e-6
+
+    asyncio.run(go())
+
+
+class SlowAsr(FakeAsr):
+    """Holds each pass until released, like a real one taking its 2.5 s."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        import threading
+
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def transcribe(self, samples, rate) -> str:
+        self.started.set()
+        self.release.wait(5)
+        return super().transcribe(samples, rate)
+
+
+def test_the_end_is_announced_before_the_slice_in_flight_finishes(engine, fake_vad):
+    """Told only after the slice, the browser kept showing "Listening" for its duration -- long
+    enough to keep answering into a microphone that had stopped recording."""
+    rate = audio.MIC_RATE
+    slow = SlowAsr()
+    link = voice_mod.Link(FakeWS(), engine, slow, FakeVadEngine(fake_vad))
+
+    async def go():
+        await link.on_control(live(1.5))
+        await speak(link, tone(2.0, rate))
+        await speak(link, quiet(1.0))
+        await until(slow.started.is_set)
+        ending = asyncio.create_task(speak(link, quiet(1.0)))
+        await until(lambda: sent(link, "utterance"))
+        assert not sent(link, "transcript"), "the slice is still being read"
+        slow.release.set()
+        await ending
+        assert sent(link, "transcript")
+
+    asyncio.run(go())
+
+
+def test_noise_alone_is_sent_as_not_an_answer(engine, fake_vad):
+    """Live mode submits without a press, so the browser has to be told a cough is not one."""
+    class Hum(FakeAsr):
+        def transcribe(self, samples, rate) -> str:
+            super().transcribe(samples, rate)
+            return "Hmm."
+
+    link = voice_mod.Link(FakeWS(), engine, Hum(), FakeVadEngine(fake_vad))
+
+    async def go():
+        await link.on_control(live(1.0))
+        await speak(link, tone(0.5, audio.MIC_RATE))
+        await speak(link, quiet(1.5))
+        told = sent(link, "transcript")[-1]
+        assert (told["text"], told["answer"]) == ("Hmm.", False)
+
+    asyncio.run(go())
+
+
+def test_a_live_answer_can_still_be_ended_by_hand(live_link):
+    async def go():
+        await live_link.on_control(live(5.0))
+        await speak(live_link, tone(1.0, audio.MIC_RATE))
+        await live_link.on_control({"t": "mic_close"})
+        assert sent(live_link, "utterance")[-1]["ended"] is None
+        assert sent(live_link, "transcript")[-1]["answer"] is True
+
+    asyncio.run(go())
+
+
+def test_live_without_voice_activity_detection_waits_for_the_candidate(engine, asr):
+    """A live request the server cannot honour degrades to tap-to-talk, never to a guess."""
+    link = voice_mod.Link(FakeWS(), engine, asr)
+
+    async def go():
+        await link.on_control(live(1.0))
+        await speak(link, tone(1.0, audio.MIC_RATE))
+        await speak(link, quiet(3.0))
+        assert not sent(link, "utterance")
+        await link.on_control({"t": "mic_close"})
+        assert sent(link, "utterance")[-1]["ended"] is None
+
+    asyncio.run(go())
+
+
+class _Closed(FakeWS):
+    async def receive(self) -> dict:
+        return {"type": "websocket.disconnect"}
+
+
+@pytest.mark.parametrize("asr_ok, vad_ok, why", [
+    (True, True, None),
+    (True, False, "voice activity model"),
+    (False, True, "speech recognition"),
+])
+def test_ready_says_whether_live_mode_can_run_and_why_not(engine, fake_vad, tmp_path,
+                                                           asr_ok, vad_ok, why):
+    """Live mode sends what it hears unreviewed, so it needs the recogniser as well."""
+    from app import endpoint
+
+    vad = FakeVadEngine(fake_vad) if vad_ok else endpoint.Silero(model=tmp_path / "gone.onnx")
+    link = voice_mod.Link(_Closed(), engine, FakeAsr() if asr_ok else None, vad)
+    asyncio.run(link.run())
+    ready = sent(link, "ready")[0]
+    assert ready["live_ready"] is (why is None)
+    if why:
+        assert why in ready["live_why"]
