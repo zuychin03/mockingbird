@@ -10,7 +10,7 @@ the last control message declared for that direction: `MIC_RATE` going up, whate
 emits coming down. Nothing resamples silently.
 
 Rates are the recurring trap here (12.7). The browser captures at the device default, almost
-always 48 kHz on Windows; ASR wants 16 kHz; Piper emits 22.05 kHz. Three rates, none of them
+always 48 kHz on Windows; ASR wants 16 kHz; the voice emits 24 kHz. Three rates, none of them
 negotiable, so each one is declared rather than assumed.
 """
 
@@ -67,10 +67,10 @@ def split_at_pause(x: np.ndarray, rate: int, earliest: float, latest: float,
                    window: float = 0.12) -> int | None:
     """Where to cut a growing answer so the slice ends in a pause rather than mid-word.
 
-    Transcription happens in slices while the candidate is still talking, because one pass over
-    a finished 60 s answer costs about 13.5 s (see `app/listen.py`) and that would be dead air
-    at exactly the wrong moment. Slices are recognised independently, so a cut through a word
-    loses it from both sides -- hence cutting where the audio is quietest.
+    Transcription happens in slices while the candidate is still talking, so the answer fills in
+    as it is given and only the tail is left to read when they stop. Slices are recognised
+    independently, so a cut through a word loses it from both sides -- hence cutting where the
+    audio is quietest.
 
     Energy on the raw PCM, not the transcript: word timestamps would be a better boundary and
     would mean parsing them back out of a second recognition pass, which is a lot of machinery

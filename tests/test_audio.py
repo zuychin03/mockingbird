@@ -138,7 +138,7 @@ def test_it_announces_the_frame_size_and_voice_it_expects(client):
         ready = ws.receive_json()
     assert ready["t"] == "ready"
     assert (ready["frame_ms"], ready["rate"]) == (audio.FRAME_MS, audio.MIC_RATE)
-    assert ready["voice"]["engine"] == "piper/sherpa-onnx"
+    assert ready["voice"]["engine"] == "lfm3-audio/llama.cpp"
 
 
 def test_a_turn_is_captured_between_open_and_close(client, tmp_path):

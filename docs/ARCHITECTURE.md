@@ -262,12 +262,13 @@ The provider port uses two endpoints because the API surfaces are complementary:
 | [`app/depth_signals.py`](../app/depth_signals.py) | Regex facts used by focus and observations | Answer text | Depth-signal booleans |
 | [`app/resume.py`](../app/resume.py) | Carries a live Runner between processes; `FIELDS` is the guarded list a test compares against the Runner's own attributes | `Runner` | Self-describing snapshot, including the plan |
 | [`app/audio.py`](../app/audio.py) | PCM framing, the voice wire protocol, and where to cut a growing answer so a slice ends in a pause | Wire frames, raw samples | Frames, `Utterance`, `Speech`, the heard/unheard split |
-| [`app/speech.py`](../app/speech.py) | The TTS port: a protocol, a voice dictionary and one Piper/sherpa-onnx implementation | A line to say | Float32 mono at the engine's rate |
-| [`app/listen.py`](../app/listen.py) | The ASR port: nemotron through `transcribe.cpp`, one slice at a time | A slice of speech | Verbatim text |
+| [`app/speech.py`](../app/speech.py) | The TTS port: a protocol onto LFM3-Audio, female or male voice | A line to say | Float32 mono at the engine's rate |
+| [`app/listen.py`](../app/listen.py) | The ASR port: a protocol onto LFM3-Audio, one slice at a time | A slice of speech | Verbatim text |
+| [`app/lfm3.py`](../app/lfm3.py) | LFM3-Audio-2B through one resident `llama-server` on `127.0.0.1:8092`: recognition over `/v1/chat/completions`, speech over `/tts`; `python -m app.lfm3` starts it | Audio slices, lines | Text, 24 kHz float32 |
 | [`app/endpoint.py`](../app/endpoint.py) | Live mode's endpointer: Silero VAD windows, speech spans, and the pause that ends an answer | 16 kHz frames as they arrive | Ended or not, where the current pause began |
 | [`app/delivery.py`](../app/delivery.py) | Fluency from the waveform: syllables, rates, pauses and where they fall. Observation only (FR-36) | Answer samples, optionally a word count | `Delivery`, or the reason it could not be measured |
 
-`audio.py`, `speech.py`, `listen.py`, `endpoint.py` and `delivery.py` are the one place `app/`
+`audio.py`, `speech.py`, `listen.py`, `lfm3.py`, `endpoint.py` and `delivery.py` are the one place `app/`
 reaches past the standard library, and they need the `voice` extra. Nothing on the text path imports them, so a text
 interview still runs on the standard library alone -- `tests/test_nfr.py` enforces that in a
 subprocess rather than trusting the claim.

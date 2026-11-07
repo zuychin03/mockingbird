@@ -63,13 +63,11 @@ tools/deciders.py
 tools/depth_signals.py
 tools/fixtures_v2.py
 tools/fixtures_build.py
-tools/make_samples.py
 tools/samples.json
 tools/session_long.py
 tools/session_script.py
 tools/calibrate.py
 tools/audition.html
-tools/tts_bench.py
 tools/spike_*.py
 tools/tier1_posterior_granite.json
 

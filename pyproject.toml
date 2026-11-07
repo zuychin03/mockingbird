@@ -23,13 +23,14 @@ test = ["pytest>=9.1,<10", "httpx>=0.28,<1"]
 web = ["fastapi>=0.115,<1", "uvicorn>=0.34,<1"]
 # Tier 1 harnesses only. Nothing under `app/` imports these.
 research = ["numpy>=2.5,<3", "praat-parselmouth>=0.4.7", "sherpa-onnx>=1.13"]
-# Voice. `app/audio.py`, `app/speech.py` and `app/listen.py` DO need numpy and sherpa-onnx,
-# which is the one place `app/` reaches past the standard library -- but nothing on the text
-# path imports them, so a text interview still runs on the standard library alone. `test_nfr`
-# enforces that rather than trusting this comment. `websockets` is what lets uvicorn serve
-# `/api/voice` at all. Recognition also needs a `transcribe.cpp` build, which is not a Python
-# dependency: see MOCKINGBIRD_TRANSCRIBE in the README. `praat-parselmouth` is what `app/
-# delivery.py` measures fluency with, and it needs no model of its own.
+# Voice. The voice modules under `app/` DO need numpy, and live mode's endpointer needs
+# sherpa-onnx for Silero VAD, which is the one place `app/` reaches past the standard library --
+# but nothing on the text path imports them, so a text interview still runs on the standard
+# library alone. `test_nfr` enforces that rather than trusting this comment. `websockets` is what
+# lets uvicorn serve `/api/voice` at all. Speech in both directions also needs a llama.cpp
+# `llama-server` build, which is not a Python dependency: see MOCKINGBIRD_LLAMA_SERVER in the
+# README. `praat-parselmouth` is what `app/delivery.py` measures fluency with, and it needs no
+# model of its own.
 voice = ["numpy>=2.5,<3", "praat-parselmouth>=0.4.7", "sherpa-onnx>=1.13",
          "websockets>=15,<18"]
 

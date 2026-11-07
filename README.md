@@ -213,8 +213,9 @@ app/
   review.py        the operations a person performs on a plan before it is run
   resume.py        carrying a live session between processes
   audio.py         PCM framing, the wire protocol, where to cut a growing answer
-  speech.py        the TTS port: one Piper voice through sherpa-onnx
-  listen.py        the ASR port: nemotron through transcribe.cpp, a slice at a time
+  speech.py        the TTS port, onto LFM3-Audio
+  listen.py        the ASR port, onto LFM3-Audio, a slice at a time
+  lfm3.py          LFM3-Audio through llama-server: one process that hears and speaks
   endpoint.py      live mode's endpointer: when an answer has ended, from silence
   delivery.py      fluency from the waveform; observation, never a score
 api/
@@ -317,18 +318,17 @@ at `/api/voice` carries microphone PCM up and synthesised speech down, an `Audio
 resamples capture to the 16 kHz the recogniser wants, and playback is scheduled on a monotonic
 cursor so bursty delivery is not audible.
 
-Your answer is recognised **while you are still giving it**. One pass over a finished 84 s
-answer costs about 18 s on this machine, which would be dead air at the worst possible moment,
-so the answer is read in slices cut at pauses and only the tail is left when you stop --
-**2.3 s** after release measuring the recogniser alone, and **2.6-3.4 s** driving the whole
-thing through the browser, against 17.8 s for a single pass. The text lands in the
-composer rather than being sent, because correcting it before it is scored is a fairness
-requirement, not a convenience: unedited recognition scores its own accent bias rather than the
-person.
+Your answer is recognised **while you are still giving it**: it is read in slices cut at pauses,
+so the composer fills as you talk and only the tail is left when you stop -- **0.17 s** after
+release, driving `/api/voice` with a recorded 24 s answer on mains with the language model
+resident. The text lands in the composer rather than being sent, because correcting it before it
+is scored is a fairness requirement, not a convenience: unedited recognition scores its own
+accent bias rather than the person.
 
 Recognition is verbatim, filled pauses included, because the report reads fluency as well as
-content. It is also imperfect on jargon -- `PostgreSQL` comes back as `Postgre SQL` -- which is
-the other reason the transcript is yours to edit.
+content. Jargon such as `PostgreSQL`, `gRPC` and `p99` comes back whole, but it still makes
+mistakes -- `cutover` came back as `queueover` -- which is the other reason the transcript is
+yours to edit.
 
 **Live mode** is the opt-in alternative to tapping, for an interview that runs like a
 conversation. The microphone opens when the interviewer finishes, your answer ends once you have
@@ -342,22 +342,34 @@ turn detector (Smart Turn v3.2) was replayed over recorded answers first and cou
 pause between sentences from the end of an answer -- it called 7 of 10 mid-answer pauses
 finished -- while no pause inside any answer reached 2 s. At a 1.5 s setting one answer was cut
 at a pause between sentences; at 2.5 s none were. Any pause long enough to be the end is read
-straight away, so by the time the pause has run out the answer is often already transcribed:
-**0.97 s** from the end of the pause to the transcript when that read had finished, **4.4 s**
-when a regular slice was still running.
+straight away, so by the time the pause has run out the answer is usually already transcribed.
 
-Voice needs four things this repository does not ship, because none of them are ours:
+Both directions run on [LFM3-Audio-2B](https://huggingface.co/LiquidAI/LFM3-Audio-2B) in one
+resident `llama-server` process on `127.0.0.1:8092`, so nothing reloads between calls. It fits
+beside the language model on a 6 GB card in either load order (5,965 of 6,144 MiB at peak).
+Start it before the app:
+
+```bash
+python -m app.lfm3
+```
+
+Measured on mains with the language model resident: an 84 s answer recognised in 2.2 s, a
+spoken line rendered in about a fifth of its own length, and the language model's turns no
+slower. Inside one answer, a word on a slice boundary can come back twice.
+
+Voice needs three things this repository does not ship, because none of them are ours:
 
 | What | Where it goes |
 |---|---|
-| Two Piper voices, `en_US-hfc_female-medium` and `en_US-ryan-medium` | `models/vits-piper-<voice>/` |
-| `nemotron-3.5-asr-streaming-0.6b` Q8_0 GGUF | `models/nemotron-asr/` |
+| `LFM3-Audio-2B-Q8_0.gguf` and `mmproj-LFM3-Audio-2B-BF16.gguf` from [`LiquidAI/LFM3-Audio-2B-GGUF`](https://huggingface.co/LiquidAI/LFM3-Audio-2B-GGUF) | `models/lfm3-audio/` |
 | Silero VAD, for live mode only: [`silero_vad.onnx`](https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx) | `models/vad/` |
-| A `transcribe.cpp` build | anywhere; point `MOCKINGBIRD_TRANSCRIBE` at `transcribe-cli.exe` |
+| A llama.cpp build at b11960 or later | anywhere; point `MOCKINGBIRD_LLAMA_SERVER` at `llama-server.exe` |
 
-Each is checked at connect time and reported rather than assumed: a missing recogniser leaves
-the interview running on the typed answer and says so on screen, and a missing voice is the only
-thing that stops the interviewer speaking.
+The server is checked at connect time and reported rather than assumed: without it the interview
+runs on typed answers and says so on screen, and the interviewer does not speak. Its model is
+under the LFM Open License v1.0, free below US$10M annual revenue. The model can also hold the
+whole conversation by itself over `/v1/realtime`; that is not wired in and should not be, because
+its speech would reach the candidate without passing the guards or the runner's policy.
 
 ## How you said it, and hearing it back
 

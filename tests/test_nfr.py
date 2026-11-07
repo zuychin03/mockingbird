@@ -165,8 +165,8 @@ def test_the_degraded_line_is_scripted_speech_not_an_empty_string(tmp_path):
 def test_a_text_interview_never_reaches_past_the_standard_library():
     """The runtime's promise is that an interview needs no package index (pyproject).
 
-    Voice broke the shape of that claim -- `app/audio.py` and `app/speech.py` genuinely need
-    numpy and sherpa-onnx -- so the promise is now narrower and worth enforcing rather than
+    Voice broke the shape of that claim -- the voice modules genuinely need numpy, and live
+    mode's endpointer sherpa-onnx -- so the promise is now narrower and worth enforcing rather than
     asserting in a comment: nothing the *text* path imports may drag them in.
     """
     import importlib

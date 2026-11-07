@@ -54,11 +54,10 @@ LOOSE = ROOT / "data" / "voice"
 
 router = APIRouter()
 
-# One pass over a finished 60 s answer costs about 13.5 s (2.5 s of model load plus 5.5x
-# realtime, both measured -- see `app/listen.py`), and that would be dead air at the worst
-# possible moment. So the answer is read in slices while it is still being given, and only the
-# tail is left when the candidate stops. A 6 s slice costs about 3.6 s to read, so the backlog
-# drains rather than growing, and the wait after release stays in the 2-3 s band 12.5 plans for.
+# The answer is read in slices while it is still being given, so the composer fills as the
+# candidate talks and only the tail is left when they stop. Measured on mains with the language
+# model resident, a slice reads in well under a second (an 84 s answer whole in 2.2 s), so the
+# backlog drains rather than growing.
 SLICE_MIN = 6.0
 SLICE_MAX = 14.0
 
@@ -71,8 +70,8 @@ SLICE_MAX = 14.0
 UTTERANCE_MAX = 300.0
 
 # Live mode reads the answer up to any pause this long straight away, instead of waiting for a
-# 6 s slice. The pause may be the end, and every invocation costs ~2.5 s however short the
-# slice, so starting it here puts that cost inside the wait for the endpoint rather than after.
+# 6 s slice. The pause may be the end, so starting the read here puts its cost inside the wait
+# for the endpoint rather than after.
 PAUSE_SLICE = 0.8
 # Into the silence, so the slice does not clip the last word's release.
 PAUSE_PAD = 0.2
@@ -271,8 +270,8 @@ class Link:
             return
         tail = u.samples[self.committed:]
         # After a live answer the tail is usually just the pause that ended it, its words
-        # already read by the pause slice. Reading silence would cost the full ~2.5 s load,
-        # which is the dead air live mode exists to remove.
+        # already read by the pause slice. Reading it again would only add a call to the wait
+        # live mode exists to remove.
         silent = ep is not None and not ep.speech_between(self.committed, u.length)
         text = ""
         if len(tail) and not silent:
@@ -289,7 +288,8 @@ class Link:
         if not text.strip():
             return
         await self.stop_speaking()
-        # Synthesis is CPU-bound and blocking, and this event loop also carries the microphone.
+        # Synthesis blocks on a round trip to the voice server, and this event loop also carries
+        # the microphone.
         # Off-thread or a two-second line stalls the uplink for two seconds.
         samples = await asyncio.to_thread(self.engine.say, text)
         sp = audio.Speech(id=self.next_id, text=text, rate=self.engine.rate, samples=samples)
@@ -346,9 +346,11 @@ async def voice(ws: WebSocket) -> None:
     await ws.accept()
     engine = speech.engine()
     asr = listen.engine()
-    link = Link(ws, engine, asr if asr.available() is None else None, endpoint.engine())
-    # Same reasoning as the prompt-cache warm in session_start: the model load and ONNX's lazy
-    # setup are real time, and they should not land on the first thing the interviewer says.
+    # A health check over loopback; off the loop in case the voice server is slow to answer.
+    ready = await asyncio.to_thread(asr.available) is None
+    link = Link(ws, engine, asr if ready else None, endpoint.engine())
+    # Same reasoning as the prompt-cache warm in session_start: the first line on a connection took
+    # 1.9 s to its first audio unwarmed and 0.8 s warmed, and the difference lands on the opener.
     warm = asyncio.create_task(asyncio.to_thread(engine.warm))
     try:
         await link.run()
