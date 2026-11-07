@@ -132,9 +132,13 @@ ANSWER_PART_MIN_WORDS = 8
 # is the `SKIP_ACK` mistake -- a reviewed line promising what the runner does not do -- so the
 # claim now matches what actually happens. Rendering it in the report is the better fix and a
 # larger change; until then the line does not say it.
+#
+# It carries no invitation of its own. It used to end "Anything else?", and on the last
+# question the closing ack was appended after it: "...Anything else? Thanks -- that's
+# everything from me." -- asking for another question and ending the interview in one breath.
 QUESTION_NOTED = ("I can't answer for a real employer, so rather than invent something I've "
-                  "noted it down with your session. Anything else?")
-# The invitation on its own, for the answers that do not already carry one (stage 5).
+                  "noted it down with your session.")
+# Added only where the phase continues, to a decline and an answer alike.
 ANYTHING_ELSE = "Anything else?"
 CLOSING_ACK = "Thanks -- that's everything from me."
 # Answer to "did you mean A or B?" when both are the candidate's own examples. The second
@@ -535,11 +539,8 @@ class Runner:
                 g = guards.Guarded("advance", said + " " + CLOSING_ACK, False, "",
                                    applied + ["detour-budget->advance"])
             else:
-                # The decline already ends by inviting another; an answer does not, and
-                # without it the room goes quiet on a candidate who was told to ask.
-                if "detour-answered" in applied:
-                    said += " " + ANYTHING_ELSE
-                g = guards.Guarded("clarify", said, False, "", applied)
+                # Without it the room goes quiet on a candidate who was just told to ask.
+                g = guards.Guarded("clarify", said + " " + ANYTHING_ELSE, False, "", applied)
             return self._dispatch(g, utterance, Completion(text=""))
 
         if guards.user_asked_to_stop(utterance):

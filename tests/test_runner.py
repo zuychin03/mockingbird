@@ -739,6 +739,35 @@ def test_an_answered_question_still_invites_the_next_one(tmp_path):
     assert out.spoken.text.rstrip().endswith("Anything else?")
 
 
+def test_the_last_question_closes_without_inviting_another(tmp_path):
+    """The decline used to carry its own "Anything else?", and on the question that spends the
+    budget the closing ack was appended after it: "...Anything else? Thanks -- that's
+    everything from me." -- asking for another question and ending in one breath."""
+    r, state = build_closing(tmp_path)
+    run(r.ask())
+    run(r.submit("What does the role pay?"))
+    out = run(r.submit("And who would I report to?"))
+    assert out.closed_question, "detour_budget 2 means this one closes the phase"
+    assert "Anything else" not in out.spoken.text
+    assert out.spoken.text.rstrip().endswith(runner_mod.CLOSING_ACK)
+
+
+def test_a_decline_still_invites_the_next_question_while_the_phase_continues(tmp_path):
+    r, state = build_closing(tmp_path)
+    run(r.ask())
+    out = run(r.submit("What does the role pay?"))
+    assert not out.closed_question
+    assert "can't answer for a real employer" in out.spoken.text
+    assert out.spoken.text.rstrip().endswith("Anything else?")
+
+
+def test_the_decline_line_carries_no_invitation_of_its_own():
+    """Added by the caller only where the phase continues, so no path can say it and then
+    close."""
+    assert "Anything else" not in runner_mod.QUESTION_NOTED
+    assert "?" not in runner_mod.QUESTION_NOTED
+
+
 def test_what_the_candidate_asked_is_kept_apart_from_what_they_answered(tmp_path):
     r, state = build_closing(tmp_path)
     run(r.ask())
