@@ -15,7 +15,7 @@ from the rubric as unobservable and it is exactly the word a model reaches for f
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 # What a question asks the candidate to produce. `star` expects a past situation, action and
@@ -27,6 +27,8 @@ SOURCES = frozenset({"curated", "generated"})
 # WHETHER it may be asked. The agent draws only from questions a person wrote or a person
 # approved, so generation lands at `proposed` and stays unaskable until someone says so.
 STATUSES = frozenset({"approved", "proposed"})
+# Least to most senior. The planner reads one of these from a description.
+LEVELS = ("junior", "mid", "senior", "staff")
 
 
 @dataclass(frozen=True)
@@ -37,10 +39,19 @@ class Question:
     shape: str
     source: str
     status: str
+    # The least senior candidate this is fair to ask. A question that can only be answered
+    # from a team, a live system or colleagues to review presumes experience a junior may
+    # not have had, and asking it anyway measures their CV rather than how they answer.
+    # Defaulted, unlike `status`: an omitted level reproduces the behaviour before levels
+    # existed, so omission cannot make a plan worse than it was.
+    min_level: str = "junior"
 
     @property
     def generated(self) -> bool:
         return self.source == "generated"
+
+    def fits(self, level: str) -> bool:
+        return LEVELS.index(self.min_level) <= LEVELS.index(level)
 
     @property
     def askable(self) -> bool:
@@ -57,6 +68,10 @@ class Bank:
     # a judgement someone should be able to read and disagree with, and putting a competency
     # in the design phase decides it will be DESCRIBED rather than graded (9.6).
     phase_affinity: dict[str, str] = field(default_factory=dict)
+    # The file's own explanation of its rules. Carried because `save` used to write the bank
+    # back without it, so approving one proposal erased the documentation of every rule the
+    # file encodes -- including why `min_level` exists and what earns a question "mid".
+    notes: str = ""
 
     def phase_for(self, competency: str) -> str:
         return self.phase_affinity[competency]
@@ -129,8 +144,14 @@ def load(path: str | Path) -> Bank:
             raise ValueError("bank question %r declares status %r; known: %s"
                              % (qid, status, ", ".join(sorted(STATUSES))))
 
+        min_level = item.get("min_level", "junior")
+        if min_level not in LEVELS:
+            raise ValueError("bank question %r declares min_level %r; known: %s"
+                             % (qid, min_level, ", ".join(LEVELS)))
+
         questions.append(Question(id=qid, text=text, competencies=tags,
-                                  shape=shape, source=source, status=status))
+                                  shape=shape, source=source, status=status,
+                                  min_level=min_level))
 
     if not questions:
         raise ValueError("the bank holds no questions")
@@ -168,7 +189,7 @@ def load(path: str | Path) -> Bank:
                              % (name, phase, want, want))
 
     return Bank(competencies=dict(competencies), questions=tuple(questions),
-                phase_affinity=dict(affinity))
+                phase_affinity=dict(affinity), notes=raw.get("notes") or "")
 
 
 def with_question(b: Bank, q: Question) -> Bank:
@@ -180,8 +201,10 @@ def with_question(b: Bank, q: Question) -> Bank:
     if unknown:
         raise ValueError("question %r declares unknown competencies %s"
                          % (q.id, ", ".join(unknown)))
-    return Bank(competencies=dict(b.competencies), questions=b.questions + (q,),
-                phase_affinity=dict(b.phase_affinity))
+    # `replace` for the same reason as `approve`: a field-by-field rebuild drops whatever was
+    # added after it was written, and `notes` was dropped exactly that way.
+    return replace(b, competencies=dict(b.competencies), questions=b.questions + (q,),
+                   phase_affinity=dict(b.phase_affinity))
 
 
 def approve(b: Bank, question_id: str) -> Bank:
@@ -197,11 +220,24 @@ def approve(b: Bank, question_id: str) -> Bank:
     q = found[0]
     if q.askable:
         raise ValueError("question %r is already approved" % question_id)
-    swapped = Question(id=q.id, text=q.text, competencies=q.competencies, shape=q.shape,
-                       source=q.source, status="approved")
-    return Bank(competencies=dict(b.competencies),
-                questions=tuple(swapped if x.id == question_id else x for x in b.questions),
-                phase_affinity=dict(b.phase_affinity))
+    # `replace`, not a field-by-field rebuild, which dropped any field added after it was
+    # written -- `min_level` would have reverted to junior on approval.
+    swapped = replace(q, status="approved")
+    return replace(b, competencies=dict(b.competencies),
+                   questions=tuple(swapped if x.id == question_id else x for x in b.questions),
+                   phase_affinity=dict(b.phase_affinity))
+
+
+def _row(q: Question) -> dict:
+    """One question as the file holds it. The level is written only where it narrows the
+    default, so a save does not add a line to every question that never had one -- and it IS
+    written, because `load` treats a missing level as junior and would have untagged the whole
+    bank on the first approval without any error."""
+    row = {"id": q.id, "text": q.text, "competencies": list(q.competencies),
+           "shape": q.shape, "source": q.source, "status": q.status}
+    if q.min_level != "junior":
+        row["min_level"] = q.min_level
+    return row
 
 
 def save(b: Bank, path: str | Path) -> None:
@@ -209,11 +245,10 @@ def save(b: Bank, path: str | Path) -> None:
     refused here rather than written and discovered on the next run."""
     payload = {
         "version": 1,
+        **({"notes": b.notes} if b.notes else {}),
         "competencies": dict(b.competencies),
         "phase_affinity": dict(b.phase_affinity),
-        "questions": [{"id": q.id, "text": q.text, "competencies": list(q.competencies),
-                       "shape": q.shape, "source": q.source, "status": q.status}
-                      for q in b.questions],
+        "questions": [_row(q) for q in b.questions],
     }
     text = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
     tmp = Path(path).with_suffix(".tmp")

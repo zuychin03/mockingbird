@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "notes": "Curated interview questions, tagged against a CLOSED competency vocabulary. The vocabulary is closed for the same reason rubric_criteria is validated at load: a planner that may invent a competency name produces tags the bank can never match, and the failure is silent. Warmup and closing questions are deliberately absent -- they are structural, identical in every plan, and carry no competency. A question carries BOTH a source (where the text came from, immutable) and a status (whether it may be asked). Generation writes source=generated status=proposed; approval flips the status and never the source, because FR-2 requires a generated question to stay marked as one. `phase_affinity` says which phase of the plan a competency belongs to. It is data rather than logic because the mapping is a judgement someone should be able to read and disagree with, and because the design phase is not scored -- putting a competency there decides that it will be described rather than graded.",
+  "notes": "Curated interview questions, tagged against a CLOSED competency vocabulary. The vocabulary is closed for the same reason rubric_criteria is validated at load: a planner that may invent a competency name produces tags the bank can never match, and the failure is silent. Warmup and closing questions are deliberately absent -- they are structural, identical in every plan, and carry no competency. A question carries BOTH a source (where the text came from, immutable) and a status (whether it may be asked). Generation writes source=generated status=proposed; approval flips the status and never the source, because FR-2 requires a generated question to stay marked as one. `phase_affinity` says which phase of the plan a competency belongs to. It is data rather than logic because the mapping is a judgement someone should be able to read and disagree with, and because the design phase is not scored -- putting a competency there decides that it will be described rather than graded. `min_level` is the least senior candidate a question is fair to ask, junior when omitted. A question is marked mid when it can only be answered from a live system, a team whose decisions you work within, or colleagues' work to review -- experience a junior may simply not have had, so asking it measures their CV rather than how they answer. A junior plan asks one only where nothing fairer fills the slot.",
   "competencies": {
     "incident_response": "diagnosing and resolving production failures, and what changed afterwards",
     "performance": "finding and fixing a scalability or latency problem, with measurement",
@@ -35,7 +35,8 @@
       ],
       "shape": "star",
       "source": "curated",
-      "status": "approved"
+      "status": "approved",
+      "min_level": "mid"
     },
     {
       "id": "bank.incident.2",
@@ -57,7 +58,8 @@
       ],
       "shape": "star",
       "source": "curated",
-      "status": "approved"
+      "status": "approved",
+      "min_level": "mid"
     },
     {
       "id": "bank.perf.1",
@@ -99,7 +101,8 @@
       ],
       "shape": "star",
       "source": "curated",
-      "status": "approved"
+      "status": "approved",
+      "min_level": "mid"
     },
     {
       "id": "bank.data.2",
@@ -110,7 +113,8 @@
       ],
       "shape": "star",
       "source": "curated",
-      "status": "approved"
+      "status": "approved",
+      "min_level": "mid"
     },
     {
       "id": "bank.data.3",
@@ -195,7 +199,8 @@
       ],
       "shape": "star",
       "source": "curated",
-      "status": "approved"
+      "status": "approved",
+      "min_level": "mid"
     },
     {
       "id": "bank.collab.2",
@@ -206,7 +211,8 @@
       ],
       "shape": "star",
       "source": "curated",
-      "status": "approved"
+      "status": "approved",
+      "min_level": "mid"
     },
     {
       "id": "bank.collab.3",
@@ -217,7 +223,8 @@
       ],
       "shape": "star",
       "source": "curated",
-      "status": "approved"
+      "status": "approved",
+      "min_level": "mid"
     },
     {
       "id": "bank.own.1",
@@ -323,7 +330,8 @@
       ],
       "shape": "star",
       "source": "curated",
-      "status": "approved"
+      "status": "approved",
+      "min_level": "mid"
     }
   ]
 }

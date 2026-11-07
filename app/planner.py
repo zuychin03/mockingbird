@@ -22,14 +22,14 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .bank import Bank, Question
+from .bank import LEVELS, Bank, Question
 from .observe import _grounded as _grounded_in
 from .provider import Provider
 
-# Closed, and ordered from least to most senior so a caller can compare. These are the four
-# the question bank can actually differentiate; inventing more would imply a precision the
-# plan does not have.
-SENIORITY = ("junior", "mid", "senior", "staff")
+# Closed, and ordered from least to most senior so a caller can compare. The bank's own list,
+# because a question's `min_level` is compared against whatever is read here and the two must
+# not drift. Inventing more would imply a precision the plan does not have.
+SENIORITY = LEVELS
 
 # A JD past this is not a JD -- it is a careers page, and the tail is boilerplate about
 # benefits and equal opportunity that competes for attention with the requirements.
@@ -329,6 +329,21 @@ def _select(role: str, seniority: str, ranked: list[Requirement], bank: Bank,
             ph["questions"] = have[:want]
     capacity = _capacity(plan, minutes, shape)
 
+    # Seniority used to reach only the label, so a junior plan asked "describe a production
+    # incident you were responsible for" and "give difficult feedback to a colleague" -- and
+    # neither came from the description: both were the mid-level template filling its slots.
+    # Every source below now prefers what fits the level and falls back to what does not only
+    # when nothing fairer fills the slot, so coverage and length are unchanged. A level that
+    # filters nothing leaves every list exactly as it was.
+    by_text = {q.text.lower(): q for q in bank.questions}
+
+    def fits(text: str) -> bool:
+        q = by_text.get(text.lower())
+        return q is None or q.fits(seniority)
+
+    def fitted(texts: list[str]) -> list[str]:
+        return [t for t in texts if fits(t)] + [t for t in texts if not fits(t)]
+
     chosen: dict[str, list[str]] = {pid: [] for pid in SELECTABLE}
     used: set[str] = set()
     # Question TEXT already committed anywhere in the plan. Ids are not enough: the bank was
@@ -347,6 +362,7 @@ def _select(role: str, seniority: str, ranked: list[Requirement], bank: Bank,
         options = [q for q in bank.for_competency(req.name)
                    if q.shape == want and q.id not in used
                    and q.text.lower() not in spoken]
+        options.sort(key=lambda q: not q.fits(seniority))
         if not options or len(chosen[phase]) >= capacity.get(phase, 0):
             gaps.append(req.name)
             continue
@@ -364,29 +380,42 @@ def _select(role: str, seniority: str, ranked: list[Requirement], bank: Bank,
         if pid not in chosen:
             continue
         picked = chosen[pid]
-        if not picked:
+        # A phase the JD did not reach keeps the reviewed template as it is -- unless the
+        # template holds something this level should not be asked, which is how the junior
+        # plan came to ask about colleagues it may never have had, or something already asked
+        # elsewhere. The second is real: a JD asking only for collaboration put "disagreed
+        # with a technical decision on your team" into the collaboration phase AND kept it as
+        # a template line in an unreached behavioural_core -- 249 of 4,089 swept plans asked a
+        # question twice. Only the lines that survive the length trim are checked, since those
+        # are the only ones that will be asked.
+        surviving = ph["questions"][:capacity[pid]]
+        if not picked and all(fits(q) and q.lower() not in spoken for q in surviving):
+            # Claimed even though nothing was rebuilt. Skipping without recording them let a
+            # LATER phase take one of these as a top-up, which is the same bug the other way
+            # round.
+            spoken.update(q.lower() for q in surviving)
             continue
         # Fill the remaining slots from the template by EXCLUDING what was already selected,
         # not by index. Slicing by count asked the same question twice whenever a selected
         # question also appeared earlier in the template, which is the common case: the bank
         # was seeded from this very plan.
         keep = [q for q in ph["questions"] if q.lower() not in spoken]
-        filled = (picked + keep)[:capacity[pid]]
         # A phase can still come up short: a question selected for one competency may have
         # moved out of the phase the template had it in, and the template has nothing left to
         # replace it. Top up from the bank rather than shipping a thinner interview, because
         # the shortfall is otherwise silent -- the plan simply has fewer questions than the
-        # reviewed one it was built from.
-        if len(filled) < capacity[pid]:
-            want_shape = "design" if pid == "design" else "star"
-            phase_competencies = [c for c, ph_id in bank.phase_affinity.items() if ph_id == pid]
-            spare = [q for q in bank.questions
-                     if q.askable and q.shape == want_shape
-                     and any(c in q.competencies for c in phase_competencies)
-                     and q.text.lower() not in spoken
-                     and q.text.lower() not in {x.lower() for x in filled}]
-            filled += [q.text for q in spare[:capacity[pid] - len(filled)]]
-        ph["questions"] = filled
+        # reviewed one it was built from. The spares are also what replaces a template line
+        # that does not fit the level, so they are gathered before the phase is filled.
+        want_shape = "design" if pid == "design" else "star"
+        phase_competencies = [c for c, ph_id in bank.phase_affinity.items() if ph_id == pid]
+        taken = {x.lower() for x in picked + keep}
+        spare = [q.text for q in bank.questions
+                 if q.askable and q.shape == want_shape
+                 and any(c in q.competencies for c in phase_competencies)
+                 and q.text.lower() not in spoken and q.text.lower() not in taken]
+        # Template before bank within each group, so a fitting template line still outranks
+        # any spare -- the template is the reviewed shape of the interview.
+        ph["questions"] = (picked + fitted(keep + spare))[:capacity[pid]]
         spoken.update(q.lower() for q in ph["questions"])
 
     # A phase trimmed for length keeps its own questions, so the trim never leaves a phase
@@ -395,12 +424,23 @@ def _select(role: str, seniority: str, ranked: list[Requirement], bank: Bank,
         want = capacity.get(ph["id"], len(ph.get("questions", [])))
         ph["questions"] = ph.get("questions", [])[:want]
 
+    # Said only when the level actually filtered something, so a mid-level plan's notes read
+    # exactly as they did. A fallback is named rather than left to be noticed: the reviewer
+    # sees the questions, but not which of them presume experience the candidate may lack.
+    pitched = ""
+    if any(q.askable and not q.fits(seniority) for q in bank.questions):
+        pitched = (" Pitched at %s: questions that presume more experience are asked only where "
+                   "nothing fairer fills the slot." % seniority)
+        unfit = [q for ph in plan["phases"] for q in ph.get("questions", []) if not fits(q)]
+        if unfit:
+            pitched += " Asked anyway, for want of a fairer one: %s" % " / ".join(unfit)
+
     plan["id"] = "generated.%s" % (role or "role").lower().replace(" ", "_")[:40]
     plan["label"] = "%s (%s)" % (role or "Interview", seniority)
     plan["notes"] = ("%s Phase configuration is the reviewed template; only the questions were "
-                     "selected. Covered: %s. Not covered: %s."
+                     "selected. Covered: %s. Not covered: %s.%s"
                      % (source_note, ", ".join(covered) or "nothing",
-                        ", ".join(gaps) or "nothing"))
+                        ", ".join(gaps) or "nothing", pitched))
     return Assembled(plan=plan, covered=tuple(covered), gaps=tuple(gaps),
                      estimated_secs=_estimate(plan))
 

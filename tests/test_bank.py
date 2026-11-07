@@ -195,3 +195,82 @@ def test_saving_round_trips_through_the_validator(tmp_path):
     assert [q.id for q in again.questions] == [q.id for q in b.questions]
     assert all(q.status == "approved" for q in again.questions)
     assert not (tmp_path / "saved.tmp").exists(), "the temp file is not left behind"
+
+
+# --- seniority -------------------------------------------------------------------------------
+
+def test_a_question_with_no_level_is_fair_at_every_level():
+    """Defaulted, unlike `status`: an omitted level reproduces the behaviour before levels
+    existed, so omission cannot make a plan worse than it was."""
+    q = next(q for q in bank.load(BANK).questions if q.id == "bank.learn.1")
+    assert q.min_level == "junior"
+    assert all(q.fits(level) for level in bank.LEVELS)
+
+
+def test_a_question_that_presumes_a_team_is_not_fair_to_a_junior():
+    q = next(q for q in bank.load(BANK).questions if q.id == "bank.collab.2")
+    assert q.min_level == "mid"
+    assert not q.fits("junior")
+    assert q.fits("mid") and q.fits("senior") and q.fits("staff")
+
+
+def test_an_unknown_level_is_refused_at_load(tmp_path):
+    raw = json.loads(BANK.read_text(encoding="utf-8"))
+    raw["questions"][0]["min_level"] = "intern"
+    p = tmp_path / "bank.json"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="min_level"):
+        bank.load(p)
+
+
+def test_a_save_keeps_every_level(tmp_path):
+    """`save` wrote its fields by name and `min_level` was not among them, so the first
+    approval would have untagged the whole bank -- and `load` treats a missing level as junior,
+    so nothing would have said so."""
+    b = bank.load(BANK)
+    out = tmp_path / "saved.json"
+    bank.save(b, out)
+    again = bank.load(out)
+    assert {q.id: q.min_level for q in again.questions} == {q.id: q.min_level
+                                                            for q in b.questions}
+
+
+def test_a_save_does_not_write_the_default_onto_every_question(tmp_path):
+    out = tmp_path / "saved.json"
+    bank.save(bank.load(BANK), out)
+    rows = json.loads(out.read_text(encoding="utf-8"))["questions"]
+    assert all(r.get("min_level") != "junior" for r in rows)
+
+
+def test_approving_a_question_keeps_its_level():
+    """`approve` rebuilt the question field by field, which dropped anything added after it
+    was written."""
+    b = bank.load(BANK)
+    pending = bank.Question(id="gen.test.1", text="Tell me about a team you led?",
+                            competencies=("collaboration",), shape="star",
+                            source="generated", status="proposed", min_level="senior")
+    b = bank.approve(bank.with_question(b, pending), "gen.test.1")
+    got = next(q for q in b.questions if q.id == "gen.test.1")
+    assert got.askable and got.min_level == "senior"
+
+
+def test_saving_an_untouched_bank_changes_nothing(tmp_path):
+    """The general guard against the whole class. `save` wrote its fields by name and dropped
+    `notes`, and would have dropped `min_level` the same way -- each found by accident. A field
+    that `load` and `save` do not both carry now fails here instead."""
+    out = tmp_path / "saved.json"
+    bank.save(bank.load(BANK), out)
+    assert out.read_bytes() == BANK.read_bytes()
+
+
+def test_approving_a_proposal_keeps_the_files_notes(tmp_path):
+    """The path that actually rewrites the file. The notes explain every rule the bank encodes,
+    and one approval erased them."""
+    b = bank.load(BANK)
+    pending = bank.Question(id="gen.test.2", text="Tell me about a small thing you fixed?",
+                            competencies=("learning",), shape="star",
+                            source="generated", status="proposed")
+    out = tmp_path / "saved.json"
+    bank.save(bank.approve(bank.with_question(b, pending), "gen.test.2"), out)
+    assert bank.load(out).notes == b.notes
+    assert "min_level" in bank.load(out).notes

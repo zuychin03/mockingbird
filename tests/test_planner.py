@@ -404,3 +404,128 @@ def test_a_stock_plan_holds_only_askable_questions():
     b = bank.with_question(BANK, proposal)
     a = planner.stock_plan("behavioural", b, template=TEMPLATE)
     assert proposal.text not in a.questions
+
+
+# --- seniority ---------------------------------------------------------------------------------
+# The ranked competencies the junior full-stack description produced live on 21/09. Built by
+# hand here so selection is tested without extraction.
+JUNIOR_JD = ("testing_quality", "technical_judgement", "learning", "collaboration",
+             "system_design", "data_modelling")
+PRESUMING = {q.text for q in BANK.questions if not q.fits("junior")}
+
+
+def _at(level, *names, bank_=BANK):
+    s = planner.JobSpec(role="Software Engineer", seniority=level,
+                        requirements=tuple(planner.Requirement(n, "x") for n in names))
+    return planner.assemble(s, bank_, template=TEMPLATE)
+
+
+def _asked(a):
+    return [q for ph in a.plan["phases"] for q in ph["questions"]]
+
+
+def test_a_junior_plan_asks_nothing_that_presumes_a_team_or_a_live_system():
+    """Seniority reached only the label. A junior plan asked "describe a production incident
+    you were responsible for" and "give difficult feedback to a colleague", and neither came
+    from the description: both were the mid-level template filling its slots."""
+    assert PRESUMING, "the bank tags nothing, so this test would pass vacuously"
+    asked = _asked(_at("junior", *JUNIOR_JD))
+    assert not PRESUMING & set(asked), sorted(PRESUMING & set(asked))
+
+
+def test_fitting_to_a_junior_costs_neither_length_nor_coverage():
+    """Preferred, not excluded. A junior interview that came out shorter, or dropped a
+    competency the description asked for, would be a worse fix than the gap."""
+    junior, mid = _at("junior", *JUNIOR_JD), _at("mid", *JUNIOR_JD)
+    assert len(_asked(junior)) == len(_asked(mid))
+    assert junior.covered == mid.covered and junior.gaps == mid.gaps
+
+
+def test_a_plan_above_junior_is_exactly_what_it_was():
+    """Nothing is tagged above mid, so every level from mid up must select identically -- and
+    must still ask the template's own experienced questions, which proves nothing was filtered."""
+    mid = _asked(_at("mid", *JUNIOR_JD))
+    assert _asked(_at("senior", *JUNIOR_JD)) == mid == _asked(_at("staff", *JUNIOR_JD))
+    assert "Describe a production incident you were responsible for resolving." in mid
+
+
+def test_a_stock_plan_is_untouched():
+    """Stock plans have no description to read a level from and run at mid."""
+    for kind in planner.STOCK:
+        a = planner.stock_plan(kind, BANK, template=TEMPLATE)
+        assert "Pitched at" not in a.plan["notes"], kind
+
+
+def test_a_junior_plan_falls_back_rather_than_leaving_a_competency_uncovered():
+    """When every question for a competency presumes experience, the junior plan still asks
+    one. The alternative is a gap the description asked to have covered."""
+    from dataclasses import replace
+    strict = bank.Bank(
+        competencies=dict(BANK.competencies),
+        phase_affinity=dict(BANK.phase_affinity),
+        questions=tuple(replace(q, min_level="mid") if "collaboration" in q.competencies
+                        or "mentoring" in q.competencies else q for q in BANK.questions))
+    a = _at("junior", "collaboration", bank_=strict)
+    assert "collaboration" in a.covered
+    assert "Asked anyway, for want of a fairer one" in a.plan["notes"]
+
+
+def test_the_notes_say_when_the_level_changed_anything():
+    """The sheet shows the questions but not which of them presume experience, so the plan's
+    own notes say it. A mid plan's notes read exactly as they did."""
+    assert "Pitched at junior" in _at("junior", *JUNIOR_JD).plan["notes"]
+    assert "Pitched at" not in _at("mid", *JUNIOR_JD).plan["notes"]
+
+
+# --- asking a question twice -------------------------------------------------------------------
+
+def test_no_plan_asks_the_same_question_twice():
+    """A sweep of 4,089 plans found 249 asking "disagreed with a technical decision on your
+    team" twice: picked into the collaboration phase, and kept as a template line in a
+    behavioural_core the JD never reached. Every single competency and ordered pair, at every
+    level."""
+    import itertools
+    lists = [[n] for n in BANK.competencies] + [
+        list(p) for p in itertools.permutations(BANK.competencies, 2)]
+    for ranked in lists:
+        for level in planner.SENIORITY:
+            asked = _asked(_at(level, *ranked))
+            assert len(asked) == len(set(asked)), (ranked, level)
+
+
+def test_removing_a_repeat_does_not_shorten_the_plan():
+    """The repeat is replaced, not just dropped: the interview stays as long as it was."""
+    asked = _asked(_at("mid", "collaboration"))
+    assert len(asked) == len(set(asked)) == len(_asked(_at("mid", "learning")))
+
+
+def test_a_phase_left_alone_still_claims_its_questions(tmp_path):
+    """The other direction. A phase the JD did not reach was skipped without recording what it
+    would ask, so a LATER phase topping up from the bank could take one of its lines. The
+    shipped bank never happens to trigger it, so this builds the smallest bank that does."""
+    shared = "Tell me about the shared question?"
+    b = bank.Bank(
+        competencies={"alpha": "a", "beta": "b"},
+        phase_affinity={"alpha": "behavioural_core", "beta": "collaboration"},
+        questions=tuple(bank.Question(id=i, text=t, competencies=(c,), shape="star",
+                                      source="curated", status="approved")
+                        for i, t, c in (("q.first", "Tell me about the first beta thing?", "beta"),
+                                        ("q.shared", shared, "beta"),
+                                        ("q.other", "Tell me about another beta thing?", "beta"),
+                                        ("q.alpha", "Tell me about an alpha thing?", "alpha"))))
+    raw = json.loads(TEMPLATE.read_text(encoding="utf-8"))
+    for ph in raw["phases"]:
+        if ph["id"] == "behavioural_core":
+            ph["questions"] = [shared]          # unreached, and holds a line beta could use
+        if ph["id"] == "collaboration":
+            ph["questions"] = ["Tell me about the first beta thing?"]
+    template = tmp_path / "template.json"
+    template.write_text(json.dumps(raw), encoding="utf-8")
+
+    a = planner._select("X", "mid", [planner.Requirement("beta", "e")], b, template, None,
+                        "test", shape={"warmup": 1, "behavioural_core": 1,
+                                       "collaboration": 2, "closing": 1})
+    asked = _asked(a)
+    assert asked.count(shared) == 1, asked
+    collab = next(ph["questions"] for ph in a.plan["phases"] if ph["id"] == "collaboration")
+    assert collab == ["Tell me about the first beta thing?", "Tell me about another beta thing?"]
