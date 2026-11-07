@@ -475,6 +475,9 @@ sentence above.
 
 MIT, in [LICENSE](LICENSE).
 
-That covers the code in this repository and nothing else. The language model and the voice
-models are downloaded separately, are not redistributed here, and carry their own licences --
-worth checking before shipping anything built on this.
+That covers the code in this repository and nothing else. The typefaces are under the SIL Open
+Font License (`ui/static/fonts/OFL.txt`), and the models, Python packages and runtimes are
+downloaded separately, are not redistributed here, and carry their own licences.
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists each one. Two need care before shipping
+anything built on this: Parselmouth is GPL-3.0-or-later, and LFM3-Audio's licence does not cover
+commercial use by organisations with US$10M or more in annual revenue.
