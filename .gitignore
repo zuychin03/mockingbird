@@ -38,11 +38,12 @@ data/*.txt
 data/*.md
 
 # ---------------------------------------------------------------- not published
-# Private working documents. They stay on disk and out of the repository: the plan
-# and the research log carry the measurements and the reasoning behind every rule
-# here, and internal_docs/ holds three model reviews of this codebase.
+# Private working documents. They stay on disk and out of the repository: the plans in
+# docs/ (the product plan and one per version) and the research log carry the measurements
+# and the reasoning behind every rule here, and internal_docs/ holds three model reviews of
+# this codebase.
 MOCKINGBIRD_PLAN.md
-V1.1_PLAN.md
+V*_PLAN.md
 RESEARCH_AND_EXPERIMENTS_LOG.md
 REVIEW_TAKEAWAYS_IMPROVEMENT_PLAN.md
 internal_docs/
