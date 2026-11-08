@@ -1,0 +1,33 @@
+{
+ "version": 1,
+ "notes": "Cloud models that passed Mockingbird's model gate (V1.1_PLAN P1), with the settings they were measured under and the results, shown to the candidate beside the model. Anything else typed in runs as unmeasured. Qwen3-4B-Instruct-2507 on the local server, the reference, scored fixtures 49/49, held-out 85/118, junior 11/14 with 2 of 4 gaps.",
+ "models": [
+  {
+   "vendor": "groq",
+   "model": "qwen/qwen3.8-27b",
+   "label": "Qwen3.8 27B on Groq (free tier)",
+   "logprobs": false,
+   "seed": true,
+   "temperature": true,
+   "reasoning": "none",
+   "price_in": 0.0,
+   "price_out": 0.0,
+   "free_tier": {"requests_per_day": 1000, "tokens_per_minute": 8000},
+   "gate": {
+    "date": "2026-11-08",
+    "harness": "a3d029364662",
+    "fixtures": "49/49",
+    "fixture_family_crossings": 0,
+    "held_out": "77/118",
+    "held_out_bar": 82,
+    "held_out_note": "Below the bar, accepted by Duy on 08/11/2026: 13 of the misses are follow-ups on answers the held-out gold calls complete (advance 14/45, against the 4B's 28/45), which cost a turn, not the interview. One family crossing, as the 4B.",
+    "junior": "14/14, 4 of 4 gaps",
+    "turn_ms_p50": 235,
+    "turn_ms_p90": 445,
+    "wait_ms_p50_at_a_person's_pace": 611,
+    "wait_ms_p90_at_a_person's_pace": 1285,
+    "wait_note": "At a person's pace. Answers fired back to back exhaust the free tier's 8,000 tokens a minute and waits rise to about 8 s."
+   }
+  }
+ ]
+}

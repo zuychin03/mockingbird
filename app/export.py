@@ -15,7 +15,8 @@ no account to grant. That makes the format the whole feature, and it settles thr
                     and "the local model" is not an answer once the model has been swapped.
 
 The JSON sidecar carries the same facts without the presentation, so the export is not a dead
-end: it can be diffed, re-scored, or read by something that is not a browser.
+end: it can be diffed, re-scored, or read by something that is not a browser. The Markdown copy
+(FR-22) is for notes and documents: the words and the numbers, without the recordings.
 """
 
 from __future__ import annotations
@@ -24,6 +25,9 @@ import base64
 import html
 import re
 from pathlib import Path
+
+from .corrections import scored_answers
+from .score import met_by_question
 
 # Past this much audio the document stops being openable, and a browser that hangs on it is a
 # worse outcome than one that says what was left out. Roughly an hour of speech at 16 kHz mono.
@@ -194,6 +198,8 @@ def sidecar(report: dict, session: dict, turns: list[dict]) -> dict:
         "rubric": report.get("rubric") or [],
         "delivery": report.get("delivery") or {},
         "report_text": report.get("text") or "",
+        # FR-31: what was corrected after the interview, each beside what was heard.
+        "corrections": report.get("corrections") or [],
         # What produced it. Without this a report cannot be compared to a later one.
         "provenance": session.get("provenance") or {},
         "turns": [{
@@ -201,6 +207,7 @@ def sidecar(report: dict, session: dict, turns: list[dict]) -> dict:
             "question_id": t.get("question_id"),
             "question": t.get("question"),
             "utterance": t.get("utterance"),
+            "heard": t.get("heard"),
             "said": t.get("say"),
             "at": t.get("at"),
         } for t in turns],
@@ -343,6 +350,18 @@ def html_document(report: dict, session: dict, turns: list[dict],
                    "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (k, _esc(str(v)))
                            for k, v in figures)))
 
+    fixes = report.get("corrections") or []
+    if fixes:
+        body.append("<h2>corrected before scoring</h2>")
+        body.append('<p class="lede">The report reads these answers as the candidate corrected '
+                    'them after the interview. What the recogniser heard is kept beside each, and '
+                    'the transcript below is unchanged.</p>')
+        for c in fixes:
+            body.append('<div class="answer"><h3>%s</h3><p><span class="asked">Heard</span>%s</p>'
+                        '<p><span class="asked">Corrected</span>%s</p></div>'
+                        % (_esc(c.get("question") or c.get("question_id") or ""),
+                           _esc(c.get("original") or ""), _esc(c.get("corrected") or "")))
+
     body.append("<h2>what was said</h2>")
     for turn in turns:
         if turn.get("utterance"):
@@ -370,3 +389,120 @@ def html_document(report: dict, session: dict, turns: list[dict],
            "\n".join(body),
            _esc("Recordings embedded: %s." % _size(spent) if spent else (missing or "")),
            rows))
+
+
+# CommonMark treats these as structure anywhere in a line, and an answer is the candidate's
+# words: none of it may become a link, emphasis, a table cell boundary or raw HTML.
+# An underscore inside a word is never emphasis, so Q4_K_M stays readable in the raw file.
+_MD_INLINE = re.compile(r"([\\`*\[\]<>|~&]|(?<!\w)_|_(?!\w))")
+_MD_LEAD = re.compile(r"^([#>+=-])|^(\d+)([.)])")
+
+
+def _md(text: str) -> str:
+    """One line of literal text."""
+    t = _MD_INLINE.sub(r"\\\1", _dashes(" ".join((text or "").split())))
+    return _MD_LEAD.sub(
+        lambda m: "\\" + m.group(1) if m.group(1) else m.group(2) + "\\" + m.group(3), t)
+
+
+def _md_heading(heading: str) -> str:
+    h = heading.strip().lower()
+    return h[:1].upper() + h[1:]
+
+
+def _md_rubric(rubric: list[dict]) -> list[str]:
+    def rank(c: dict) -> tuple:
+        return (c.get("met", 0) / (c.get("of") or 1), c.get("name", ""))
+
+    rows = ["| Criterion | Met | What it looks for |", "| --- | --- | --- |"]
+    for c in sorted(rubric, key=rank):
+        rows.append("| %s | %s/%s | %s |" % (
+            _md(c.get("label") or (c.get("name") or "").replace("_", " ")),
+            c.get("met", 0), c.get("of", 0), _md(c.get("description") or "")))
+    return rows
+
+
+def markdown_document(report: dict, session: dict) -> str:
+    """The report, each question with its answers as scored, delivery and provenance."""
+    rubric = report.get("rubric") or []
+    delivery = report.get("delivery") or {}
+    label = report.get("label") or session.get("plan_id") or "Interview"
+    started = (report.get("started_at") or session.get("started_at") or "")[:16].replace("T", " ")
+    sid = report.get("session_id") or session.get("session_id") or ""
+    labels = {c.get("name"): c.get("label") or (c.get("name") or "").replace("_", " ")
+              for c in rubric}
+
+    out = ["# %s" % _md(label), "",
+           "%s · %s asked, %s answered, %s scored · session %s" % (
+               started or "unknown", report.get("asked", 0), report.get("answered", 0),
+               report.get("scored", 0), _md(sid)), "",
+           "Scored by reading the answers back: which words counted as evidence was decided by "
+           "a model, and the arithmetic over them was not.", ""]
+
+    tabled = False
+    for section in _sections(report.get("text") or ""):
+        if section["heading"]:
+            out += ["## %s" % _md(_md_heading(section["heading"])), ""]
+        if _is_rubric_section(section, rubric):
+            out += _md_rubric(rubric) + [""]
+            tabled = True
+            continue
+        last = None
+        for kind, text in _blocks(section["lines"]):
+            if last == "item" and kind != "item":
+                out.append("")
+            if kind == "item":
+                out.append("- %s" % _md(text))
+            else:
+                out += ["%s%s" % ("> " if kind == "quote" else "", _md(text)), ""]
+            last = kind
+        if last == "item":
+            out.append("")
+    if rubric and not tabled:
+        out += ["## Every criterion", ""] + _md_rubric(rubric) + [""]
+
+    fixes = {(c.get("question_id"), c.get("index")): c.get("original")
+             for c in report.get("corrections") or []}
+    met = met_by_question(rubric)
+    answered = [(qid, q, a) for qid, (q, a) in scored_answers(
+        session, report.get("corrections")).items() if a]
+    if answered:
+        out += ["## Answers", ""]
+        for n, (qid, question, answers) in enumerate(answered, 1):
+            out += ["### %d. %s" % (n, _md(question or qid)), ""]
+            for i, text in enumerate(answers):
+                out += ["> %s" % _md(text), ""]
+                if (qid, i) in fixes:
+                    out += ["*Corrected after the interview. The recogniser heard:* %s"
+                            % _md(fixes[(qid, i)]), ""]
+            crit = met.get(qid) or {}
+            if crit:
+                hit = [labels.get(k, k) for k, ok in crit.items() if ok]
+                miss = [labels.get(k, k) for k, ok in crit.items() if not ok]
+                out += ["Met: %s. Missed: %s." % (_md(", ".join(hit) or "none"),
+                                                  _md(", ".join(miss) or "none")), ""]
+
+    spoken = [a for a in delivery.get("answers") or [] if not a.get("why")]
+    if spoken:
+        out += ["## Delivery, answer by answer", "",
+                "| Answer | Syllables/s | Words/min | Pauses | Mid-clause pauses |",
+                "| --- | --- | --- | --- | --- |"]
+        for a in spoken:
+            out.append("| %s | %s | %s | %s | %s |" % (
+                _md(a.get("question_id") or "answer"), a.get("articulation_rate", ""),
+                round(a["wpm"]) if a.get("wpm") else "", a.get("pause_count", ""),
+                a.get("mid_clause_pauses", "")))
+        out.append("")
+
+    prov = dict(session.get("provenance") or {})
+    if report.get("scored_by"):
+        prov["scored_by"] = report["scored_by"]
+    if prov:
+        out += ["## What produced it", ""]
+        for k, v in prov.items():
+            if isinstance(v, dict):
+                v = ", ".join("%s %s" % (kk, vv) for kk, vv in v.items() if vv not in (None, ""))
+            if v not in (None, ""):
+                out.append("- %s: %s" % (_md(k.replace("_", " ")), _md(str(v))))
+        out.append("")
+    return "\n".join(out).rstrip("\n") + "\n"

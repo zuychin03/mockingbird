@@ -17,6 +17,10 @@ redistributed by Mockingbird.
 The full notices and the licence text are in [`ui/static/fonts/OFL.txt`](ui/static/fonts/OFL.txt),
 which the build copies next to the fonts.
 
+`config/voice_check.wav`, the clip the first-run hearing check reads, was synthesised for this
+repository with Piper's `en_US-kristin-medium` voice, which was trained on public-domain
+LibriVox recordings.
+
 ## Compiled into the built interface
 
 `ui/build` is generated, not committed, and carries Svelte's runtime. The installer ships it.
@@ -79,6 +83,18 @@ Parselmouth, this leaves Mockingbird's own code under MIT.
 | LFM3-Audio-2B | speech recognition and the interviewer's voice | LFM Open License v1.0 | `LiquidAI/LFM3-Audio-2B-GGUF` |
 | all-MiniLM-L6-v2 (optional) | comparing follow-up questions | Apache-2.0 | `second-state/All-MiniLM-L6-v2-Embedding-GGUF` |
 | Silero VAD | live mode's end-of-answer detection | MIT | `snakers4/silero-vad` |
+| Piper voice kristin | the interviewer's voice where LFM3 cannot speak in time, or by choice | trained on public-domain LibriVox recordings | sherpa-onnx `tts-models` release, `vits-piper-en_US-kristin-medium` |
+| Piper voice norman | the same | trained on public-domain LibriVox recordings | `vits-piper-en_US-norman-medium` |
+| Piper voice hfc_female | the same | trained on the Hi-Fi Captain dataset, **CC BY-NC-SA 4.0** | `vits-piper-en_US-hfc_female-medium` |
+| Piper voice ryan | the same | trained on the RyanSpeech dataset, **CC BY-NC-SA 4.0** | `vits-piper-en_US-ryan-medium` |
+
+**Two Piper voices are for non-commercial use only.** hfc_female and ryan were trained on
+recordings licensed CC BY-NC-SA 4.0, so using either for anything commercial is not licensed.
+The voice picker labels them so; kristin and norman, trained on public-domain recordings, carry
+no such limit. Piper voices are downloaded only when chosen (kristin also when cloud mode speaks
+on a computer without a capable GPU), each checked against the SHA-256 GitHub publishes for it.
+Each package also carries `espeak-ng-data`, the pronunciation data espeak-ng reads, which is
+GPL-3.0-or-later like espeak-ng itself (above); its source is the espeak-ng archive linked there.
 
 **LFM Open License v1.0** follows Apache-2.0 with one limit: commercial use is licensed only to
 organisations under US$10 million in annual revenue (qualifying non-profits are exempt for
@@ -89,5 +105,6 @@ model. The first run downloads the licence text with the model, into `models\lfm
 
 | Runtime | Used for | Licence |
 |---|---|---|
-| llama.cpp (`llama-server`), release b11981 | all three model servers: the interviewer, the voice and the embedder | MIT |
+| llama.cpp (`llama-server`), release b11981, CUDA build | all three model servers: the interviewer, the voice and the embedder | MIT |
+| llama.cpp (`llama-server`), release b11981, CPU build | cloud mode without a capable GPU: the embedder, and the voice when it only listens | MIT |
 | NVIDIA CUDA runtime libraries, from the same llama.cpp release | running the models on the GPU | NVIDIA CUDA EULA, redistributable components |

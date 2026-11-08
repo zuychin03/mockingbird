@@ -12,8 +12,10 @@ const UNREACHABLE = {
     'Check that it is still running, then try again.'
 };
 
+// A 503 is any model that did not answer: the local server down, or a cloud provider refusing
+// or timing out. The server's own sentence says which and what to do.
 const NO_MODEL = {
-  title: 'The model is not running',
+  title: 'The model did not answer',
   detail:
     'Mockingbird talks to its model servers on this machine. Start them with ' +
     'python -m app.servers, then try again.'

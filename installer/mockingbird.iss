@@ -15,6 +15,13 @@ AppVersion={#AppVersion}
 AppVerName=Mockingbird {#AppVersion}
 AppPublisher=Duy Nguyen
 AppPublisherURL=https://github.com/zuychin03/mockingbird
+; Product metadata in the file's properties; SignPath requires it before it will sign.
+VersionInfoVersion={#AppVersion}
+VersionInfoProductName=Mockingbird
+VersionInfoProductVersion={#AppVersion}
+VersionInfoCompany=Duy Nguyen
+VersionInfoDescription=Mockingbird installer
+VersionInfoCopyright=Copyright (c) 2026 Duy Nguyen
 DefaultDirName={localappdata}\Programs\Mockingbird
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -43,7 +50,7 @@ Name: "{autoprograms}\Mockingbird"; Filename: "{app}\python\python.exe"; Paramet
 Name: "{autodesktop}\Mockingbird"; Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; IconFilename: "{app}\mockingbird.ico"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; Description: "Start Mockingbird now (the first start downloads about 5 GB)"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; Description: "Start Mockingbird now (the first start asks what to download)"; Flags: postinstall nowait skipifsilent
 
 [UninstallDelete]
 ; What first run downloaded or generated. data\, which holds the interviews, is left alone.
@@ -52,3 +59,5 @@ Type: filesandordirs; Name: "{app}\runtime"
 Type: filesandordirs; Name: "{app}\python"
 Type: filesandordirs; Name: "{app}\app"
 Type: filesandordirs; Name: "{app}\api"
+; The cloud provider's API key, DPAPI-encrypted; an uninstall should not leave it behind.
+Type: filesandordirs; Name: "{app}\secrets"

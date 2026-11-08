@@ -35,7 +35,7 @@ def test_downloads_land_where_the_app_reads_them():
     assert {servers.LLM_FILE, servers.EMBED_FILE, lfm3.MODEL, lfm3.MMPROJ,
             endpoint.MODEL} <= dests
     runtime = {download.ROOT / i.dest for i in download.ITEMS if i.archive}
-    assert runtime == {download.ROOT / "runtime" / "llama.cpp"}
+    assert runtime == {servers.CUDA_BINARY.parent, servers.CPU_BINARY.parent}
 
 
 @pytest.fixture()

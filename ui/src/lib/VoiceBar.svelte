@@ -65,8 +65,8 @@
     <div class="invite">
       <p>
         <b>Answer out loud.</b> The interviewer will speak its questions and your answer is
-        recorded on this machine. Nothing is uploaded, and switching this on asks the browser for
-        the microphone.
+        recorded on this machine. The recording is never uploaded, and switching this on asks the
+        browser for the microphone.
       </p>
       <button class="go" onclick={turnOn} disabled={asking}>
         <Icon name="mic" size={14} />
@@ -189,10 +189,11 @@
 
     {#if voice.live}
       <!-- 12.6.2 makes correcting the transcript before scoring a fairness requirement; live
-           mode trades it for flow, so the trade is stated where it is made. -->
+           mode moves that to after the interview (FR-31), so the trade is stated where it is made. -->
       <p class="live-note">
         The microphone opens after each question, and your answer is sent as it was heard once
-        you have been quiet for {voice.pause} s. Tap mode lets you correct it before it is sent.
+        you have been quiet for {voice.pause} s. You can correct what was heard after the
+        interview, before it is scored; Tap mode lets you correct it before it is sent.
       </p>
     {:else if !voice.liveReady && voice.liveWhy}
       <p class="live-note">Live mode is unavailable: {voice.liveWhy}.</p>

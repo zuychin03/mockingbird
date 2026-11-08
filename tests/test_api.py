@@ -723,6 +723,17 @@ def test_playback_serves_no_file_for_an_encoded_climb(client, monkeypatch, tmp_p
     assert r.headers.get("content-type") != "audio/wav"
 
 
+def test_an_unknown_api_route_is_a_json_404_not_the_app_shell(client):
+    """Pages served by a newer build than the running server parsed index.html as JSON."""
+    if not api.UI.exists():
+        pytest.skip("the catch-all exists only with a built UI")
+    r = client.get("/api/no-such-route")
+    assert r.status_code == 404
+    assert r.headers["content-type"].startswith("application/json")
+    assert "restart" in r.json()["detail"]
+    assert client.get("/history").headers["content-type"].startswith("text/html")
+
+
 # ------------------------------------------- where the interviews are, and removing them
 def _recorded_session(root, sid="20260101-000000-stored1"):
     d = root / sid
@@ -783,13 +794,83 @@ def test_the_running_interview_cannot_be_deleted(client, monkeypatch, tmp_path):
     d = _recorded_session(root)
     monkeypatch.setattr(api, "SESSIONS", root)
     live = tmp_path / "live.json"
-    live.write_text(json.dumps({"session_id": "20260101-000000-stored1"}), encoding="utf-8")
+    live.write_text(json.dumps({"session_id": "20260101-000000-stored1", "status": "running"}),
+                    encoding="utf-8")
     monkeypatch.setattr(api, "LIVE", live)
 
     r = client.delete("/api/sessions/20260101-000000-stored1")
     assert r.status_code == 409
     assert "still running" in r.json()["detail"]
     assert d.exists()
+
+
+def _live_interview(tmp_path, monkeypatch, answered=("Half an answer.",)):
+    """A real snapshot partway into question one, where the API looks, built without a model."""
+    from app import resume, session as sess
+    from app.runner import Runner
+
+    plan = sess.load_plan(api.ROOT / "config" / "interview_swe_general.json")
+    state = sess.new_session(plan, {"model_id": "test", "provider": {"mode": "local"}})
+    r = Runner(None, plan, state)
+    q = r.current
+    for i, text in enumerate(answered):
+        state.turns.append(sess.Turn(
+            index=i, phase=q["phase"], question_id=q["question_id"], question=q["question"],
+            utterance=text, act="probe", say="And then?", ok=False, ask=""))
+    r.answers_this_question = list(answered)
+    live = tmp_path / "live.json"
+    resume.write(r, live)
+    monkeypatch.setattr(api, "LIVE", live)
+    monkeypatch.setattr(api, "SESSIONS", state.dir.parent)
+    return state, live
+
+
+def test_leaving_keeps_what_was_answered_and_unlocks_settings(client, monkeypatch, tmp_path):
+    """An abandoned interview used to run for good: Settings stayed locked and the interview
+    page kept resuming it until every remaining question was answered."""
+    state, live = _live_interview(tmp_path, monkeypatch)
+
+    def no_provider(*a, **k):
+        raise AssertionError("leaving must not need a model")
+    monkeypatch.setattr(api.prov, "for_session", no_provider)
+    assert client.get("/api/settings").json()["locked"] is True
+
+    r = client.post("/api/session/leave")
+    assert r.status_code == 200, r.text
+    assert r.json()["done"] is True and r.json()["status"] == "left"
+    assert r.json()["provider"] == {"mode": "local"}, "the recorded provider, not none"
+
+    meta = json.loads((state.dir / "session.json").read_text(encoding="utf-8"))
+    assert meta["status"] == "left" and meta["ended_at"]
+    [q] = meta["questions"]
+    assert q["answers"] == ["Half an answer."]
+    assert (q["closed_by"], q["closed_because"]) == ("leave", "left")
+    assert json.loads(live.read_text(encoding="utf-8"))["status"] == "left"
+    assert client.get("/api/settings").json()["locked"] is False
+
+    assert client.post("/api/session/leave").status_code == 409
+
+
+def test_a_question_with_no_answer_yet_is_not_recorded_on_leaving(client, monkeypatch,
+                                                                   tmp_path):
+    state, _ = _live_interview(tmp_path, monkeypatch, answered=())
+    assert client.post("/api/session/leave").status_code == 200
+    meta = json.loads((state.dir / "session.json").read_text(encoding="utf-8"))
+    assert meta["status"] == "left" and meta["questions"] == []
+
+
+def test_nothing_to_leave_is_a_404(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "LIVE", tmp_path / "live.json")
+    assert client.post("/api/session/leave").status_code == 404
+
+
+def test_a_left_interview_can_be_deleted_and_is_not_resumed(client, monkeypatch, tmp_path):
+    state, live = _live_interview(tmp_path, monkeypatch)
+    assert client.post("/api/session/leave").status_code == 200
+
+    assert client.delete("/api/sessions/%s" % state.session_id).status_code == 200
+    assert not state.dir.exists() and not live.exists()
+    assert client.get("/api/session").status_code == 404
 
 
 def test_deleting_refuses_a_name_that_is_not_a_session(client, monkeypatch, tmp_path):

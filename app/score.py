@@ -110,6 +110,16 @@ class Report:
         return [k for k in ranked if t[k][1] and t[k][0] / t[k][1] <= WEAK]
 
 
+def met_by_question(rubric: list[dict]) -> dict[str, dict[str, bool]]:
+    """question_id -> {criterion: met}, read back from a report's rubric payload. A report
+    cached before rows carried evidence gives nothing."""
+    out: dict[str, dict[str, bool]] = {}
+    for c in rubric or []:
+        for e in c.get("evidence") or []:
+            out.setdefault(e.get("question_id"), {})[c.get("name")] = bool(e.get("met"))
+    return out
+
+
 def build(session_id: str, observations: list[Observation],
           criteria_for: dict[str, list[str]]) -> Report:
     """Assemble the report. `criteria_for` maps question_id -> the phase's rubric criteria."""

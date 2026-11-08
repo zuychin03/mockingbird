@@ -1,5 +1,10 @@
-"""Start Mockingbird from an install: fetch anything missing, start the model servers, serve the
-app and open it. The Start-menu shortcut runs `python -m app.launch`.
+"""Start Mockingbird from an install: serve the app, open it, and get the chosen mode ready
+behind it. The Start-menu shortcut runs `python -m app.launch`.
+
+The app comes up first (V1.1_PLAN P3). A fresh install opens on the setup page, which asks
+whether the interviewer runs on this computer or in the cloud before anything is downloaded;
+an install that has chosen, including any 1.0 install with its models in place, starts getting
+ready at once. `app/supervisor.py` does the downloading and starting, and the page shows it.
 
 The window it runs in is the off switch. The servers share its console, so closing it stops
 them too instead of leaving four gigabytes of GPU memory held by processes nobody can see.
@@ -30,32 +35,26 @@ def _answers(url: str) -> bool:
         return False
 
 
-def _open_when_ready() -> None:
+def _open_when_ready(path: str = "") -> None:
     for _ in range(120):
         if _answers(URL + "api/storage"):
-            webbrowser.open(URL)
+            webbrowser.open(URL + path)
             return
         time.sleep(0.5)
 
 
-def _warm_voice() -> None:
-    """The first render on a fresh voice server took 1.9 s to first audio against 0.5 s after;
-    spend it now, while the candidate is still reading the plan."""
-    from app import lfm3
+def _warm_voice(sup) -> None:
+    """The first render took 1.9 s to first audio on a fresh LFM3 server and 3.7 s on an unloaded
+    Piper voice, against 0.5 s and 0.2 s after; spend it once the servers are up, on whichever
+    voice Settings chose, while the candidate is still reading the plan."""
+    from app import speech
+    sup.wait()
+    if sup.status()["phase"] != "ready":
+        return
     try:
-        lfm3.Speaker().warm()
-    except RuntimeError:
+        speech.engine().warm()
+    except (RuntimeError, OSError):
         pass
-
-
-def _hold(message: str) -> int:
-    """A double-clicked window closes on exit; keep it open long enough to be read."""
-    print("\n" + message)
-    try:
-        input("Press Enter to close.")
-    except EOFError:
-        pass
-    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,37 +67,38 @@ def main(argv: list[str] | None = None) -> int:
             webbrowser.open(URL)
         return 0
 
-    from app import download, servers
-
-    failures = download.fetch_all()
-    if any(f.startswith(("language model", "llama.cpp", "CUDA")) for f in failures):
-        return _hold("Mockingbird cannot start without its language model and runtime. "
-                     "Check the connection and start it again; it fetches only what is missing.")
+    from app import hardware, settings, supervisor
 
     LOGS.mkdir(parents=True, exist_ok=True)
-    print("\nStarting the model servers (their output goes to %s)." % (LOGS / "servers.log"))
-    with open(LOGS / "servers.log", "ab") as log:
-        started, why = servers.start(log=log)
-        try:
-            if why:
-                return _hold("%s\nThe log above says more. A 6 GB NVIDIA GPU is needed; another "
-                             "program holding the GPU is the usual cause." % why)
-            import uvicorn
+    sup = supervisor.Supervisor(LOGS / "servers.log")
+    s = settings.load()
+    first = ""
+    if supervisor.is_set_up(s):
+        if not s["setup_done"]:
+            # A 1.0 install: it chose the local model by installing it.
+            s = settings.save({"setup_done": True, "mode": "local"})
+        print("\nGetting ready (model server output goes to %s)." % (LOGS / "servers.log"))
+        sup.begin(s["mode"], s["hearing"], hardware.nvidia())
+    else:
+        first = "setup"
+        print("\nFirst start: choose how the interviewer runs on the page that opens.")
+    try:
+        import uvicorn
 
-            from api import main as api
+        from api import main as api
 
-            threading.Thread(target=_warm_voice, daemon=True).start()
-
-            print("\nMockingbird is at %s. Close this window to stop it." % URL)
-            if browser:
-                threading.Thread(target=_open_when_ready, daemon=True).start()
-            # 127.0.0.1, never localhost: localhost resolves to IPv6 first and costs ~2 s a call.
-            uvicorn.run(api.app, host="127.0.0.1", port=PORT, log_level="warning")
-            return 0
-        except KeyboardInterrupt:
-            return 0
-        finally:
-            servers.stop(started)
+        api.SUPERVISOR = sup
+        threading.Thread(target=_warm_voice, args=(sup,), daemon=True).start()
+        print("\nMockingbird is at %s. Close this window to stop it." % URL)
+        if browser:
+            threading.Thread(target=_open_when_ready, args=(first,), daemon=True).start()
+        # 127.0.0.1, never localhost: localhost resolves to IPv6 first and costs ~2 s a call.
+        uvicorn.run(api.app, host="127.0.0.1", port=PORT, log_level="warning")
+        return 0
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        sup.stop()
 
 
 if __name__ == "__main__":

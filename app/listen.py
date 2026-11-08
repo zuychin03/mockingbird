@@ -22,8 +22,23 @@ class AsrEngine(Protocol):
         """Why this cannot run, or None. Checked before a session rather than mid-answer."""
 
 
+class Refused:
+    """No recognition, and why: the voice socket then runs typed answers and says so."""
+
+    def __init__(self, why: str) -> None:
+        self.why = why
+
+    def available(self) -> str | None:
+        return self.why
+
+    def transcribe(self, samples: np.ndarray, rate: int) -> str:
+        return ""
+
+
 def engine() -> AsrEngine:
-    return lfm3.Listener()
+    from app import settings
+    why = settings.hearing_refused()
+    return Refused(why) if why else lfm3.Listener()
 
 
 def describe() -> dict:

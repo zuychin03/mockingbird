@@ -52,6 +52,9 @@ class Turn:
     # and its audio can only be matched by timestamp, and one session directory already holds
     # a dozen wavs. 12.9's playback and 11.5's delivery metrics both start here.
     audio: str | None = None
+    # What the recogniser produced, before any edit (FR-31; V1.1_PLAN P5). Live mode sends it
+    # unedited, so there it equals `utterance`; a typed answer has none.
+    heard: str | None = None
 
 
 @dataclass
@@ -76,10 +79,13 @@ class SessionState:
     session_id: str
     plan_id: str
     started_at: str
-    status: str = "running"           # running | complete | ended_early
+    status: str = "running"           # running | complete | ended_early | left
     ended_at: str | None = None
     turns: list[Turn] = field(default_factory=list)
     questions: list[QuestionState] = field(default_factory=list)
+    # Calls, tokens and cost across every model call the session made (FR-41), filled by
+    # `provider.Metered`. Empty for sessions from before cloud mode.
+    usage: dict = field(default_factory=dict)
 
     @property
     def dir(self) -> Path:
@@ -127,6 +133,8 @@ def checkpoint(state: SessionState) -> None:
     meta.update({"status": state.status, "ended_at": state.ended_at,
                  "turn_count": len(state.turns),
                  "questions": [asdict(q) for q in state.questions]})
+    if state.usage:
+        meta["usage"] = state.usage
     _write(state.dir / "session.json", meta)
 
 

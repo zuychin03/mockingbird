@@ -42,6 +42,7 @@ data/*.md
 # and the research log carry the measurements and the reasoning behind every rule
 # here, and internal_docs/ holds three model reviews of this codebase.
 MOCKINGBIRD_PLAN.md
+V1.1_PLAN.md
 RESEARCH_AND_EXPERIMENTS_LOG.md
 REVIEW_TAKEAWAYS_IMPROVEMENT_PLAN.md
 internal_docs/
@@ -75,6 +76,8 @@ tools/tier1_posterior_granite.json
 # Recorded speech, anywhere in the tree. A local-first product must not push a candidate's
 # voice to a public repo, and the one thing worse than losing an answer is publishing it.
 *.wav
+# Not a candidate: a synthetic Piper line the no-GPU hearing check plays, and the installer ships.
+!config/voice_check.wav
 *.mp3
 *.webm
 *.ogg

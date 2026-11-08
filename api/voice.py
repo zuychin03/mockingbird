@@ -45,6 +45,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from api import origin
 from app import audio, endpoint, listen, speech
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -238,6 +239,7 @@ class Link:
             region = u.samples[self.committed:self.committed + cut]
             text = await asyncio.to_thread(self.asr.transcribe, region, u.rate)
             self.committed += cut
+            text = audio.seam(self.heard[-1], text) if self.heard and text else text
             if text:
                 self.heard.append(text)
             if self.utterance is not u:
@@ -276,6 +278,7 @@ class Link:
         text = ""
         if len(tail) and not silent:
             text = await asyncio.to_thread(self.asr.transcribe, tail, u.rate)
+        text = audio.seam(self.heard[-1], text) if self.heard and text else text
         if text:
             self.heard.append(text)
         whole = " ".join(self.heard).strip()
@@ -343,6 +346,10 @@ class Link:
 
 @router.websocket("/api/voice")
 async def voice(ws: WebSocket) -> None:
+    # A socket is not covered by the HTTP origin check, and this one carries the microphone.
+    if origin.foreign(ws.headers.get("origin"), ws.headers.get("host")):
+        await ws.close(code=1008)
+        return
     await ws.accept()
     engine = speech.engine()
     asr = listen.engine()

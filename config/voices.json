@@ -1,0 +1,78 @@
+{
+ "version": 1,
+ "notes": "The interviewer's voices (V1.1_PLAN P4). LFM3-Audio speaks only where its model runs on a GPU; on a processor it is too slow (real-time factor 1.4, 08/11/2026) and a Piper voice speaks instead. Piper packages are sherpa-onnx's tts-models release assets, pinned by the SHA-256 GitHub publishes for them, and are downloaded on first use. A voice's licence is its training data's: hfc_female and ryan were trained on CC BY-NC-SA 4.0 recordings and may be used only non-commercially.",
+ "voices": [
+  {
+   "id": "lfm3:female",
+   "engine": "lfm3",
+   "label": "LFM3 female",
+   "gender": "female",
+   "voice": "female",
+   "licence": "LFM Open License v1.0",
+   "noncommercial": false,
+   "needs_gpu": true
+  },
+  {
+   "id": "lfm3:male",
+   "engine": "lfm3",
+   "label": "LFM3 male",
+   "gender": "male",
+   "voice": "male",
+   "licence": "LFM Open License v1.0",
+   "noncommercial": false,
+   "needs_gpu": true
+  },
+  {
+   "id": "piper:kristin",
+   "engine": "piper",
+   "label": "Kristin",
+   "gender": "female",
+   "package": "vits-piper-en_US-kristin-medium",
+   "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-kristin-medium.tar.bz2",
+   "sha256": "c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7",
+   "size": 67259230,
+   "licence": "Piper voice trained on public-domain LibriVox recordings",
+   "noncommercial": false,
+   "needs_gpu": false
+  },
+  {
+   "id": "piper:norman",
+   "engine": "piper",
+   "label": "Norman",
+   "gender": "male",
+   "package": "vits-piper-en_US-norman-medium",
+   "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-norman-medium.tar.bz2",
+   "sha256": "1f32065d480abe9abc7c7f91442125d0b34c1cc065d1e600466cac408eabf3b8",
+   "size": 67203672,
+   "licence": "Piper voice trained on public-domain LibriVox recordings",
+   "noncommercial": false,
+   "needs_gpu": false
+  },
+  {
+   "id": "piper:hfc_female",
+   "engine": "piper",
+   "label": "HFC female",
+   "gender": "female",
+   "package": "vits-piper-en_US-hfc_female-medium",
+   "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-hfc_female-medium.tar.bz2",
+   "sha256": "3fffdceb0c65bd9415a085d09c3cb88cc82f9d74a6ca453f8ce7fc5eaee81ff8",
+   "size": 67228166,
+   "licence": "Piper voice trained on the Hi-Fi Captain dataset, CC BY-NC-SA 4.0",
+   "noncommercial": true,
+   "needs_gpu": false
+  },
+  {
+   "id": "piper:ryan",
+   "engine": "piper",
+   "label": "Ryan",
+   "gender": "male",
+   "package": "vits-piper-en_US-ryan-medium",
+   "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ryan-medium.tar.bz2",
+   "sha256": "c546af78b6395b4e7c4ce1ed899438b64426a362f5d4ec5fecd090ded9ad7505",
+   "size": 67213100,
+   "licence": "Piper voice trained on the RyanSpeech dataset, CC BY-NC-SA 4.0",
+   "noncommercial": true,
+   "needs_gpu": false
+  }
+ ]
+}

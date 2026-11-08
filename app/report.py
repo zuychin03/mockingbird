@@ -231,6 +231,7 @@ CUT_SHORT = {
     "skip_consented": "you asked to skip it",
     "refused": "you chose not to answer",
     "ended_early": "the session ended here",
+    "left": "you left the interview here",
 }
 
 

@@ -3,7 +3,7 @@
   // which are offline work by design -- the live and assessment channels are separate -- so
   // it is an explicit action and it is slow, rather than something a page polls for.
   import { page } from '$app/state';
-  import { replaceState } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
 
   import Icon from '$lib/Icon.svelte';
   import Playback from '$lib/Playback.svelte';
@@ -27,10 +27,18 @@
 
   const LIMIT = 50;
 
+  // D5: an interview recorded on this computer's model is never sent to a cloud provider
+  // just because Settings changed since. When that model is not running and cloud mode is
+  // set, the page offers the switch and asks twice, naming where the answers would go.
+  let offer = $state('');
+  let confirmSwitch = $state(false);
+  let lastStatus = 0;
+
   async function call(path, init) {
     problem = null;
     try {
       const res = await fetch(path, init);
+      lastStatus = res.status;
       const body = await res.json();
       if (!res.ok) {
         problem = refused(res.status, body.detail);
@@ -89,10 +97,123 @@
     // invariant the unconditional call was protecting still holds either way -- the URL
     // and `opened` agree by the time this returns.
     if (page.url.searchParams.get('s') !== id) replaceState(`?s=${id}`, {});
+    offer = '';
+    confirmSwitch = false;
+    review = null;
+    examplesView = null;
+    confirmExamples = false;
+    // FR-31: an interview with spoken answers is checked before its first report, so nothing
+    // the recogniser misheard is scored as if it had been said.
+    const check = await call(`/api/sessions/${id}/corrections`);
+    if (check && check.spoken && !check.reviewed && !check.report_cached && check.editable) {
+      review = check;
+      busy = false;
+      building = '';
+      return;
+    }
     const got = await call(`/api/sessions/${id}/report`);
     if (got) report = got;
+    else if (lastStatus === 503 && storage?.answers_leave) offer = id;
     busy = false;
     building = '';
+    if (got) examplesView = await call(`/api/sessions/${id}/examples`);
+  }
+
+  // ---- example answers (V1.1_PLAN P6, D9): cloud only, and asked twice when this interview's
+  // answers have never been to the configured model.
+  let examplesView = $state(null);
+  let writing = $state(false);
+  let confirmExamples = $state(false);
+
+  async function writeExamples(id) {
+    const switching = examplesView?.offer?.switching;
+    if (switching && !confirmExamples) {
+      confirmExamples = true;
+      return;
+    }
+    confirmExamples = false;
+    writing = true;
+    const got = await call(`/api/sessions/${id}/examples${switching ? '?ack=true' : ''}`, {
+      method: 'POST'
+    });
+    writing = false;
+    if (got) examplesView = got;
+  }
+
+  // Brackets mark a fact only the candidate knows, which the model was told to leave open.
+  const pieces = (text) =>
+    text
+      .split(/(\[[^\]]+\])/)
+      .filter(Boolean)
+      .map((t) => ({ t, gap: /^\[.*\]$/.test(t) }));
+
+  // ---- comparing two (V1.1_PLAN P6)
+  let picking = $state(false);
+  let picked = $state([]);
+
+  function pick(id) {
+    picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked.slice(-1), id];
+  }
+
+  function stopPicking() {
+    picking = false;
+    picked = [];
+  }
+
+  // ---- correcting what was heard (V1.1_PLAN P5)
+  let review = $state(null);
+  let saving = $state(false);
+
+  async function correct(id) {
+    const got = await call(`/api/sessions/${id}/corrections`);
+    if (got) {
+      review = got;
+      report = null;
+    }
+  }
+
+  async function saveCorrections(id) {
+    saving = true;
+    const got = await call(`/api/sessions/${id}/corrections`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        answers: review.answers.map((a) => ({ question_id: a.question_id, index: a.index, text: a.text }))
+      })
+    });
+    saving = false;
+    if (got) {
+      review = null;
+      await build(id);
+    }
+  }
+
+  const reviewGroups = $derived.by(() => {
+    if (!review) return [];
+    const out = [];
+    for (const a of review.answers) {
+      if (!out.length || out.at(-1).id !== a.question_id) out.push({ id: a.question_id, question: a.question, answers: [] });
+      out.at(-1).answers.push(a);
+    }
+    return out;
+  });
+
+  async function scoreWithCurrent(id) {
+    if (!confirmSwitch) {
+      confirmSwitch = true;
+      return;
+    }
+    confirmSwitch = false;
+    busy = true;
+    building = id;
+    const got = await call(`/api/sessions/${id}/report?provider=current&ack=true`);
+    if (got) {
+      report = got;
+      offer = '';
+    }
+    busy = false;
+    building = '';
+    if (got) examplesView = await call(`/api/sessions/${id}/examples`);
   }
 
   function retry() {
@@ -102,6 +223,8 @@
 
   function close() {
     report = null;
+    review = null;
+    examplesView = null;
     opened = '';
     replaceState('/history', {});
   }
@@ -331,7 +454,59 @@
 
   <Problem {problem} onretry={retry} />
 
-  {#if report}
+  {#if offer && offer === opened && !report}
+    <div class="offer">
+      <p>
+        This interview was read by the model on this computer, which is not running. Scoring it
+        with {storage.provider.vendor} instead would send its answers to
+        <code class="where">{storage.provider.host}</code>.
+      </p>
+      <button class="toggle" class:armed={confirmSwitch} disabled={busy}
+        onclick={() => scoreWithCurrent(offer)} onblur={() => (confirmSwitch = false)}>
+        {confirmSwitch ? `Send to ${storage.provider.vendor} and score` : `Score with ${storage.provider.vendor} instead`}
+      </button>
+    </div>
+  {/if}
+
+  {#if review && opened}
+    <button class="back" onclick={close}>
+      <Icon name="back" size={14} /> All interviews
+    </button>
+    <section class="review" aria-labelledby="review-head">
+      <h2 id="review-head">Check what was heard</h2>
+      <p class="review-lede">
+        Correct any words the recogniser got wrong before your answers are scored; in live mode
+        they were sent exactly as heard. The original is kept beside each correction, and the
+        transcript of the interview is not changed.
+      </p>
+      {#each reviewGroups as g (g.id)}
+        <div class="review-q">
+          <p class="review-question">{g.question}</p>
+          {#each g.answers as a (a.index)}
+            <div class="review-a">
+              {#if a.audio}
+                <audio controls preload="none" src="/api/sessions/{opened}/audio/{a.audio}"></audio>
+              {/if}
+              <textarea bind:value={a.text} rows="3" aria-label="Answer to: {g.question}"
+                disabled={!review.editable}></textarea>
+              {#if a.heard && a.heard.trim() !== a.original.trim()}
+                <p class="was">The recogniser heard: {a.heard}</p>
+              {/if}
+              {#if a.text.trim() !== a.original.trim()}
+                <p class="was">Sent in the interview: {a.original}</p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/each}
+      <div class="review-actions">
+        <button class="go" disabled={saving || !review.editable} onclick={() => saveCorrections(opened)}>
+          {saving ? 'Saving' : 'Score these answers'}
+        </button>
+        {#if !review.editable}<span class="note">This interview is still running.</span>{/if}
+      </div>
+    </section>
+  {:else if report}
     <button class="back" onclick={close}>
       <Icon name="back" size={14} /> All interviews
     </button>
@@ -343,6 +518,21 @@
   {:else}
     <Progress {progress} />
 
+    <div class="pickbar">
+      {#if picking}
+        <span class="note" aria-live="polite">
+          {picked.length === 2
+            ? 'Two picked.'
+            : `Pick ${2 - picked.length} ${picked.length ? 'more interview' : 'interviews'} to compare.`}
+        </span>
+        <button class="toggle" disabled={picked.length < 2}
+          onclick={() => goto(`/history/compare?a=${picked[0]}&b=${picked[1]}`)}>Compare</button>
+        <button class="toggle" onclick={stopPicking}>Cancel</button>
+      {:else if sessions.filter(finished).length > 1}
+        <button class="toggle" onclick={() => (picking = true)} disabled={busy}>Compare two</button>
+      {/if}
+    </div>
+
     {#each days as group (group.day)}
       <section class="day" aria-label="Interviews on {group.day}">
         <h2 class="slug">{group.day}</h2>
@@ -353,8 +543,10 @@
             <button
             class="tape-row"
             class:working={building === s.session_id}
+            class:picked={picking && picked.includes(s.session_id)}
             disabled={busy}
-            onclick={() => build(s.session_id)}
+            aria-pressed={picking ? picked.includes(s.session_id) : undefined}
+            onclick={() => (picking ? pick(s.session_id) : build(s.session_id))}
           >
             <span class="num at">{at(s.started_at)}</span>
             <span class="label">
@@ -364,11 +556,18 @@
             <span class="counts num">
               {s.questions} questions <span class="dot">·</span> {s.turns} turns
             </span>
-            <span class="read">{building === s.session_id ? 'Reading…' : 'Read'}</span>
+            <span class="read">
+              {building === s.session_id
+                ? 'Reading…'
+                : picking
+                  ? picked.includes(s.session_id) ? 'Picked' : 'Pick'
+                  : 'Read'}
+            </span>
             {#if building === s.session_id}
               <span class="sweep"><span></span></span>
             {/if}
             </button>
+            {#if !picking}
             <button
               class="wipe"
               class:armed={arming === s.session_id}
@@ -382,6 +581,7 @@
               {#if wiping === s.session_id}...{:else if arming === s.session_id}Sure?
               {:else}<Icon name="remove" size={14} />{/if}
             </button>
+            {/if}
           </div>
         {/each}
       </section>
@@ -413,6 +613,11 @@
           <span class="sep">·</span>{report.answered} answered
           <span class="sep">·</span>{report.scored} scored
         </p>
+        {#if report.provider?.mode === 'cloud' || report.scored_by?.mode === 'cloud'}
+          <p class="meta reader">
+            Interviewed by {report.provider?.mode === 'cloud' ? `${report.provider.model} on ${report.provider.label}` : 'the model on this computer'}{#if report.scored_by && report.scored_by.model !== report.provider?.model}, scored by {report.scored_by.mode === 'cloud' ? `${report.scored_by.model} on ${report.scored_by.label}` : 'the model on this computer'}{/if}{#if report.usage?.calls}; {((report.usage.prompt_tokens || 0) + (report.usage.completion_tokens || 0)).toLocaleString()} tokens{report.usage.cost_usd === 0 ? ', free' : report.usage.cost_usd ? `, US$${report.usage.cost_usd.toFixed(4)}` : ''}{/if}.
+          </p>
+        {/if}
         <!-- 12.9: export is the sharing mechanism, because nothing here has a link to send.
              Plain anchors, so the browser downloads them without this page holding the bytes.
              The recordings make the first one large, which is why the second exists. -->
@@ -420,8 +625,24 @@
           Take it with you:
           <a href="/api/sessions/{opened}/export.html" download>one file, recordings inside</a>
           <a href="/api/sessions/{opened}/export.html?audio=false" download>without the audio</a>
+          <a href="/api/sessions/{opened}/export.md" download>as Markdown</a>
           <a href="/api/sessions/{opened}/export.json" download>as data</a>
+          <button class="inline" onclick={() => correct(opened)}>Correct a transcript</button>
         </p>
+        {#if report.corrections?.length}
+          <details class="fixes">
+            <summary>{report.corrections.length} {report.corrections.length === 1 ? 'answer was' : 'answers were'} corrected before scoring</summary>
+            <ul>
+              {#each report.corrections as c}
+                <li>
+                  <span class="asked">{c.question}</span>
+                  <span class="heard">Heard: {c.original}</span>
+                  <span>Scored: {c.corrected}</span>
+                </li>
+              {/each}
+            </ul>
+          </details>
+        {/if}
       </header>
 
       {#each shown as s}
@@ -509,6 +730,57 @@
           {/if}
         </section>
       {/each}
+
+      {#if examplesView && (examplesView.offer || examplesView.examples)}
+        <section class="examples" aria-labelledby="examples-head">
+          <h3 id="examples-head">example answers</h3>
+          {#if examplesView.examples?.examples?.length}
+            <p class="ex-lede">
+              For the answers that missed the most. Words in brackets are facts only you know:
+              put your own in rather than learning these.
+            </p>
+            {#each examplesView.examples.examples as e (e.question_id)}
+              <div class="example">
+                <p class="asked">{e.question}</p>
+                <p class="missed">
+                  Missed: {e.missing.map((m) => m.label.toLowerCase()).join(', ')}
+                </p>
+                <blockquote>
+                  {#each pieces(e.example) as p}{#if p.gap}<span class="gap">{p.t}</span>{:else}{p.t}{/if}{/each}
+                </blockquote>
+                <p class="by">
+                  Written by {examplesView.examples.provider?.model}, an example, not scored.
+                  {#if e.stale}Written before this answer was corrected.{/if}
+                </p>
+              </div>
+            {/each}
+          {:else if examplesView.examples}
+            <p class="ex-lede">
+              Every scored answer met all of its criteria, so there was nothing to write an
+              example for.
+            </p>
+          {/if}
+          {#if examplesView.offer}
+            <div class="ex-actions">
+              <button class="toggle" class:armed={confirmExamples} disabled={writing}
+                onclick={() => writeExamples(opened)} onblur={() => (confirmExamples = false)}>
+                {writing
+                  ? 'Writing…'
+                  : confirmExamples
+                    ? `Send to ${examplesView.offer.label} and write`
+                    : examplesView.examples ? 'Write them again' : 'Show example answers'}
+              </button>
+              <p class="note">
+                Sends up to {examplesView.most} of the weakest scored answers, their questions and
+                what each missed to <code class="where">{examplesView.offer.host}</code>
+                ({examplesView.offer.model}){examplesView.offer.switching
+                  ? ', which has not read this interview before'
+                  : ''}.
+              </p>
+            </div>
+          {/if}
+        </section>
+      {/if}
 
       {#if signoff.length}
         <footer>
@@ -734,6 +1006,178 @@
   .toggle:hover {
     color: var(--fg);
     border-color: var(--fg-quiet);
+  }
+  /* The second press sends answers off the machine, which is a decision: the one red. */
+  .toggle.armed {
+    color: var(--signal);
+    border-color: var(--signal);
+  }
+  .offer {
+    max-width: var(--measure);
+    margin-bottom: var(--s-5);
+  }
+  .offer p {
+    color: var(--fg-quiet);
+  }
+  .meta.reader {
+    margin-top: var(--s-1);
+  }
+
+  .review {
+    max-width: 48rem;
+    margin-top: var(--s-4);
+  }
+  .review h2 {
+    font-size: var(--step-2);
+    margin-bottom: var(--s-3);
+  }
+  .review-lede {
+    color: var(--fg-quiet);
+    max-width: var(--measure);
+    margin-bottom: var(--s-5);
+  }
+  .review-q {
+    padding: var(--s-4) 0;
+    border-top: 1px solid var(--rule);
+  }
+  .review-question {
+    font-family: var(--font-structure);
+    font-weight: 600;
+    margin-bottom: var(--s-3);
+  }
+  .review-a + .review-a {
+    margin-top: var(--s-3);
+  }
+  .review-a audio {
+    width: 100%;
+    margin-bottom: var(--s-2);
+  }
+  .review-a textarea {
+    font-family: var(--font-prose);
+    resize: vertical;
+  }
+  .was,
+  .fixes .heard {
+    color: var(--fg-faint);
+    font-size: var(--step--1);
+    margin-top: var(--s-1);
+  }
+  .review-actions {
+    display: flex;
+    gap: var(--s-3);
+    align-items: center;
+    margin-top: var(--s-5);
+  }
+  .go {
+    font-family: var(--font-structure);
+    font-size: var(--step--1);
+    font-weight: 600;
+    background: var(--signal-fill);
+    border: 1px solid var(--signal-fill);
+    color: var(--signal-fill-ink);
+    border-radius: var(--r-1);
+    padding: 10px 14px;
+    min-height: 44px;
+    cursor: pointer;
+  }
+  .go:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .inline {
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--signal);
+    font: inherit;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+    cursor: pointer;
+  }
+  .fixes {
+    margin-top: var(--s-3);
+    font-size: var(--step--1);
+  }
+  .fixes summary {
+    cursor: pointer;
+    color: var(--fg-quiet);
+  }
+  .fixes ul {
+    list-style: none;
+    padding: 0;
+    margin: var(--s-2) 0 0;
+    display: grid;
+    gap: var(--s-3);
+  }
+  .fixes li {
+    display: grid;
+    gap: 2px;
+    padding-left: var(--s-3);
+    border-left: 2px solid var(--rule-strong);
+  }
+  .fixes .asked {
+    color: var(--fg-faint);
+  }
+
+  .pickbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--s-3);
+    margin-bottom: var(--s-4);
+  }
+  .pickbar .note {
+    margin: 0;
+  }
+  .toggle:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  /* A pick is a selection, not a decision, so it takes the review blue rather than red. */
+  .tape-row.picked {
+    background: color-mix(in srgb, var(--review-blue) 12%, transparent);
+    box-shadow: inset 3px 0 0 var(--review-blue);
+  }
+  .tape-row.picked .read {
+    color: var(--review-blue-deep);
+  }
+
+  .examples .ex-lede {
+    color: var(--fg-quiet);
+    font-size: var(--step--1);
+    max-width: var(--measure);
+    margin-bottom: var(--s-4);
+  }
+  .example {
+    max-width: var(--measure);
+    padding: var(--s-4) 0;
+    border-top: 1px solid var(--rule);
+  }
+  .example .asked {
+    font-family: var(--font-structure);
+    font-weight: 600;
+  }
+  .example .missed,
+  .example .by {
+    color: var(--fg-faint);
+    font-size: var(--step--1);
+    margin-top: var(--s-1);
+  }
+  .example blockquote {
+    margin: var(--s-3) 0 0;
+    padding: var(--s-3) var(--s-4);
+    background: color-mix(in srgb, var(--review-blue) 6%, var(--bg-sunk));
+    border-left: 1px solid var(--review-blue);
+    line-height: 1.65;
+  }
+  .gap {
+    font-family: var(--font-data);
+    font-size: 0.88em;
+    color: var(--review-blue-deep);
+    border-bottom: 1px dashed var(--review-blue);
+  }
+  .ex-actions .toggle {
+    margin-top: var(--s-2);
   }
 
   .back {

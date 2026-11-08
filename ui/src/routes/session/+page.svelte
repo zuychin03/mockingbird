@@ -29,6 +29,7 @@
   let showPath = $state(false);
   let elapsed = $state(0);
   let thinkingFor = $state(0);
+  let confirmLeave = $state(false);
   let box = $state();
   let composer = $state();
   // Plain, not reactive: they only exist to stop the same line being spoken or the same
@@ -36,6 +37,9 @@
   // them.
   let spokenLine = '';
   let adopted = 0;
+  // What the recogniser produced for the answer in the box, before any edit (FR-31). Kept beside
+  // the answer so a correction later can be measured against it; empty for typed answers.
+  let heard = '';
 
   const PLANS = [
     {
@@ -115,10 +119,11 @@
     // Read, not consumed: a failed submit puts the answer back in the composer, and the
     // recording has to still be attached when they send it again.
     const audio = voice.recorded?.path ?? null;
-    const got = await send('/api/session/answer', { text, audio });
+    const got = await send('/api/session/answer', { text, audio, heard: heard || null });
     setThinking(false);
     if (got) {
       sending = null;
+      heard = '';
       clearRecording();
       adopt(got);
       queueMicrotask(() => composer?.focus());
@@ -127,6 +132,18 @@
       sending = null;
       queueMicrotask(() => composer?.focus());
     }
+  }
+
+  async function leave() {
+    // Voice off first: a live-mode slice landing after this would be sent to a closed interview.
+    await voiceOff();
+    const got = await send('/api/session/leave', {});
+    if (!got) return;
+    confirmLeave = false;
+    answer = '';
+    heard = '';
+    clearRecording();
+    adopt(got);
   }
 
   function onKey(event) {
@@ -153,6 +170,20 @@
       ? Math.min(1, (session.question_number - 1) / session.question_total)
       : 0
   );
+
+  function reader(s) {
+    const p = s.provider;
+    if (p.mode !== 'cloud') return 'Read on this computer';
+    let line = `Read by ${p.model} on ${p.label}${p.measured ? '' : ' (unmeasured)'}`;
+    const u = s.usage || {};
+    if (u.calls) {
+      const tokens = (u.prompt_tokens || 0) + (u.completion_tokens || 0);
+      line += ` / ${tokens.toLocaleString()} tokens`;
+      if (u.cost_usd === 0) line += ', free';
+      else if (u.cost_usd) line += `, US$${u.cost_usd.toFixed(4)}`;
+    }
+    return line;
+  }
 
   function clock(secs) {
     const m = Math.floor(secs / 60);
@@ -191,6 +222,7 @@
     adopted = got.id;
     if (!got.text || (got.live && !got.send)) return;
     answer = answer.trim() ? answer.trim() + ' ' + got.text : got.text;
+    heard = heard ? heard + ' ' + got.text : got.text;
     if (!got.send) {
       queueMicrotask(() => composer?.focus());
     } else if (busy) {
@@ -199,6 +231,11 @@
     } else {
       submit();
     }
+  });
+
+  // A box cleared by hand starts a new answer; what was heard for the old one no longer applies.
+  $effect(() => {
+    if (!answer.trim() && !sending) heard = '';
   });
 
   // 12.8: Space talks, Esc stops the interviewer. Space is only ours when the caret is not in
@@ -283,6 +320,10 @@
           {session.done ? 'Interview closed' : 'Interview live'}
         </div>
         <span class="protocol">Candidate record / assessment isolated</span>
+        <!-- FR-40: who is reading the answers, for the whole interview, without a click. -->
+        {#if session.provider}
+          <span class="protocol reader">{reader(session)}</span>
+        {/if}
       </div>
       <div class="counts">
         <span class="num">{String(session.question_number).padStart(2, '0')}</span><span class="of"
@@ -291,8 +332,26 @@
         {#if !session.done && session.started_at}
           <span class="num time"><Icon name="clock" size={12} />{clock(elapsed)}</span>
         {/if}
+        {#if !session.done}
+          <button class="ghost leave" aria-expanded={confirmLeave}
+            disabled={busy || !!sending} onclick={() => (confirmLeave = !confirmLeave)}>
+            Leave
+          </button>
+        {/if}
       </div>
     </div>
+    {#if confirmLeave && !session.done}
+      <div class="leaving" role="group" aria-label="Leave the interview">
+        <p>
+          Leave this interview? What you have answered so far is kept, and History can score
+          it. You cannot come back to this interview.
+        </p>
+        <div class="leaving-actions">
+          <button class="go" disabled={busy || !!sending} onclick={leave}>Leave interview</button>
+          <button class="ghost" onclick={() => (confirmLeave = false)}>Keep going</button>
+        </div>
+      </div>
+    {/if}
     <div class="bar" style="--p: {progress}"></div>
 
     <div
@@ -328,11 +387,19 @@
 
     {#if session.done}
       <div class="closed">
-        <h2>That is the end of the interview.</h2>
-        <p>
-          Nothing was judged while you were talking. The reading happens now, and it is under
-          <a href="/history">History</a>.
-        </p>
+        {#if session.status === 'left'}
+          <h2>You left the interview.</h2>
+          <p>
+            What you answered before leaving is kept. Nothing was judged while you were talking;
+            <a href="/history">History</a> can score it, or delete it.
+          </p>
+        {:else}
+          <h2>That is the end of the interview.</h2>
+          <p>
+            Nothing was judged while you were talking. The reading happens now, and it is under
+            <a href="/history">History</a>.
+          </p>
+        {/if}
         <!-- A finished interview stays live until another starts, and the picker only showed
              when nothing was live -- so after one interview there was no way to sit a second. -->
         <Problem {problem} />
@@ -544,6 +611,7 @@
     letter-spacing: 0.11em;
     text-transform: uppercase;
     color: var(--fg-faint);
+    white-space: nowrap;
   }
   .state.live {
     color: var(--signal);
@@ -554,6 +622,10 @@
     letter-spacing: 0.07em;
     text-transform: uppercase;
     color: var(--fg-faint);
+  }
+  .reader {
+    color: var(--fg-quiet);
+    overflow-wrap: anywhere;
   }
   .state .dot {
     width: 7px;
@@ -590,6 +662,32 @@
     gap: 5px;
     color: var(--fg-quiet);
     font-size: var(--step--2);
+  }
+
+  .leave {
+    min-height: 36px;
+    padding: 6px 10px;
+  }
+  .leaving {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s-4);
+    padding: var(--s-3) var(--s-4);
+    border: 1px solid var(--rule-strong);
+    border-top: 0;
+    background: var(--bg-raised);
+    flex: none;
+  }
+  .leaving p {
+    color: var(--fg-quiet);
+    font-size: var(--step--1);
+    max-width: var(--measure);
+  }
+  .leaving-actions {
+    display: flex;
+    gap: var(--s-2);
+    flex: none;
   }
 
   .bar {
@@ -837,6 +935,14 @@
     }
     .send .go {
       width: 100%;
+    }
+    .leaving {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--s-3);
+    }
+    .leaving-actions .go {
+      flex: 1;
     }
     .keyhint {
       text-align: center;

@@ -1,0 +1,104 @@
+# Builds the Windows installer when a version tag is pushed and attaches it to a DRAFT release.
+# Publishing stays a person's decision, made after reading the draft.
+#
+# Every third-party action is pinned by commit, Inno Setup by checksum, and the installer's own
+# inputs by installer/build.py (Python embeddable by SHA-256, wheels by --require-hashes).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  installer:
+    name: Windows installer
+    runs-on: windows-latest
+    # Holds the SignPath secret once there is one, so it can be given protection rules.
+    environment: release
+    permissions:
+      contents: write # creates the draft release and uploads the installer to it
+    env:
+      # Inno Setup's own release; the digest matches the one GitHub publishes for the asset, and
+      # the file is Authenticode-signed by Pyrsys B.V. (checked 08/11/2026).
+      INNO_URL: https://github.com/jrsoftware/issrc/releases/download/is-6_7_4/innosetup-6.7.4.exe
+      INNO_SHA256: a549929319f9120716677c685535ca4671e4b937b5fdc87e2585f32d8eb30e8c
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12.10"
+
+      # No dependency cache: a release build should not restore anything an earlier run wrote.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "25.6.0"
+          package-manager-cache: false
+
+      - name: Check the tag names the version being built
+        run: python installer/release_notes.py check
+
+      - name: Build the interface
+        run: |
+          npm ci --prefix ui
+          npm run build --prefix ui
+
+      - name: Install Inno Setup 6.7.4
+        run: |
+          $exe = Join-Path $env:RUNNER_TEMP "innosetup-6.7.4.exe"
+          Invoke-WebRequest -Uri $env:INNO_URL -OutFile $exe
+          $got = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          if ($got -ne $env:INNO_SHA256) { throw "Inno Setup checksum mismatch: $got" }
+          $dir = Join-Path $env:RUNNER_TEMP "inno"
+          Start-Process -FilePath $exe -Wait -ArgumentList @(
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/CURRENTUSER", "/DIR=$dir")
+          if (-not (Test-Path "$dir\ISCC.exe")) { throw "ISCC.exe not found in $dir" }
+          "ISCC=$dir\ISCC.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build the installer
+        run: python installer/build.py --iscc "$env:ISCC"
+
+      - name: Keep the installer with the run
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer
+          path: dist/Mockingbird-Setup-*.exe
+          if-no-files-found: error
+
+      # Off until SignPath accepts the project (V1.1_PLAN activation 8) and the release
+      # environment has the SIGNPATH_ORGANIZATION_ID variable and the SIGNPATH_API_TOKEN secret.
+      # The draft then carries the signed file.
+      - name: Sign with SignPath
+        if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          connector-url: https://githubactions.connectors.signpath.io
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: mockingbird
+          signing-policy-slug: release-signing
+          github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $exe = (Get-ChildItem signed\Mockingbird-Setup-*.exe, dist\Mockingbird-Setup-*.exe `
+            -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          python installer/release_notes.py notes $exe --out "$env:RUNNER_TEMP\notes.md"
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          gh release create $env:GITHUB_REF_NAME $exe --draft --verify-tag `
+            --title "Mockingbird $version" --notes-file "$env:RUNNER_TEMP\notes.md"

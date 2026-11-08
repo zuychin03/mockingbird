@@ -150,12 +150,14 @@ def test_the_snapshot_saves_every_field_the_runner_carries():
     # than of the interview, and persisting a function reference across a process is meaningless.
     # `_audio` is an argument to `submit` in all but name: it is set at the top of that call
     # and read by `_dispatch` inside it, and a later turn that read it would be attaching the
-    # wrong recording, so persisting it would be the bug rather than the fix.
+    # wrong recording, so persisting it would be the bug rather than the fix. `_heard` is the
+    # same for what the recogniser made of that recording.
     # `detour` is the stage 5 corpus, rebuilt from the plan and a document on disk. Persisting
     # it would pin an edited policy page to whatever it said when the session started, and an
     # absent one is also FR-32's kill switch, which a snapshot must not be able to re-arm.
     rebuilt = {"provider", "plan", "state", "questions", "history", "pace",
-               "observe_fn", "_pending", "max_say_words", "similarity", "_audio", "detour"}
+               "observe_fn", "_pending", "max_say_words", "similarity", "_audio", "_heard",
+               "detour"}
     missing = attrs - rebuilt - saved
     assert not missing, "app/resume.py does not persist: %s" % sorted(missing)
 

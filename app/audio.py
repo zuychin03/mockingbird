@@ -47,6 +47,27 @@ def rms(x: np.ndarray) -> float:
     return float(np.sqrt(np.mean(x * x))) if len(x) else 0.0
 
 
+def _bare(word: str) -> str:
+    return "".join(c for c in word.lower() if c.isalnum() or c == "'")
+
+
+def seam(previous: str, nxt: str) -> str:
+    """The next slice of an answer, minus a word it repeats across the cut. A cut at a pause can
+    land inside the recogniser's context for one word, which then comes back in both slices:
+    "for a" then "A friend" was heard as "for a A friend" (V1.1_PLAN P5). Only the one word at
+    the seam is dropped, compared without case or punctuation; a repeat anywhere else is the
+    candidate's own."""
+    prev_words, next_words = previous.split(), nxt.split()
+    if not (prev_words and next_words and _bare(prev_words[-1])):
+        return nxt
+    # "...we shipped it. It worked" is a new sentence, not an echo.
+    if prev_words[-1][-1] in ".?!":
+        return nxt
+    if _bare(prev_words[-1]) == _bare(next_words[0]):
+        return " ".join(next_words[1:])
+    return nxt
+
+
 def encode(msg: dict) -> str:
     return json.dumps(msg, separators=(",", ":"))
 

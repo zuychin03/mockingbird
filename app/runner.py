@@ -327,6 +327,7 @@ class Runner:
         # through instead would have to reach every dispatch path, and missing one loses the
         # link silently for that path alone.
         self._audio: str | None = None
+        self._heard: str | None = None
         self.awaiting_confirm = False
         self.awaiting_skip_offer = False
         # One narrowing re-ask per confirmation, then ambiguity carries on rather than
@@ -368,6 +369,20 @@ class Runner:
         return (q.get("type", "adaptive_discussion") in STAR_PACED_TYPES
                 and q.get("observation_shape", "star") == "star")
 
+    def leave(self) -> None:
+        """The candidate left mid-interview. Needs no model, so it works with the provider gone.
+
+        A question with answers is closed so they can still be scored; one still waiting for its
+        first answer was never answered and is not recorded.
+        """
+        if self.done:
+            return
+        if self.answers_this_question:
+            self._close_question("leave", "left")
+        self.state.status = "left"
+        self.state.ended_at = session.now()
+        session.checkpoint(self.state)
+
     # ---------------------------------------------------------------- the turn
     async def ask(self) -> Spoken:
         """Open the current question. Refreshes history first if a question just closed."""
@@ -395,9 +410,15 @@ class Runner:
             system += ("\n\nYou have already said the following on this question. Say something "
                        "materially different:\n" + "\n".join("- " + s for s in retry_of))
         user = contract.render(q["question"], utterance, self.history.render())
-        out = await self.provider.complete(
-            system, user, schema=contract.TURN_SCHEMA, max_tokens=400,
-            enum_field="act", enum_values=contract.ACTIONS)
+        try:
+            out = await self.provider.complete(
+                system, user, schema=contract.TURN_SCHEMA, max_tokens=400,
+                enum_field="act", enum_values=contract.ACTIONS)
+        except ProviderError as e:
+            # NFR-6 for a call that never returned: the same path as a malformed reply, one
+            # retry and then the scripted line. A cloud vendor's timeout or exhausted rate
+            # limit ended a paced interview at turn 15 as a 503 (V1.1_PLAN P1).
+            return Completion(text="", error=str(e)), None
         return out, out.json()
 
     def _distinct_from_asked(self, say: str) -> bool:
@@ -440,9 +461,11 @@ class Runner:
                 self.provider.complete(system, user, schema=contract.SPEECH_SCHEMA,
                                        max_tokens=100),
                 timeout=REPAIR_GRACE_S)
-        except (asyncio.TimeoutError, TimeoutError):
+        except (asyncio.TimeoutError, TimeoutError, ProviderError) as e:
             return None, {"trigger": trigger, "say_raw": None, "say": "", "focus": [],
-                          "accepted": False, "rejection": "timeout", "guards": [],
+                          "accepted": False,
+                          "rejection": "provider-error" if isinstance(e, ProviderError)
+                          else "timeout", "guards": [],
                           "prompt_tokens": None, "decode_tokens": None,
                           "wall_ms": round(REPAIR_GRACE_S * 1000, 1)}, []
         raw = out.json()
@@ -598,10 +621,13 @@ class Runner:
         """For a harness that ends the process between turns; the loop does this itself."""
         await self._settle()
 
-    async def submit(self, utterance: str, audio: str | None = None) -> TurnOutcome:
+    async def submit(self, utterance: str, audio: str | None = None,
+                     heard: str | None = None) -> TurnOutcome:
         """One committed utterance in, one decision out. `audio` is the recording it was
-        spoken from, already validated by the caller; a typed answer passes None."""
+        spoken from, already validated by the caller; `heard` is what the recogniser made of it
+        before any edit. A typed answer passes None for both."""
         self._audio = audio
+        self._heard = heard
         await self._settle()
         q = self.current
         if q is None:
@@ -1066,7 +1092,7 @@ class Runner:
         self.state.turns.append(session.Turn(
             index=len(self.state.turns), phase=q["phase"], question_id=q["question_id"],
             question=q["question"], utterance=utterance, act=g.act, say=text,
-            ok=g.ok, ask=g.ask, guards=g.applied, audio=self._audio))
+            ok=g.ok, ask=g.ask, guards=g.applied, audio=self._audio, heard=self._heard))
 
         session.append_decision(self.state, {
             "turn": len(self.state.turns) - 1,
@@ -1097,6 +1123,12 @@ class Runner:
             # once enough turns exist; criterion fixed in advance at >=60% of errors caught
             # while firing on <20% of turns (log 7.3).
             "posterior": out.posterior,
+            # Why the posterior is empty when the provider returns no logprobs, so an empty
+            # one from a cloud model is not mistaken for a parsing failure.
+            "posterior_note": getattr(out, "posterior_note", "") or None,
+            "provider_error": getattr(out, "error", "") or None,
+            "cost_usd": getattr(out, "cost_usd", None),
+            "reasoning_tokens": getattr(out, "reasoning_tokens", 0),
             "prompt_tokens": out.prompt_tokens,
             "decode_tokens": out.decode_tokens,
             # Both calls, when there were two: a regenerated turn spent two decodes and was

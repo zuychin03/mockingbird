@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mockingbird"
-version = "1.0.1"
+version = "1.1.0"
 description = "A locally-hosted mock-interview coach for software-engineering roles."
 requires-python = ">=3.12"
 license = "MIT"

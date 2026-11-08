@@ -22,6 +22,15 @@ def _sessions_in_tmp(tmp_path, monkeypatch):
     d.mkdir()
     monkeypatch.setattr(sess, "SESSIONS", d)
 
+    # Settings decide the provider and the voice; a developer's own cloud choice or key must not
+    # reach a test, and no test may write the real file (V1.1_PLAN P2).
+    from app import settings
+    monkeypatch.setattr(settings, "PATH", tmp_path / "settings.json")
+    monkeypatch.setenv("MOCKINGBIRD_KEY_FILE", str(tmp_path / "provider.key"))
+    for var in ("MOCKINGBIRD_PROVIDER", "MOCKINGBIRD_MODEL", "MOCKINGBIRD_API_KEY",
+                "MOCKINGBIRD_FORCE_CPU"):
+        monkeypatch.delenv(var, raising=False)
+
     # `api/` needs the web extra and `app/` must stay importable without it, so this is a
     # try rather than a top-level import.
     try:

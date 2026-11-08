@@ -48,6 +48,7 @@ def snapshot(r: Runner) -> dict[str, Any]:
         "history_dirty": r.history._dirty,
         "turns": [asdict(t) for t in r.state.turns],
         "questions": [asdict(q) for q in r.state.questions],
+        "usage": r.state.usage,
         # The plan travels WITH the session. A snapshot that needs the caller to supply the
         # right plan can be resumed against the wrong one, and the failure is silent: the
         # phases still load, the indices still resolve, and every question quietly becomes a
@@ -66,6 +67,10 @@ def restore(provider, plan: dict | None, data: dict, *, observe_fn=None,
                               started_at=data.get("started_at", ""), status=data["status"])
     state.turns = [sess.Turn(**t) for t in data["turns"]]
     state.questions = [sess.QuestionState(**q) for q in data["questions"]]
+    state.usage = data.get("usage") or {}
+    # A metering wrapper must count into the restored totals, not a fresh dict.
+    if hasattr(provider, "usage") and hasattr(provider, "inner"):
+        provider.usage = state.usage
 
     # The stage 5 corpus is rebuilt from the plan rather than stored, so a caller passes
     # the builder and not the result: a snapshot of the passages would pin an edited

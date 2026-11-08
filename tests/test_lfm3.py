@@ -77,11 +77,12 @@ def tone(seconds: float, rate: int = 16000) -> np.ndarray:
 
 # --- choosing the engine -----------------------------------------------------------------
 
-def test_both_ports_are_served_by_lfm3():
+def test_both_ports_are_served_by_lfm3_locally():
     assert isinstance(listen.engine(), lfm3.Listener)
     assert isinstance(speech.engine(), lfm3.Speaker)
-    assert speech.engine("male").voice == "male"
-    assert speech.DEFAULT_VOICE in speech.VOICES
+    assert speech.engine("lfm3:male").voice == "male"
+    assert speech.engine("male").voice == "male", "a 1.0 voice name still resolves"
+    assert speech.DEFAULT_VOICE in {v["id"] for v in speech.voices()}
 
 
 def test_a_session_records_which_engine_it_used():

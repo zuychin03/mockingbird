@@ -58,9 +58,9 @@ def test_every_field_the_runner_carries_between_turns_is_persisted(tmp_path):
         "questions", "pace", "max_say_words",
         # A live asyncio task. It cannot cross a process and is re-created by the next turn.
         "_pending",
-        # Set at the top of `submit` and read by `_dispatch` in the same call. It is an
-        # argument in all but name and is never read on a later turn.
-        "_audio",
+        # Set at the top of `submit` and read by `_dispatch` in the same call. They are
+        # arguments in all but name and are never read on a later turn.
+        "_audio", "_heard",
     }
     r = _advanced(tmp_path)
     persisted = set(resume.FIELDS) | set(resume.SET_FIELDS) | {"last_probe"}

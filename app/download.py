@@ -2,6 +2,7 @@
 
     python -m app.download                 fetch whatever is missing
     python -m app.download --from DIR ...  take matching files from DIR first
+    python -m app.download --voice kristin fetch Piper voices (`config/voices.json`)
 
 Nothing is trusted on arrival: every file is checked against the SHA-256 recorded here before it
 is moved into place, and a mismatch is deleted. Every source is pinned to the exact file the
@@ -11,6 +12,10 @@ voice was measured, so it is pinned to the revision before.
 
 `--from` is for machines that already hold the files: a match is hard-linked (copied across
 volumes) after the same checksum, so it costs no disk.
+
+What is fetched depends on the mode (V1.1_PLAN P3): the local interviewer needs everything for
+an NVIDIA GPU, while cloud mode on a computer without one needs only the embedder, the pause
+detector and llama.cpp's CPU build, plus the voice model if answers are spoken.
 """
 
 from __future__ import annotations
@@ -19,10 +24,12 @@ import argparse
 import hashlib
 import http.client
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.request
 import zipfile
@@ -44,6 +51,11 @@ SILERO = "5cd7945676eb32225748052e2e6a0580e4686a08"     # tag v6.2.3
 LLAMA_BUILD = "b11981"
 
 
+CORE, LOCAL, VOICE, CUDA, CPU = "core", "local", "voice", "cuda", "cpu"
+PIPER = "piper:"           # one group per Piper voice: "piper:kristin"
+VOICES_FILE = ROOT / "config" / "voices.json"
+
+
 @dataclass(frozen=True)
 class Item:
     name: str
@@ -53,10 +65,29 @@ class Item:
     size: int
     licence: str
     archive: bool = False
+    group: str = CORE
 
     @property
     def filename(self) -> str:
         return self.url.rsplit("/", 1)[1]
+
+
+def voice_on_gpu(gpu: dict | None) -> bool:
+    from app import hardware
+    return hardware.voice_on_gpu(gpu)
+
+
+def groups_for(mode: str, hearing: bool = True, gpu: dict | None = None) -> list[str]:
+    """The download groups a mode needs. Local means the interviewer and the voice on the GPU.
+    Cloud keeps llama.cpp for the embedder and the voice: the CUDA build where a card can hold
+    the voice, which then speaks too, else the CPU build, with the voice only for hearing."""
+    if mode == "local":
+        return [CORE, LOCAL, VOICE, CUDA]
+    if voice_on_gpu(gpu):
+        return [CORE, CUDA, VOICE]
+    # LFM3 only listens on a processor (it speaks at a real-time factor of 1.4 there), so a
+    # spoken interview also needs a voice that keeps up: Piper's public-domain kristin.
+    return [CORE, CPU, VOICE, PIPER + "kristin"] if hearing else [CORE, CPU]
 
 
 def _hf(repo: tuple[str, str], name: str) -> str:
@@ -67,18 +98,18 @@ ITEMS = (
     Item("language model", "models/qwen3-4b-instruct-2507/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
          _hf(QWEN, "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"),
          "8cdb57cbb880d313736a9bc4e3d3d2485f145b5e19cf33783746e753e82641fc", 2497280448,
-         "Apache-2.0"),
+         "Apache-2.0", group=LOCAL),
     Item("voice model", "models/lfm3-audio/LFM3-Audio-2B-Q8_0.gguf",
          _hf(LFM3, "LFM3-Audio-2B-Q8_0.gguf"),
          "d4e36902ba8f0ee7b333596030a59d650f88ac76660b4d9ba5ff77c3c2258fc0", 1846236704,
-         "LFM Open License v1.0"),
+         "LFM Open License v1.0", group=VOICE),
     Item("voice projector", "models/lfm3-audio/mmproj-LFM3-Audio-2B-BF16.gguf",
          _hf(LFM3, "mmproj-LFM3-Audio-2B-BF16.gguf"),
          "c20fced222c6b7e7bcd32eb0480fad5108f9ea26cadca4f106fac37747868ed9", 570846400,
-         "LFM Open License v1.0"),
+         "LFM Open License v1.0", group=VOICE),
     Item("voice model licence", "models/lfm3-audio/LICENSE", _hf(LFM3, "LICENSE"),
          "4d28ca14dedc0b3d0fcc2b3339f0e79931faa33874f3d24f522183a8fc70068c", 10574,
-         "LFM Open License v1.0"),
+         "LFM Open License v1.0", group=VOICE),
     Item("embedder", "models/all-minilm-l6-v2/all-MiniLM-L6-v2-Q8_0.gguf",
          _hf(MINILM, "all-MiniLM-L6-v2-Q8_0.gguf"),
          "263215c3cadd6e16740741a7624ab4cbb6c8e777688bd5331ecfbf5681c2f8ed", 25008064,
@@ -90,11 +121,16 @@ ITEMS = (
     Item("llama.cpp %s" % LLAMA_BUILD, "runtime/llama.cpp",
          GH_LLAMA % (LLAMA_BUILD, "llama-%s-bin-win-cuda-12.4-x64.zip" % LLAMA_BUILD),
          "dcb0f6be103aec6c55a365be71a678c0cf620f9c85bf9a16de78090edd44ddbb", 279763823, "MIT",
-         archive=True),
+         archive=True, group=CUDA),
     Item("CUDA runtime", "runtime/llama.cpp",
          GH_LLAMA % (LLAMA_BUILD, "cudart-llama-bin-win-cuda-12.4-x64.zip"),
          "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6", 391443627,
-         "NVIDIA CUDA runtime, redistributable", archive=True),
+         "NVIDIA CUDA runtime, redistributable", archive=True, group=CUDA),
+    # Its own folder: the CUDA build's files have the same names.
+    Item("llama.cpp %s, CPU build" % LLAMA_BUILD, "runtime/llama.cpp-cpu",
+         GH_LLAMA % (LLAMA_BUILD, "llama-%s-bin-win-cpu-x64.zip" % LLAMA_BUILD),
+         "626dd4136947fb9cdf755523fefcad3d414858a4beca06ce424fcd3ee0a948c9", 24408914, "MIT",
+         archive=True, group=CPU),
 )
 
 # GPL-3.0, so it is installed from PyPI on the user's machine rather than shipped.
@@ -114,8 +150,30 @@ def present(item: Item) -> bool:
     return p.exists() and p.stat().st_size == item.size
 
 
-def missing() -> list[Item]:
-    return [i for i in ITEMS if not present(i)]
+def voice_items() -> tuple[Item, ...]:
+    """The Piper voices, from `config/voices.json`, which the picker reads too: one manifest. Each
+    package unpacks to its own folder under models/piper."""
+    try:
+        listed = json.loads(VOICES_FILE.read_text(encoding="utf-8"))["voices"]
+    except (OSError, ValueError, KeyError):
+        return ()
+    return tuple(Item("voice: %s" % v["label"], "models/piper", v["url"], v["sha256"], v["size"],
+                      v["licence"], archive=True, group=PIPER + v["id"].split(":", 1)[1])
+                 for v in listed if v.get("engine") == "piper")
+
+
+def all_items() -> tuple[Item, ...]:
+    return ITEMS + voice_items()
+
+
+def missing(groups: list[str] | None = None) -> list[Item]:
+    """What is not in place yet; by default what the local interviewer needs, as in 1.0."""
+    wanted = groups_for("local") if groups is None else groups
+    return [i for i in all_items() if i.group in wanted and not present(i)]
+
+
+def ready(groups: list[str]) -> bool:
+    return not missing(groups)
 
 
 def parselmouth_missing() -> bool:
@@ -140,8 +198,9 @@ def _human(n: float) -> str:
     return "%.1f GB" % (n / 1024)
 
 
-def _fetch(url: str, to: Path, expect: str, size: int, say=print) -> None:
-    """Download to `to`, checking the hash as it arrives. Raises on any failure, leaving no file."""
+def _fetch(url: str, to: Path, expect: str, size: int, say=print, tick=None) -> None:
+    """Download to `to`, checking the hash as it arrives. Raises on any failure, leaving no file.
+    `tick(bytes_so_far)` is called as data arrives, for the setup page's progress."""
     h = hashlib.sha256()
     got = 0
     step = max(size // 20, CHUNK)
@@ -153,6 +212,8 @@ def _fetch(url: str, to: Path, expect: str, size: int, say=print) -> None:
                 f.write(block)
                 h.update(block)
                 got += len(block)
+                if tick:
+                    tick(got)
                 if got - shown >= step:
                     shown = got
                     say("  %3d%%  %s of %s" % (100 * got // size, _human(got), _human(size)))
@@ -184,7 +245,22 @@ def _place(src: Path, dest: Path) -> None:
     os.replace(tmp, dest)
 
 
-def get(item: Item, found: Path | None = None, say=print) -> None:
+def unpack(archive: Path, target: Path) -> None:
+    """A .zip or .tar.bz2 into `target`, refusing anything that would land outside it."""
+    if archive.name.endswith((".tar.bz2", ".tbz2")):
+        with tarfile.open(archive, "r:bz2") as t:
+            # The "data" filter refuses absolute paths, `..`, links leaving the target and
+            # device files, which is what zip slip is for tar.
+            t.extractall(target, filter="data")
+        return
+    with zipfile.ZipFile(archive) as z:
+        for member in z.namelist():
+            if not (target / member).resolve().is_relative_to(target.resolve()):
+                raise RuntimeError("unsafe path in %s: %s" % (archive.name, member))
+        z.extractall(target)
+
+
+def get(item: Item, found: Path | None = None, say=print, tick=None) -> None:
     """Put one item in place, from `found` (a checked local copy) when given, else its URL."""
     if not item.archive:
         dest = ROOT / item.dest
@@ -195,7 +271,7 @@ def get(item: Item, found: Path | None = None, say=print) -> None:
         say("%s: downloading %s" % (item.name, _human(item.size)))
         dest.parent.mkdir(parents=True, exist_ok=True)
         part = dest.with_name(dest.name + ".part")
-        _fetch(item.url, part, item.sha256, item.size, say)
+        _fetch(item.url, part, item.sha256, item.size, say, tick)
         os.replace(part, dest)
         return
     target = ROOT / item.dest
@@ -207,14 +283,12 @@ def get(item: Item, found: Path | None = None, say=print) -> None:
         else:
             say("%s: downloading %s" % (item.name, _human(item.size)))
             zpath = Path(tmp) / item.filename
-            _fetch(item.url, zpath, item.sha256, item.size, say)
+            _fetch(item.url, zpath, item.sha256, item.size, say, tick)
         say("%s: unpacking" % item.name)
-        with zipfile.ZipFile(zpath) as z:
-            for member in z.namelist():
-                # Refuse anything that would land outside the target (zip slip).
-                if not (target / member).resolve().is_relative_to(target.resolve()):
-                    raise RuntimeError("unsafe path in %s: %s" % (item.filename, member))
-            z.extractall(target)
+        try:
+            unpack(zpath, target)
+        except tarfile.TarError as e:
+            raise RuntimeError("unsafe or broken archive %s: %s" % (item.filename, e)) from e
     _marker(item).write_text(item.sha256 + "\n", encoding="ascii")
 
 
@@ -231,10 +305,11 @@ def install_parselmouth(say=print) -> bool:
     return r.returncode == 0
 
 
-def fetch_all(sources: list[Path] = (), say=print) -> list[str]:
-    """Everything missing, in order. Returns the failures, empty when all is in place."""
+def fetch(groups: list[str], sources: list[Path] = (), say=print, tick=None) -> list[str]:
+    """Everything `groups` need that is missing, in order. Returns the failures, empty when all
+    is in place. `tick(item, bytes_so_far)` reports progress per item."""
     failures = []
-    todo = missing()
+    todo = missing(groups)
     found = {i: _local(i, list(sources)) for i in todo}
     total = sum(i.size for i in todo if not found[i])
     if total:
@@ -244,21 +319,31 @@ def fetch_all(sources: list[Path] = (), say=print) -> list[str]:
             "use is not licensed for organisations with US$10M or more in annual revenue.")
     for item in todo:
         try:
-            get(item, found[item], say)
+            get(item, found[item], say, (lambda n, it=item: tick(it, n)) if tick else None)
         except (RuntimeError, OSError, zipfile.BadZipFile) as e:
             failures.append("%s: %s" % (item.name, e))
             say("%s: FAILED, %s" % (item.name, e))
-    if parselmouth_missing() and not install_parselmouth(say):
+    if CORE in groups and parselmouth_missing() and not install_parselmouth(say):
         say("delivery measurements: not installed; interviews still run")
     return failures
+
+
+def fetch_all(sources: list[Path] = (), say=print) -> list[str]:
+    """What the local interviewer needs: 1.0's whole first run."""
+    return fetch(groups_for("local"), sources, say)
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--from", dest="sources", type=Path, nargs="*", default=[],
                     help="directories to take matching files from before downloading")
+    ap.add_argument("--voice", nargs="+", default=[], metavar="NAME",
+                    help="Piper voices to fetch instead, e.g. kristin norman hfc_female ryan")
     a = ap.parse_args()
-    failures = fetch_all(a.sources)
+    if a.voice:
+        failures = fetch([PIPER + v.split(":")[-1] for v in a.voice], a.sources)
+    else:
+        failures = fetch_all(a.sources)
     if failures:
         print("\nNot everything arrived; running this again fetches only what is still missing.")
         return 1

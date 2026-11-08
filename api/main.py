@@ -17,24 +17,29 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import sys
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from api import voice  # noqa: E402
+from api import origin, voice  # noqa: E402
 from app import bank as bank_mod  # noqa: E402
-from app import (contract, detour as detour_mod, embed,  # noqa: E402
+from app import compare as compare_mod  # noqa: E402
+from app import corrections as corrections_mod  # noqa: E402
+from app import examples as examples_mod  # noqa: E402
+from app import (contract, detour as detour_mod, embed, hardware,  # noqa: E402
                  export as export_mod, observe, planner, provenance,
                  provider as prov, report as report_mod, resume, review,
-                 score as score_mod, session as sess)
+                 score as score_mod, secret, session as sess, settings as settings_mod,
+                 speech)
 
 BANK = ROOT / "config" / "question_bank.json"
 DRAFT = ROOT / "data" / "plan_draft.json"
@@ -43,6 +48,18 @@ SESSIONS = ROOT / "data" / "sessions"
 UI = ROOT / "ui" / "build"
 
 app = FastAPI(title="Mockingbird", docs_url="/api/docs")
+# The 503 a failed model call becomes carries the provider's sentence to the page and nowhere
+# else; a cloud interview that died on one was undiagnosable from the server log (08/11/2026).
+log = logging.getLogger("uvicorn.error")
+
+
+@app.middleware("http")
+async def same_origin_only(request: Request, call_next):
+    """Refuse a state-changing request another site's page sent (`api/origin.py`)."""
+    if request.method not in ("GET", "HEAD", "OPTIONS") and origin.foreign(
+            request.headers.get("origin"), request.headers.get("host")):
+        return JSONResponse({"detail": "refused: this request came from another site"}, 403)
+    return await call_next(request)
 
 
 def _bank() -> bank_mod.Bank:
@@ -128,7 +145,10 @@ def _guard(fn, *args, **kwargs):
     """Domain refusals become 400s carrying the domain's own words."""
     try:
         return fn(*args, **kwargs)
+    except prov.SetupRequired as e:
+        raise HTTPException(409, str(e)) from e
     except prov.ProviderError as e:
+        log.warning("model call failed: %s", e)
         # 503, and the provider's own sentence: it already says which host it tried and
         # says how to start the model servers, which is the whole answer. Without this the runtime
         # being down is an opaque 500 and the page says "Internal Server Error".
@@ -148,7 +168,7 @@ def get_plan() -> dict:
 async def from_description(text: str = Body(..., embed=True),
                            minutes: int | None = Body(None, embed=True)) -> dict:
     b = _bank()
-    spec = await _guard_async(planner.read_jd, prov.LlamaServer(), b, text)
+    spec = await _guard_async(planner.read_jd, _guard(prov.current), b, text)
     a = _guard(planner.assemble, spec, b, minutes=minutes)
     return _state(review.from_assembled(a, b, spec))
 
@@ -186,7 +206,7 @@ async def propose(competency: str = Body(..., embed=True)) -> dict:
     d = _draft()
     evidence = next((r.evidence for r in (d.spec.requirements if d.spec else ())
                      if r.name == competency), competency)
-    q = await _guard_async(planner.propose_question, prov.LlamaServer(), d.bank, competency,
+    q = await _guard_async(planner.propose_question, _guard(prov.current), d.bank, competency,
                            evidence, similarity=embed.similarity)
     return _state(review.propose_into_bank(d, q))
 
@@ -245,12 +265,38 @@ def _hold_pending(r) -> None:
         _PENDING[r.state.session_id] = r._pending
 
 
+def _live_id() -> str | None:
+    try:
+        return json.loads(LIVE.read_text(encoding="utf-8")).get("session_id")
+    except (OSError, ValueError):
+        return None
+
+
+def _live_running() -> bool:
+    try:
+        return json.loads(LIVE.read_text(encoding="utf-8")).get("status") == "running"
+    except (OSError, ValueError):
+        return False
+
+
+def _recorded_provider(session_id: str | None) -> dict | None:
+    """What a session's provenance says served it; None for 1.0 sessions, which were local."""
+    if not session_id:
+        return None
+    try:
+        raw = json.loads((SESSIONS / session_id / "session.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return (raw.get("provenance") or {}).get("provider")
+
+
 def _runner():
     """The snapshot carries its own plan, so nothing here has to know which one was running.
     A session started by the terminal harness resumes here and vice versa."""
     if not LIVE.exists():
         raise HTTPException(404, "no session in progress")
-    p = prov.LlamaServer()
+    # The provider the interview started on, never whatever Settings say now (D4).
+    p = prov.Metered(_guard(prov.for_session, _recorded_provider(_live_id())))
     try:
         r = resume.read(p, None, LIVE, observe_fn=_extractor(p),
                         similarity=embed.similarity, detour_for=_detour)
@@ -304,10 +350,16 @@ def _session_state(r) -> dict:
         "question_number": min(r.index + 1, len(r.questions)),
         "question_total": len(r.questions),
         "turns": turns,
+        # FR-40 and FR-41: who is reading the answers, and what it has cost, on screen for the
+        # whole interview. Neither is a judgement, so neither breaks FR-34.
+        # Leaving builds no provider, so the recorded one stands in, in the same shape.
+        "provider": (prov.describe(r.provider) if getattr(r, "provider", None)
+                     else _recorded_provider(r.state.session_id)),
+        "usage": getattr(r.state, "usage", None) or {},
     }
 
 
-def _warm(p: prov.LlamaServer, plan: dict) -> None:
+def _warm(p, plan: dict) -> None:
     """Prefill llama.cpp's prefix cache while the candidate reads question one.
 
     `cli.py` warms before the first question and the browser never did, so every interview sat
@@ -340,20 +392,30 @@ async def session_start(plan_path: str = Body(..., embed=True)) -> dict:
     if ROOT not in target.parents:
         raise HTTPException(400, "a plan is loaded from inside the project")
     plan = _guard(sess.load_plan, target)
-    model = prov.product_model(_guard(prov.served_model))
-    if model is None:
-        raise HTTPException(
-            503, "the model server is not serving %s from %s. %s"
-            % (prov.MODEL, prov.MODEL_FILE, prov.START_HINT))
-    state = sess.new_session(plan, provenance.snapshot(model))
-    p = prov.LlamaServer()
+    p = _guard(prov.current)
+    model = None
+    if prov.is_local(p):
+        model = prov.product_model(_guard(prov.served_model))
+        if model is None:
+            raise HTTPException(
+                503, "the model server is not serving %s from %s. %s"
+                % (prov.MODEL, prov.MODEL_FILE, prov.START_HINT))
+    snap = provenance.snapshot(model, prov.describe(p))
+    # FR-44: the voice the interview will speak in, fixed now because Settings lock until it ends.
+    try:
+        snap["voice"] = speech.describe()
+    except (OSError, ValueError, KeyError, RuntimeError):
+        snap["voice"] = None
+    state = sess.new_session(plan, snap)
+    p = prov.Metered(p, state.usage)
     r = resume.Runner(p, plan, state, observe_fn=_extractor(p), similarity=embed.similarity,
                       detour=_detour(plan))
     LIVE.parent.mkdir(parents=True, exist_ok=True)
     # Called for the effect, not the text: `ask` is the only place the rolling history
     # refreshes, and `_pending` derives the line to show.
     await _guard_async(r.ask)
-    _warm(p, plan)
+    if prov.is_local(p):
+        _warm(p, plan)
     _hold_pending(r)
     return _session_state(r)
 
@@ -382,11 +444,13 @@ def _recording(r, audio: str | None) -> str | None:
 
 @app.post("/api/session/answer")
 async def session_answer(text: str = Body(..., embed=True),
-                         audio: str | None = Body(None, embed=True)) -> dict:
+                         audio: str | None = Body(None, embed=True),
+                         heard: str | None = Body(None, embed=True)) -> dict:
     r = _runner()
     if r.done:
         raise HTTPException(400, "this session has finished")
-    out = await _guard_async(r.submit, text, _recording(r, audio))
+    heard = (heard or "").strip()[:20000] or None
+    out = await _guard_async(r.submit, text, _recording(r, audio), heard)
     if out.closed_question and not r.done and not out.end_session:
         await _guard_async(r.ask)
     # Only on success: a failed request leaves the snapshot as it was, and the task it had
@@ -395,7 +459,32 @@ async def session_answer(text: str = Body(..., embed=True),
     return _session_state(r)
 
 
-LOOPBACK = ("127.0.0.1", "::1", "localhost", "testclient")
+@app.post("/api/session/leave")
+async def session_leave() -> dict:
+    """End the interview where it stands, keeping what was answered for History to score.
+
+    Without this an abandoned interview ran for good: Settings lock while one runs (D4) and
+    this page resumes it, so the only way out was answering every remaining question. No
+    provider is built, so a stopped model server or a missing key cannot block leaving.
+    """
+    if not LIVE.exists():
+        raise HTTPException(404, "no session in progress")
+    try:
+        r = resume.read(None, None, LIVE)
+    except KeyError as e:
+        raise HTTPException(
+            409, "this session predates the self-describing snapshot and cannot be left "
+                 "here; finish it in the terminal (%s)" % e) from e
+    if r.done:
+        raise HTTPException(409, "this interview has already finished")
+    r.leave()
+    held = _PENDING.pop(r.state.session_id, None)
+    if held is not None:
+        held.cancel()
+    return _session_state(r)
+
+
+LOOPBACK =("127.0.0.1", "::1", "localhost", "testclient")
 
 
 def _served_remotely(request: Request) -> str | None:
@@ -447,7 +536,10 @@ def _storage(request: Request) -> dict:
             total += f.stat().st_size
         except OSError:
             pass
-    remote_model = not prov.BASE.startswith(("http://127.0.0.1", "http://localhost"))
+    conf = prov.configured()
+    # Cloud mode, or a "local" server that is not on this machine: either way the words travel.
+    remote_model = conf["mode"] == "cloud" or not str(conf["host"]).startswith(
+        ("http://127.0.0.1", "http://localhost"))
     hosted = _served_remotely(request)
     return {
         "path": str(SESSIONS),
@@ -457,7 +549,8 @@ def _storage(request: Request) -> dict:
         "bytes": total,
         # Named, not implied. A reader deciding whether to trust the claim should be able to
         # see which machine and which port answered for it.
-        "provider": {"vendor": None, "host": prov.BASE, "model": prov.MODEL},
+        "provider": {"vendor": conf["label"] if remote_model else None, "host": conf["host"],
+                     "model": conf["model"], "measured": conf["measured"]},
         "answers_leave": remote_model,
         "served_remotely": hosted is not None,
         "why_hosted": hosted,
@@ -472,6 +565,207 @@ def storage(request: Request) -> dict:
     return _storage(request)
 
 
+# ------------------------------------------------------------ settings (V1.1_PLAN P2)
+def _settings_view() -> dict:
+    """Everything the Settings page shows. The key appears only as set or not, and its last four
+    characters, never itself (FR-39)."""
+    s = settings_mod.load()
+    return {
+        "settings": s,
+        "ack": {"version": settings_mod.ACK_VERSION, "text": settings_mod.ACK_TEXT,
+                "current": settings_mod.acknowledged(s)},
+        "key": secret.status(),
+        "vendors": [{"name": v.name, "label": v.label, "host": prov.host(v.url)}
+                    for v in prov.VENDORS.values()],
+        "measured": [{"vendor": m["vendor"], "model": m["model"], "label": m.get("label"),
+                      "gate": m.get("gate") or {}, "free_tier": m.get("free_tier")}
+                     for m in prov.measured_models()],
+        "configured": prov.configured(),
+        # D4: an interview never changes provider halfway, so nothing changes while one runs.
+        "locked": _live_running(),
+    }
+
+
+def _unlocked() -> None:
+    if _live_running():
+        raise HTTPException(409, "an interview is in progress; settings take effect on the "
+                                 "next one, so change them once it has finished")
+
+
+def _from_this_page(request: Request) -> None:
+    # A custom header forces a cross-site page into a CORS preflight this server never
+    # answers, on top of the origin check, for the one endpoint that takes a secret.
+    if request.headers.get("x-mockingbird") != "1":
+        raise HTTPException(403, "refused: the key can only be set from the Settings page")
+
+
+@app.get("/api/settings")
+def settings_get() -> dict:
+    return _settings_view()
+
+
+@app.put("/api/settings")
+def settings_put(changes: dict = Body(...)) -> dict:
+    _unlocked()
+    before = settings_mod.load()
+    try:
+        after = settings_mod.save(changes)
+    except settings_mod.SettingsError as e:
+        raise HTTPException(400, str(e)) from e
+    if SUPERVISOR is not None and (before["mode"], before["hearing"]) != (after["mode"],
+                                                                          after["hearing"]):
+        # The other mode may need files and servers this one did not.
+        SUPERVISOR.begin(after["mode"], after["hearing"], hardware.nvidia())
+    return _settings_view()
+
+
+# ------------------------------------------------------------ voices (V1.1_PLAN P4)
+PREVIEW_LINE = "Tell me about a time you disagreed with a technical decision on your team."
+
+
+def _voices_view() -> dict:
+    """The picker: every voice, whether it is here, whether it can speak on this computer, and
+    which one will actually speak with Settings as they are."""
+    from app import piper
+    speaks = speech.lfm3_speaks()
+    speaking, fallback = speech.resolve()
+    rows = []
+    for v in speech.voices():
+        lfm3_voice = v["engine"] == "lfm3"
+        rows.append({
+            "id": v["id"], "label": v["label"], "engine": v["engine"], "gender": v["gender"],
+            "licence": v["licence"], "noncommercial": bool(v.get("noncommercial")),
+            "size": v.get("size"), "installed": lfm3_voice or piper.installed(v["id"]),
+            "usable": speaks if lfm3_voice else True,
+            "why_not": None if (speaks or not lfm3_voice) else
+            "needs the voice model on a GPU; on this computer's processor it is too slow to speak",
+        })
+    return {"voices": rows, "selected": settings_mod.load()["voice"],
+            "default": speech.default_voice(), "speaking": speaking, "fallback": fallback,
+            "managed": SUPERVISOR is not None,
+            "download": SUPERVISOR.status().get("voice_download") if SUPERVISOR else None}
+
+
+@app.get("/api/voices")
+def voices_get() -> dict:
+    return _voices_view()
+
+
+@app.post("/api/voices/{voice_id}/download")
+def voice_download(voice_id: str) -> dict:
+    from app import piper
+    e = piper.entry(voice_id)
+    if e is None:
+        raise HTTPException(404, "no voice %r" % voice_id)
+    if e["engine"] != "piper":
+        raise HTTPException(400, "%s comes with the voice model and needs no download" % e["label"])
+    if SUPERVISOR is None:
+        raise HTTPException(409, "this copy runs from source: fetch it with `python -m "
+                                 "app.download --voice %s`" % voice_id.split(":")[-1])
+    SUPERVISOR.fetch_voice(voice_id)
+    return _voices_view()
+
+
+@app.get("/api/voices/{voice_id}/preview")
+async def voice_preview(voice_id: str) -> Response:
+    """One interview line in that voice, so it can be judged by ear before it is chosen."""
+    from app import lfm3, piper
+    e = piper.entry(voice_id)
+    if e is None:
+        raise HTTPException(404, "no voice %r" % voice_id)
+    if e["engine"] == "lfm3":
+        if not speech.lfm3_speaks():
+            raise HTTPException(409, "LFM3 cannot speak in time on this computer's processor")
+        speaker = lfm3.Speaker(e["voice"])
+    else:
+        if not piper.installed(voice_id):
+            raise HTTPException(409, "download the %s voice first" % e["label"])
+        speaker = piper.speaker(voice_id)
+    try:
+        samples = await asyncio.to_thread(speaker.say, PREVIEW_LINE)
+    except RuntimeError as err:
+        raise HTTPException(503, str(err)) from err
+    return Response(lfm3.wav_bytes(samples, speaker.rate), media_type="audio/wav")
+
+
+# ------------------------------------------------------------ first run (V1.1_PLAN P3)
+# Handed over by `app/launch.py` when the app runs from an install; None from source, where
+# models and servers are fetched and started by hand.
+SUPERVISOR = None
+
+
+def _setup_view() -> dict:
+    hw = hardware.describe()
+    if SUPERVISOR is None:
+        return {"managed": False, "set_up": True, "hardware": hw}
+    return {"managed": True, "set_up": SUPERVISOR.is_set_up(), "hardware": hw,
+            "sizes": SUPERVISOR.option_sizes(hw["gpu"]), "status": SUPERVISOR.status(),
+            "settings": settings_mod.load()}
+
+
+@app.get("/api/setup")
+def setup_get() -> dict:
+    return _setup_view()
+
+
+@app.post("/api/setup")
+def setup_post(mode: str = Body(..., embed=True), hearing: bool = Body(True, embed=True)) -> dict:
+    if SUPERVISOR is None:
+        raise HTTPException(409, "this copy runs from source: fetch the models with "
+                                 "`python -m app.download` and start them with "
+                                 "`python -m app.servers`")
+    if mode == "local" and not hardware.can_run_local():
+        raise HTTPException(400, "the model on this computer needs an NVIDIA GPU with 6 GB of "
+                                 "memory, and none was found; choose the cloud instead")
+    changes = {"mode": mode, "hearing": bool(hearing), "setup_done": True}
+    s = settings_mod.load()
+    if mode == "cloud" and not s["vendor"]:
+        # Preselect the measured free option; the key and the acknowledgement still come first.
+        first = next(iter(prov.measured_models()), None)
+        if first:
+            changes.update(vendor=first["vendor"], model=first["model"])
+    try:
+        settings_mod.save(changes)
+    except settings_mod.SettingsError as e:
+        raise HTTPException(400, str(e)) from e
+    SUPERVISOR.begin(mode, bool(hearing), hardware.nvidia())
+    return _setup_view()
+
+
+@app.put("/api/settings/key")
+def settings_key_put(request: Request, key: str = Body(..., embed=True)) -> dict:
+    _from_this_page(request)
+    _unlocked()
+    try:
+        secret.save(key)
+    except secret.SecretError as e:
+        raise HTTPException(400, str(e)) from e
+    return _settings_view()
+
+
+@app.delete("/api/settings/key")
+def settings_key_delete(request: Request) -> dict:
+    _from_this_page(request)
+    _unlocked()
+    secret.clear()
+    return _settings_view()
+
+
+@app.post("/api/settings/test")
+def settings_test() -> dict:
+    """One short call to what Settings point at, so a wrong key or model shows here rather than
+    as the first question of an interview."""
+    p = _guard(prov.current)
+    if prov.is_local(p):
+        model = prov.product_model(_guard(prov.served_model))
+        if model is None:
+            raise HTTPException(503, "the model server is not serving %s. %s"
+                                % (prov.MODEL, prov.START_HINT))
+        return {"ok": True, "provider": prov.describe(p)}
+    got = _guard(p.ping)
+    return {"ok": True, "provider": prov.describe(p), "wall_ms": got["wall_ms"]}
+
+
 @app.delete("/api/sessions/{session_id}")
 def session_delete(session_id: str) -> dict:
     """Delete one interview and everything recorded with it.
@@ -481,26 +775,30 @@ def session_delete(session_id: str) -> dict:
     above. So this removes the directory whole -- transcript, decisions, the cached report and
     the audio -- and reports what went, rather than deleting quietly.
 
-    The live session is refused. Deleting the interview currently being conducted would leave
-    the runner writing turns into a directory that no longer exists, and "I meant the other
-    one" is a likelier click than wanting that.
+    A running interview is refused. Deleting the interview currently being conducted would
+    leave the runner writing turns into a directory that no longer exists, and "I meant the
+    other one" is a likelier click than wanting that. One that finished or was left can go, and
+    the live snapshot goes with it so the interview page does not resume a deleted interview.
     """
     d = (SESSIONS / session_id).resolve()
     if SESSIONS.resolve() not in d.parents or not (d / "session.json").exists():
         raise HTTPException(404, "no session %r" % session_id)
     try:
-        live = json.loads(LIVE.read_text(encoding="utf-8")).get("session_id")
-    except (OSError, ValueError, AttributeError):
+        live = json.loads(LIVE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         live = None
-    if live == session_id:
+    is_live = isinstance(live, dict) and live.get("session_id") == session_id
+    if is_live and live.get("status") == "running":
         raise HTTPException(
-            409, "this interview is still running; finish or leave it before deleting it")
+            409, "this interview is still running; leave it or finish it before deleting it")
 
     files = [f for f in d.rglob("*") if f.is_file()]
     gone = {"session_id": session_id, "files": len(files),
             "recordings": sum(1 for f in files if f.suffix == ".wav"),
             "bytes": sum(f.stat().st_size for f in files if f.exists())}
     shutil.rmtree(d)
+    if is_live:
+        LIVE.unlink(missing_ok=True)
     return gone
 
 
@@ -641,8 +939,10 @@ def _report_is_fresh(d: Path) -> dict | None:
     cached = d / "report.json"
     if not cached.exists():
         return None
+    # Example answers are written from the report, not into what it reads.
     newest = max((f.stat().st_mtime for f in d.iterdir()
-                  if f.is_file() and f.name != "report.json"), default=0.0)
+                  if f.is_file() and f.name not in ("report.json", examples_mod.FILE)
+                  and not f.name.endswith(".tmp")), default=0.0)
     if cached.stat().st_mtime < newest:
         return None
     try:
@@ -724,8 +1024,28 @@ def _rubric(rep: score_mod.Report, plan: dict) -> list[dict]:
     } for name, (met, of) in sorted(rep.totals.items())]
 
 
+def _switching(recorded: dict | None, conf: dict) -> bool:
+    """Would using the configured cloud model send this interview's answers somewhere they
+    have not been? (D5)"""
+    return conf["mode"] == "cloud" and (
+        not recorded or recorded.get("mode") != "cloud"
+        or (recorded.get("vendor"), recorded.get("model")) != (conf["vendor"], conf["model"]))
+
+
+def _session_dir(session_id: str) -> Path:
+    """A session folder named by a query string, which unlike a path parameter can carry a
+    slash, so the id is checked before it is joined."""
+    if not session_id or not all(ch.isalnum() or ch in "-_" for ch in session_id):
+        raise HTTPException(404, "no session %r" % session_id)
+    d = SESSIONS / session_id
+    if not (d / "session.json").exists():
+        raise HTTPException(404, "no session %r" % session_id)
+    return d
+
+
 @app.get("/api/sessions/{session_id}/report")
-async def session_report(session_id: str, refresh: bool = False) -> dict:
+async def session_report(session_id: str, refresh: bool = False, provider: str = "recorded",
+                         ack: bool = False) -> dict:
     """Extraction and scoring run here, not during the interview. They are offline work by
     design (the live and assessment channels are separate), so this is slow and deliberate
     rather than something the session view polls.
@@ -745,6 +1065,8 @@ async def session_report(session_id: str, refresh: bool = False) -> dict:
     plan = raw.get("plan_snapshot") or {}
 
     states = [sess.QuestionState(**q) for q in raw.get("questions", [])]
+    # FR-31: scored on what the candidate said, as they corrected it after the interview.
+    corrected = corrections_mod.apply(states, corrections_mod.load(d))
     # question_id -> that phase's rubric criteria. A question whose phase scores nothing maps
     # to an empty list and `score.build` skips it, which is how the warmup, design and closing
     # phases stay out of the rubric.
@@ -756,7 +1078,19 @@ async def session_report(session_id: str, refresh: bool = False) -> dict:
     criteria_for.update({qs.question_id: next(
         (ph.get("rubric_criteria", []) for ph in plan.get("phases", [])
          if qs.question_id.startswith(ph["id"])), []) for qs in states})
-    p = prov.LlamaServer()
+    # D5: scored by the provider that heard it. Rebuilding an old local interview's report must
+    # not send its answers to a cloud vendor just because Settings changed since; that takes
+    # an explicit request naming the switch, which the page makes only after asking.
+    recorded = (raw.get("provenance") or {}).get("provider")
+    if provider == "current":
+        conf = prov.configured()
+        if _switching(recorded, conf) and not ack:
+            raise HTTPException(409, "scoring this interview with %s would send its answers "
+                                     "there; confirm to continue" % conf["label"])
+        p = _guard(prov.current)
+    else:
+        p = _guard(prov.for_session, recorded)
+    p = prov.Metered(p)
 
     observations = []
     for qs in states:
@@ -789,7 +1123,44 @@ async def session_report(session_id: str, refresh: bool = False) -> dict:
         # Sent as data as well as prose so 12.9's surface can lay it out per answer, and
         # never merged into `rubric`: FR-36 keeps delivery out of the score.
         "delivery": spoken,
+        # Who read the interview and who scored it, and what each cost (FR-41, FR-42).
+        "provider": recorded or prov.describe(prov.LlamaServer()),
+        "scored_by": prov.describe(p),
+        "usage": raw.get("usage") or {},
+        "scoring_usage": p.usage,
+        # Each correction with the original beside it, so a report never hides what was heard.
+        "corrections": corrected,
     })
+
+
+@app.get("/api/sessions/{session_id}/corrections")
+def corrections_get(session_id: str) -> dict:
+    """Every scored answer, with its recording and what the recogniser heard (FR-31)."""
+    d = SESSIONS / session_id
+    if not (d / "session.json").exists():
+        raise HTTPException(404, "no session %r" % session_id)
+    raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
+    rows = corrections_mod.review(d, raw, _recorded_turns(d))
+    return {"answers": rows, "spoken": sum(r["spoken"] for r in rows),
+            "reviewed": corrections_mod.load(d) is not None,
+            "report_cached": (d / "report.json").exists(),
+            "editable": not (_live_running() and _live_id() == session_id)}
+
+
+@app.put("/api/sessions/{session_id}/corrections")
+def corrections_put(session_id: str, answers: list = Body(..., embed=True)) -> dict:
+    d = SESSIONS / session_id
+    if not (d / "session.json").exists():
+        raise HTTPException(404, "no session %r" % session_id)
+    if _live_running() and _live_id() == session_id:
+        # FR-35: nothing is edited while it is still being interviewed.
+        raise HTTPException(409, "this interview is still running; correct it once it ends")
+    raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
+    try:
+        corrections_mod.save(d, raw, answers)
+    except corrections_mod.CorrectionError as e:
+        raise HTTPException(400, str(e)) from e
+    return corrections_get(session_id)
 
 
 def _recorded_turns(d: Path) -> list[dict]:
@@ -844,10 +1215,85 @@ async def export_json(session_id: str) -> Response:
                  % _export_name(session_id, report, "json")})
 
 
+@app.get("/api/sessions/{session_id}/export.md")
+async def export_md(session_id: str) -> Response:
+    """FR-22: the report as Markdown, for notes and documents. No recordings."""
+    d = _session_dir(session_id)
+    report = await session_report(session_id)
+    raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
+    return Response(
+        content=export_mod.markdown_document(report, raw),
+        media_type="text/markdown; charset=utf-8",
+        headers={"content-disposition": 'attachment; filename="%s"'
+                 % _export_name(session_id, report, "md")})
+
+
+@app.get("/api/compare")
+async def compare(a: str, b: str) -> dict:
+    """FR-25: two interviews side by side, from their reports as scored. A report not yet
+    built is built here by the provider its interview was recorded with (D5), never switched."""
+    if a == b:
+        raise HTTPException(400, "pick two different interviews to compare")
+    sides = []
+    for sid in (a, b):
+        d = _session_dir(sid)
+        report = await session_report(sid)
+        sides.append((report, json.loads((d / "session.json").read_text(encoding="utf-8"))))
+    return compare_mod.compare(*sides)
+
+
+def _examples_view(d: Path, raw: dict) -> dict:
+    conf = prov.configured()
+    recorded = (raw.get("provenance") or {}).get("provider")
+    record = examples_mod.view(examples_mod.load(d), raw,
+                               corrections_mod.as_changes(corrections_mod.load(d)))
+    # D9: offered only when Settings point at a cloud model. Examples already written stay
+    # readable after switching back to local.
+    offer = None if conf["mode"] != "cloud" else {
+        "model": conf["model"], "label": conf["label"], "host": conf["host"],
+        "measured": conf["measured"], "switching": _switching(recorded, conf)}
+    return {"examples": record, "offer": offer, "most": examples_mod.MOST}
+
+
+@app.get("/api/sessions/{session_id}/examples")
+def examples_get(session_id: str) -> dict:
+    d = _session_dir(session_id)
+    return _examples_view(d, json.loads((d / "session.json").read_text(encoding="utf-8")))
+
+
+@app.post("/api/sessions/{session_id}/examples")
+async def examples_post(session_id: str, ack: bool = False) -> dict:
+    """Write example answers for the weakest scored responses with the configured cloud model.
+    An interview whose answers have not been to that model before needs `ack` (D5)."""
+    d = _session_dir(session_id)
+    if _live_running() and _live_id() == session_id:
+        raise HTTPException(409, "this interview is still running; example answers come after")
+    raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
+    conf = prov.configured()
+    if conf["mode"] != "cloud":
+        raise HTTPException(409, "example answers are written by a cloud model; choose one in "
+                                 "Settings")
+    if _switching((raw.get("provenance") or {}).get("provider"), conf) and not ack:
+        raise HTTPException(409, "writing example answers with %s would send these answers "
+                                 "there; confirm to continue" % conf["label"])
+    report = await session_report(session_id)
+    items = examples_mod.weakest(report, raw)
+    p = prov.Metered(_guard(prov.current))
+    try:
+        written = await _guard_async(examples_mod.write, p, items)
+    except examples_mod.ExampleError as e:
+        raise HTTPException(503, str(e)) from e
+    examples_mod.save(d, written, prov.describe(p), p.usage)
+    return _examples_view(d, raw)
+
+
 async def _guard_async(fn, *args, **kwargs):
     try:
         return await fn(*args, **kwargs)
+    except prov.SetupRequired as e:
+        raise HTTPException(409, str(e)) from e
     except prov.ProviderError as e:
+        log.warning("model call failed: %s", e)
         raise HTTPException(503, str(e)) from e
     except (ValueError, IndexError) as e:
         raise HTTPException(400, str(e)) from e
@@ -869,6 +1315,10 @@ if UI.exists():
 
     @app.get("/{path:path}")
     def spa(path: str) -> FileResponse:
+        # A page newer than the running server got the app shell here and failed to parse it.
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(404, "This server has no such route. If Mockingbird was just "
+                                     "updated, it is still running the old version: restart it.")
         candidate = (UI / path).resolve()
         if path and UI.resolve() in candidate.parents and candidate.is_file():
             return FileResponse(candidate)

@@ -1,11 +1,11 @@
 # Mockingbird architecture
 
-> Current-state guide for the `stage3-natural-probing` branch.
+> Current-state guide for version 1.1.0, updated 08/11/2026.
 >
-> Evidence snapshot: base commit `788ac3a`, plus the current uncommitted Stage 3 working-tree
-> changes, inspected on 29/08/2026. The behaviour and test counts below describe that complete
-> working state, not a published commit. Re-check this block after integration or further live
-> tuning.
+> Sections 1 and 4 list the modules and surfaces as of 1.1.0, including the cloud provider port,
+> the no-GPU path, the Piper voices, transcript correction, comparison and example answers
+> (`V1.1_PLAN.md`). The turn loop in sections 5 to 12 was inspected on the Stage 3 working state
+> (base commit `788ac3a`, 29/08/2026) and its measurements date from then.
 
 ## 1. Purpose in one page
 
@@ -77,6 +77,21 @@ the model's six-action JSON object is advisory input to that orchestrator.
   that last derived from the provider in use, so 9.5's cloud port changes the wording rather
   than making a hardcoded reassurance false. Deleting an interview removes its recordings
   with it, and the running interview is refused.
+- A cloud provider port (1.1.0): `CloudClient` beside the local `LlamaServer`, over any
+  OpenAI-compatible API (OpenAI, OpenRouter, Gemini, Groq), chosen in Settings for a whole
+  interview and recorded on it. A report is built by the recorded provider unless the candidate
+  explicitly switches. The key is DPAPI-encrypted and never returned; usage and cost are counted
+  per session by a `Metered` wrapper.
+- Running without an NVIDIA GPU (1.1.0): a first-run setup page, llama.cpp's CPU build, LFM3
+  hearing on the processor behind a speed check, and Piper speaking.
+- Six voices (1.1.0): LFM3 female and male, and four Piper voices in-process through
+  sherpa-onnx, chosen and previewed in Settings and recorded per session.
+- Correction after the interview (1.1.0, FR-31): each spoken answer reviewed against its
+  recording before the first report, corrections kept in `corrections.json` and laid over the
+  answers only for scoring.
+- Comparing two interviews from their reports, Markdown export, and cloud-written example
+  answers for the weakest responses (1.1.0).
+- A release workflow that builds a draft GitHub release from a version tag (1.1.0).
 
 ### What is not implemented
 
@@ -85,8 +100,10 @@ the model's six-action JSON object is advisory input to that orchestrator.
   alone. Tap-to-talk stays the default for the reason 12.6 gives: a false cut truncates the
   answer being scored.
 - Voice barge-in in live mode. The talk button and Space still cut the interviewer off.
-- Correcting a live-mode transcript before it is scored (FR-31); live mode says so where it is
-  switched on, and tap mode keeps the correction.
+- Correcting a live-mode transcript before it is sent. Live mode sends what it heard; the
+  correction happens after the interview, before scoring (FR-31, D10), because editing during a
+  scored interview is ruled out (FR-35).
+- A provider per path (FR-38 in full). One provider holds a whole interview.
 - The pre-flight audio wizard: loop-back test, device picker, empirical echo detection and a
   persisted choice. The permission gate explains before it prompts; the rest is not built.
 - Word-level alignment, and so seeking to a word in the transcript. Playback seeks to pauses,
@@ -169,6 +186,8 @@ silent -- a competency the description asked for simply never appears in the pla
 
 The runtime requires Python 3.12 but has no third-party runtime dependencies. It uses `asyncio`,
 `urllib`, `json`, dataclasses and local files. Pytest and research/audio dependencies are optional.
+The cloud port keeps to the same rule: `CloudClient` speaks HTTPS through `urllib`, and the key
+is encrypted through Windows DPAPI with `ctypes`, so cloud mode adds no dependency either.
 The live external processes are three `llama-server` instances, started together by
 `python -m app.servers`: the language model on `http://127.0.0.1:8091` (required), the voice
 on 8092 and the embedder on 8093, on the CPU.
@@ -248,10 +267,14 @@ fixtures and real answers, and the remaining wording differences were near-ties.
 | [`app/cli.py`](../app/cli.py) | Terminal entry point, preflight, warm-up and interview loop | Plan path, stdin, the model server | Candidate speech and session paths |
 | [`app/runner.py`](../app/runner.py) | Owns the turn loop, precedence, state transitions and dispatch | Candidate utterance, plan, provider, state | `TurnOutcome`, persisted turn |
 | [`app/contract.py`](../app/contract.py) | Normal turn and speech-only repair schemas, prompts and severity utility | Current question, answer, summary | Structured model request |
-| [`app/provider.py`](../app/provider.py) | llama-server transport, metrics, posteriors and exact model identity (alias and file) | System/user prompts and schema | `Completion` or `ProviderError` |
-| [`app/servers.py`](../app/servers.py) | Starts the three `llama-server` processes in order with their measured flags; `python -m app.servers` | Model files under `models/` | Servers on 8091, 8092 and 8093 |
-| [`app/download.py`](../app/download.py) | First-run downloads: every model and the llama.cpp runtime pinned to an exact revision and SHA-256; Parselmouth from PyPI, hash-pinned | Network, or local copies via `--from` | Files under `models/` and `runtime/` |
-| [`app/launch.py`](../app/launch.py) | What the installed shortcut runs: download what is missing, start the servers sharing its console, serve the app, open the browser | An install folder | A running app; closing the window stops it |
+| [`app/provider.py`](../app/provider.py) | The provider port: `LlamaServer` (llama-server transport, metrics, posteriors, exact model identity) and `CloudClient` (OpenAI-compatible vendors, per-model capability profiles, rate-limit retries, keys redacted from errors); `current()` from Settings, `for_session()` from the record, `Metered` usage | System/user prompts and schema | `Completion`, `ProviderError` or `SetupRequired` |
+| [`app/settings.py`](../app/settings.py) | `data/settings.json`: interviewer mode, vendor and model, the versioned acknowledgement, voice, first-run setup and the hearing check | Settings page writes | Validated settings |
+| [`app/secret.py`](../app/secret.py) | The cloud API key, encrypted with Windows DPAPI through `ctypes`; outside OneDrive for a source checkout | A key from the Settings page | Ciphertext on disk; the key only to the provider |
+| [`app/hardware.py`](../app/hardware.py) | Which NVIDIA GPU there is (`nvidia-smi`) and whether it can hold the local model or the voice | The system | Memory in MiB, or none |
+| [`app/servers.py`](../app/servers.py) | Starts the `llama-server` processes with their measured flags, on the GPU or the CPU build; `python -m app.servers` | Model files under `models/`, the chosen mode | Servers on 8091, 8092 and 8093 |
+| [`app/download.py`](../app/download.py) | First-run downloads in groups (core, local, voice, cuda, cpu, one per Piper voice): every model and runtime pinned to an exact revision and SHA-256; Parselmouth from PyPI, hash-pinned | Network, or local copies via `--from` | Files under `models/` and `runtime/` |
+| [`app/supervisor.py`](../app/supervisor.py) | Downloads and server starts in the background, behind the setup page; imported only by the launcher | The chosen mode | Progress for `/api/setup` |
+| [`app/launch.py`](../app/launch.py) | What the installed shortcut runs: serve the app at once, send a first start to `/setup`, then get the chosen mode ready | An install folder | A running app; closing the window stops it |
 | [`app/intent.py`](../app/intent.py) | Clause-aware control parsing | Candidate utterance | stop, continue, skip or unclear |
 | [`app/direction.py`](../app/direction.py) | Separates candidate questions from answers | Candidate utterance | Role decision and optional answer prefix |
 | [`app/guards.py`](../app/guards.py) | Validates model proposal and sanitises speech | Raw model JSON and utterance | `Guarded` effective proposal |
@@ -268,10 +291,15 @@ fixtures and real answers, and the remaining wording differences were near-ties.
 | [`app/embed.py`](../app/embed.py) | OPTIONAL local sentence similarity for probe de-duplication; returns None when the embedding model is absent | Two probe texts | Cosine similarity or None |
 | [`app/score.py`](../app/score.py) | Deterministic criterion arithmetic | Observations and criteria map | `QuestionScore` and `Report` |
 | [`app/report.py`](../app/report.py) | Evidence-led candidate feedback | Scores, observations, close reasons | Plain-text report |
+| [`app/corrections.py`](../app/corrections.py) | Answers corrected after the interview: `corrections.json` holds only changed answers with their originals, laid over the answers for scoring; a correction whose original moved is skipped | Session record, edits | The answers as scored, and the list of changes |
+| [`app/compare.py`](../app/compare.py) | Two interviews side by side from their reports as scored; questions paired by wording | Two reports and session records | Criteria, questions and delivery for both |
+| [`app/examples.py`](../app/examples.py) | Example answers for up to three of the weakest scored responses, written by the cloud model under a strict schema; `examples.json` | A report, the cloud provider | Labelled examples, never scored |
+| [`app/export.py`](../app/export.py) | One interview as a self-contained HTML file, a JSON sidecar, or Markdown | Report, session record, transcript | The file |
 | [`app/depth_signals.py`](../app/depth_signals.py) | Regex facts used by focus and observations | Answer text | Depth-signal booleans |
 | [`app/resume.py`](../app/resume.py) | Carries a live Runner between processes; `FIELDS` is the guarded list a test compares against the Runner's own attributes | `Runner` | Self-describing snapshot, including the plan |
 | [`app/audio.py`](../app/audio.py) | PCM framing, the voice wire protocol, and where to cut a growing answer so a slice ends in a pause | Wire frames, raw samples | Frames, `Utterance`, `Speech`, the heard/unheard split |
-| [`app/speech.py`](../app/speech.py) | The TTS port: a protocol onto LFM3-Audio, female or male voice | A line to say | Float32 mono at the engine's rate |
+| [`app/speech.py`](../app/speech.py) | The TTS port: the chosen voice from `config/voices.json`, LFM3-Audio where its model is on a GPU and Piper otherwise; records which voice spoke and why | A line to say | Float32 mono at the engine's rate |
+| [`app/piper.py`](../app/piper.py) | The Piper voices, in-process through sherpa-onnx's VITS, one loaded speaker per process | A line to say | Float32 at the voice's own rate |
 | [`app/listen.py`](../app/listen.py) | The ASR port: a protocol onto LFM3-Audio, one slice at a time | A slice of speech | Verbatim text |
 | [`app/lfm3.py`](../app/lfm3.py) | LFM3-Audio-2B through one resident `llama-server` on `127.0.0.1:8092`: recognition over `/v1/chat/completions`, speech over `/tts`; started by `app/servers.py` | Audio slices, lines | Text, 24 kHz float32 |
 | [`app/endpoint.py`](../app/endpoint.py) | Live mode's endpointer: Silero VAD windows, speech spans, and the pause that ends an answer | 16 kHz frames as they arrive | Ended or not, where the current pause began |
@@ -286,7 +314,8 @@ subprocess rather than trusting the claim.
 
 | Area | Role |
 |---|---|
-| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session, report, answer-audio, progress, storage-disclosure and delete endpoints, the domain-refusal mapping, and the static host for `ui/build` |
+| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session, report, answer-audio, progress, storage-disclosure and delete endpoints; settings, key, setup and voices; corrections, compare, examples and the HTML, JSON and Markdown exports; the domain-refusal mapping, and the static host for `ui/build`, which answers an unknown `/api/` path with a JSON 404 rather than the app shell |
+| [`api/origin.py`](../api/origin.py) | Refuses a state-changing request, and the voice socket, when its `Origin` is another site's; the key endpoint also requires a custom header |
 | [`api/voice.py`](../api/voice.py) | The voice socket at `/api/voice`. Control is JSON, audio is raw int16. Speech is streamed in a task so the receive loop stays free, because a barge-in that cannot be heard until the agent stops talking is not a barge-in |
 | [`ui/static/worklets/mic-capture.js`](../ui/static/worklets/mic-capture.js) | Captures at the device rate and resamples to the 16 kHz the recogniser wants, with an anti-alias filter, off the main thread |
 | [`ui/src/lib/audio/transport.js`](../ui/src/lib/audio/transport.js) | The browser half: capture, the monotonic playback cursor that keeps bursty delivery inaudible, barge-in, and device changes |
@@ -297,8 +326,11 @@ subprocess rather than trusting the claim.
 | [`ui/src/lib/theme.css`](../ui/src/lib/theme.css) | Every design token. Two rooms, `document` and `studio`, selected by `data-room` on the root element; components read role tokens only, never the raw scale |
 | [`ui/src/lib/live.svelte.js`](../ui/src/lib/live.svelte.js) | Whether a session is on air, shared by the nav strip and the interview so the tally never lags a request behind |
 | [`ui/src/routes/+page.svelte`](../ui/src/routes/+page.svelte) | Plan, as a numbered running order with per-phase durations taken from `planner._per_question` |
-| [`ui/src/routes/session/+page.svelte`](../ui/src/routes/session/+page.svelte) | The interview. Renders dialogue and nothing else |
-| [`ui/src/routes/history/+page.svelte`](../ui/src/routes/history/+page.svelte) | Past sessions, and the report laid out from `report.render`'s text plus the rubric as data |
+| [`ui/src/routes/session/+page.svelte`](../ui/src/routes/session/+page.svelte) | The interview. Renders dialogue and nothing else; Leave ends it early through `/api/session/leave`, which needs no model, keeps what was answered and unlocks Settings |
+| [`ui/src/routes/history/+page.svelte`](../ui/src/routes/history/+page.svelte) | Past sessions, and the report laid out from `report.render`'s text plus the rubric as data; the review of what was heard, example answers, and the "Compare two" selection |
+| [`ui/src/routes/history/compare/+page.svelte`](../ui/src/routes/history/compare/+page.svelte) | Two interviews side by side |
+| [`ui/src/routes/settings/+page.svelte`](../ui/src/routes/settings/+page.svelte) | The interviewer (local or cloud, key, acknowledgement, connection test), the voice picker with previews, and speech recognition; locked while an interview runs |
+| [`ui/src/routes/setup/+page.svelte`](../ui/src/routes/setup/+page.svelte) | The first start: what GPU was found, the choice of mode, and download progress |
 | [`tests/test_theme.py`](../tests/test_theme.py) | Parses `theme.css` and fails when any text token drops below 4.5:1 on the ground it is used on |
 
 The design carries the product's own separation rather than decorating it: the interview is a
@@ -314,6 +346,9 @@ an assessment leaking into a surface that must not carry one.
 |---|---|
 | [`config/interview_swe_general.json`](../config/interview_swe_general.json) | Current plan, phases, question text, caps, focus ladders and rubric metadata. Also the template every generated plan takes its phase configuration from |
 | [`config/question_bank.json`](../config/question_bank.json) | Curated questions, the closed competency vocabulary and the phase each competency belongs to |
+| [`config/cloud_models.json`](../config/cloud_models.json) | The measured cloud models, each with its gate results, latency and date |
+| [`config/voices.json`](../config/voices.json) | The voice catalogue: engine, licence, the non-commercial flag, package URL, SHA-256 and size |
+| [`installer/release_notes.py`](../installer/release_notes.py) and [`.github/workflows/release.yml`](../.github/workflows/release.yml) | The release workflow and its tag check and notes: a draft release with the installer, from a `v<version>` tag |
 | [`tools/plan_review.py`](../tools/plan_review.py) | Terminal surface for planning and review; a command per action with disk state, so each step is its own process |
 | [`tools/live_candidate.py`](../tools/live_candidate.py) | Turn-at-a-time human-driven harness with disk state; least scripted drift |
 | [`tools/stage2_report.py`](../tools/stage2_report.py) | Offline extraction, scoring and report generation |

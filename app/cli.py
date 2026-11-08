@@ -30,8 +30,14 @@ def _say(text: str) -> None:
     print("\n  interviewer: %s" % text)
 
 
-def _preflight(p: prov.LlamaServer, skip: bool) -> dict | None:
-    """The served model on success, None on a failure the session cannot start through."""
+def _preflight(p, skip: bool) -> dict | None:
+    """The served model on success, None on a failure the session cannot start through. A
+    cloud model has no server to inspect; its first call is the check."""
+    if not prov.is_local(p):
+        d = p.describe()
+        print("model: %s on %s%s" % (d["model"], d["label"],
+                                     "" if d["measured"] else " (unmeasured)"))
+        return {}
     try:
         served = prov.served_model()
     except prov.ProviderError as e:
@@ -64,7 +70,11 @@ def _preflight(p: prov.LlamaServer, skip: bool) -> dict | None:
 
 
 async def run(plan_path: Path, skip_canary: bool) -> int:
-    p = prov.LlamaServer()
+    try:
+        p = prov.current()
+    except prov.ProviderError as e:
+        print(e)
+        return 1
     model = _preflight(p, skip_canary)
     if model is None:
         return 1
@@ -74,7 +84,7 @@ async def run(plan_path: Path, skip_canary: bool) -> int:
     ms = await p.warmup(contract.SYSTEM, contract.render(
         next(session.iter_questions(plan))["question"], "", ""))
     print("warmed the prompt cache in %.0f ms" % ms)
-    state = session.new_session(plan, provenance.snapshot(model))
+    state = session.new_session(plan, provenance.snapshot(model or None, prov.describe(p)))
 
     async def observe_answer(question_id, question, utterance):
         """Plan 1c.5's per-answer extraction. Runs between turns, never inside one."""

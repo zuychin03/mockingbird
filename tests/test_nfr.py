@@ -34,6 +34,11 @@ HOST_RE = re.compile(r"https?://([A-Za-z0-9._-]+)")
 # pinned public files, with the user told the size first. Its hosts are named here, not waved
 # through, and nothing on the live path may import it.
 SETUP_HOSTS = {"download.py": {"huggingface.co", "github.com"}}
+# Cloud mode (V1.1_PLAN D1) is the other: only when the person chose a vendor and gave a key, and
+# only to that vendor. github.com here is OpenRouter's attribution header, never a request.
+CLOUD_HOSTS = {"provider.py": {"api.openai.com", "openrouter.ai",
+                               "generativelanguage.googleapis.com", "api.groq.com",
+                               "github.com"}}
 
 
 # --------------------------------------------------------------- NFR-4: egress
@@ -41,18 +46,59 @@ def test_no_module_on_the_live_path_names_a_foreign_host():
     """Catches a telemetry call, a CDN font, or a cloud fallback added by hand."""
     offenders = []
     for f in sorted(APP.glob("*.py")):
-        allowed = ALLOWED_HOSTS | SETUP_HOSTS.get(f.name, set())
+        allowed = ALLOWED_HOSTS | SETUP_HOSTS.get(f.name, set()) | CLOUD_HOSTS.get(f.name, set())
         for host in HOST_RE.findall(f.read_text(encoding="utf-8")):
             if host not in allowed:
                 offenders.append("%s -> %s" % (f.name, host))
     assert not offenders, "foreign hosts on the live path: %s" % offenders
 
 
-def test_only_the_launcher_can_reach_the_first_run_downloads():
-    imports = re.compile(r"from\s+(?:app|\.)\s+import[^\n]*\bdownload\b|import\s+app\.download\b")
-    users = sorted(f.name for f in [*APP.glob("*.py"), *API.glob("*.py")]
-                   if imports.search(f.read_text(encoding="utf-8")))
-    assert users == ["launch.py"]
+def test_the_default_provider_is_the_local_server(monkeypatch):
+    """With nothing chosen, every interview stays on loopback exactly as in 1.0."""
+    for var in ("MOCKINGBIRD_PROVIDER", "MOCKINGBIRD_MODEL", "MOCKINGBIRD_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    p = provider.current()
+    assert provider.is_local(p) and isinstance(p, provider.LlamaServer)
+
+
+def test_a_cloud_call_goes_only_to_the_chosen_vendor(monkeypatch):
+    seen = []
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"choices": [{"message": {"content": "{}"}}]}).encode()
+
+    def fake_urlopen(req, timeout=None):
+        seen.append(req.full_url)
+        return Reply()
+
+    monkeypatch.setattr(provider.urllib.request, "urlopen", fake_urlopen)
+    for vendor, v in provider.VENDORS.items():
+        c = provider.CloudClient(provider.Profile(vendor, "m"), "secret")
+        asyncio.run(c.complete("s", "u"))
+        assert seen[-1] == v.url
+    assert {provider.host(u) for u in seen} <= CLOUD_HOSTS["provider.py"]
+
+
+def _importers(module: str) -> list[str]:
+    imports = re.compile(r"from\s+(?:app|\.)\s+import[^\n]*\b%s\b|import\s+app\.%s\b"
+                         % (module, module))
+    return sorted(f.name for f in [*APP.glob("*.py"), *API.glob("*.py")]
+                  if imports.search(f.read_text(encoding="utf-8")))
+
+
+def test_only_the_launcher_side_can_reach_the_first_run_downloads():
+    """The supervisor downloads and the server planner reads the same manifest; the launcher
+    is the only thing that builds a supervisor, and the API only holds the one it was handed."""
+    assert _importers("download") == ["servers.py", "supervisor.py"]
+    assert _importers("supervisor") == ["launch.py"]
+    assert not {"main.py", "voice.py"} & set(_importers("servers"))
 
 
 def test_provider_is_pinned_to_loopback():

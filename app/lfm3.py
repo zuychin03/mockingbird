@@ -142,3 +142,28 @@ def describe_voice(voice: str | None = None) -> dict:
 def describe_asr() -> dict:
     return {"engine": "lfm3-audio/llama.cpp", "model": MODEL.name, "mmproj": MMPROJ.name,
             "prompt": ASR_PROMPT, "verbatim": True}
+
+
+# The first-run hearing check (V1.1_PLAN P3). An answer is read in slices cut at pauses, so
+# recognition only has to outrun speech with room to spare; at 1.5x the last slice of a 30 s
+# answer still lands within a few seconds of the candidate stopping.
+CHECK_CLIP = ROOT / "config" / "voice_check.wav"
+HEARING_MIN_SPEED = 1.5
+
+
+def hearing_speed(listener: "Listener | None" = None, clip: Path = CHECK_CLIP) -> float:
+    """Seconds of speech recognised per second of waiting, on the clip shipped for it (an
+    interview answer in Piper's public-domain kristin voice). One short warm-up read first: a
+    cold server read the same clip at 2.3x that read at 37x once warm."""
+    import time
+    listener = listener or Listener()
+    with wave.open(str(clip)) as w:
+        rate = w.getframerate()
+        pcm = np.frombuffer(w.readframes(w.getnframes()), dtype="<i2").astype(np.float32) / 32768
+    listener.transcribe(pcm[:rate], rate)
+    t0 = time.perf_counter()
+    text = listener.transcribe(pcm, rate)
+    took = time.perf_counter() - t0
+    if not text.strip():
+        return 0.0
+    return round(len(pcm) / rate / max(took, 1e-3), 2)

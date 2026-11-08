@@ -190,4 +190,6 @@ def test_the_sidecar_carries_no_judgement_fields_from_the_turn():
     what the candidate is given, in the app or in a file they can forward."""
     turn = dict(TURNS[0], ok=False, guards=["extra-sentences-dropped"], act="probe")
     got = export.sidecar(_report(), SESSION, [turn])
-    assert set(got["turns"][0]) == {"index", "question_id", "question", "utterance", "said", "at"}
+    # `heard` is the candidate's own words as recognised (FR-31), not a judgement about them.
+    assert set(got["turns"][0]) == {"index", "question_id", "question", "utterance", "heard",
+                                    "said", "at"}

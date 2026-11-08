@@ -1,4 +1,5 @@
 <script>
+  import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { live, sync } from '$lib/live.svelte.js';
   import '$lib/theme.css';
@@ -9,7 +10,8 @@
   const tabs = [
     { href: '/', code: '01', label: 'Plan' },
     { href: '/session', code: '02', label: 'Interview' },
-    { href: '/history', code: '03', label: 'History' }
+    { href: '/history', code: '03', label: 'History' },
+    { href: '/settings', code: '04', label: 'Settings' }
   ];
 
   // The interview is the only room that judges nothing, and it is the only room that looks
@@ -23,6 +25,17 @@
 
   $effect(() => {
     sync();
+  });
+
+  // A fresh install has nothing to interview with yet, so every page sends it to setup until it
+  // has chosen. Asked once per load; a copy run from source is never sent.
+  $effect(() => {
+    fetch('/api/setup')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => {
+        if (s?.managed && !s.set_up && page.url.pathname !== '/setup') goto('/setup');
+      })
+      .catch(() => {});
   });
 
   // The interview is a fixed-height column measured against this bar, and the bar changes
@@ -60,7 +73,8 @@
 
     <nav>
       {#each tabs as tab}
-        <a href={tab.href} class:active={page.url.pathname === tab.href}>
+        <a href={tab.href}
+          class:active={page.url.pathname === tab.href || page.url.pathname.startsWith(tab.href + '/')}>
           <span class="tab-code num">{tab.code}</span>
           <span>{tab.label}</span>
         </a>

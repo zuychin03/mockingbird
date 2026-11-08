@@ -1,12 +1,16 @@
 # Mockingbird
 
-A mock-interview coach for software-engineering roles that runs entirely on your own machine.
-It conducts a structured interview, decides for itself when to probe and when to move on, and
-produces feedback in which every claim quotes something you actually said.
+A mock-interview coach for software-engineering roles that runs on your own machine. It
+conducts a structured interview, decides for itself when to probe and when to move on, and
+produces feedback in which every claim quotes something you actually said. By default nothing
+leaves the computer; for a machine without a capable GPU, Settings can hand the interviewer to
+a cloud provider with your own key, and says exactly what that sends before it sends anything.
 
 Built and validated against Qwen3-4B-Instruct-2507 on a 6GB laptop GPU, which is the
-constraint that shaped the whole design. Mockingbird intentionally supports that model only:
-accepting an unknown loaded model would bypass the controls measured for the product.
+constraint that shaped the whole design. Locally, Mockingbird runs that model only: accepting
+an unknown loaded model would bypass the controls measured for the product. Cloud models face
+the same gate before they are listed (`config/cloud_models.json` carries each one's results),
+and one typed in by hand runs labelled as unmeasured wherever it appears.
 
 ## The idea it is testing
 
@@ -96,14 +100,60 @@ interface built first (`npm --prefix ui run build`). The installer:
 
 * installs for the current user only, with no admin rights, into
   `%LOCALAPPDATA%\Programs\Mockingbird`, and adds a Start-menu shortcut;
-* on first start downloads about 5 GB once: the models from Hugging Face and the llama.cpp
-  runtime from GitHub, each pinned to an exact revision and checked against SHA-256 before it
-  is used, and Parselmouth from PyPI;
-* then starts the model servers and the app and opens it. Closing its window stops everything.
+* on first start opens a setup page that finds the GPU and asks where the interviewer runs,
+  before anything is downloaded:
+  * **on this computer**, with a 6 GB NVIDIA GPU: about 5 GB once, the models from Hugging
+    Face and llama.cpp's CUDA build from GitHub;
+  * **in the cloud**, for a computer without one: llama.cpp's CPU build (24 MB) and the
+    embedder, plus the voice model if answers are spoken. The voice then only listens, on the
+    processor, and a check on a shipped clip (`config/voice_check.wav`) decides whether it is
+    fast enough; below 1.5x real time answers are typed. The provider and key are set in
+    Settings;
+* pins every download to an exact revision and checks it against SHA-256 before it is used,
+  and installs Parselmouth from PyPI;
+* serves the app at once and gets the chosen mode ready behind it, with the progress on the
+  setup page. Closing its window stops everything.
 
-It needs a 6 GB NVIDIA GPU. Uninstalling removes the program, the models and the runtime and
-keeps the interviews in `data\`. The installer is not code-signed yet, so Windows SmartScreen
-warns before running it.
+A 1.0 install upgraded in place has its models already, so it is treated as set up and never
+sees the setup page. Uninstalling removes the program, the models, the runtime and any stored
+API key, and keeps the interviews in `data\`. The installer is not code-signed yet, so Windows
+SmartScreen warns before running it; the [code signing policy](#code-signing-policy) says what
+will change that.
+
+Releases are built by `.github/workflows/release.yml` when a `v<version>` tag is pushed. On a
+Windows runner it checks the tag against `pyproject.toml`, builds the interface, installs Inno
+Setup from a checksum-pinned download, runs `installer/build.py`, and attaches the installer to
+a **draft** release with its notes taken from [CHANGELOG.md](CHANGELOG.md). Every action is
+pinned by commit. Publishing the draft is done by hand, after reading it.
+
+## Using a cloud provider
+
+For a computer without a capable GPU, Settings can hand the interviewer to a cloud provider
+through its OpenAI-compatible API, with your own key: OpenAI, OpenRouter, Google Gemini or
+Groq. One provider holds the whole interview, its scoring included.
+
+Settings says what is sent before anything is: the job description, every question and the
+text of every answer. Recordings are not sent; speech is recognised on the computer in every
+mode. The acknowledgement carries a version, and changing its wording asks again.
+
+`config/cloud_models.json` lists only models that passed the gate the local model passed
+(`tools/tier1_cloud_gate.py`, over the 49 product fixtures and 118 held-out answers), each with
+its results and the date it was measured. Qwen3.8 27B on Groq's free tier is the first: 49/49
+on the fixtures and a 235 ms median turn, but 77/118 on the held-out answers, five short of the
+bar, because it probes answers that were already complete. It is listed with that note. Any
+other model can be typed in, and it runs labelled as unmeasured in Settings, the interview
+header and the report.
+
+The key is encrypted with Windows DPAPI under your login, in `secrets\provider.key` beside an
+installed app. The API takes a key and never returns one, and uninstalling removes it. Free
+tiers have rate limits, so a refusal for rate is retried after the wait the provider names (up
+to 20 s, twice), and a call that still fails gives way to a scripted question rather than
+ending the interview.
+
+An interview stays with the provider that held it. Its report is built by the same provider,
+so an interview held on this computer is never sent to a cloud provider just because Settings
+changed since; that takes an explicit choice, asked twice, naming where the answers would go.
+The interview header and the report show the tokens used and the estimated cost.
 
 ## Running it from source
 
@@ -119,6 +169,12 @@ python -m app.servers
 whatever is already there; `--from DIR` takes matching files from a folder that already holds
 them. Point `MOCKINGBIRD_LLAMA_SERVER` at an existing `llama-server.exe` instead of fetching the
 runtime into `runtime/`.
+
+From source, `MOCKINGBIRD_PROVIDER` (`openai`, `openrouter`, `gemini`, `groq` or `local`),
+`MOCKINGBIRD_MODEL` and `MOCKINGBIRD_API_KEY` override the interviewer chosen in Settings, and
+`MOCKINGBIRD_FORCE_CPU=1` acts as if there were no NVIDIA GPU, to try the path a computer
+without one takes. A checkout inside OneDrive keeps its encrypted key in
+`%LOCALAPPDATA%\Mockingbird` rather than syncing it; `MOCKINGBIRD_KEY_FILE` moves it.
 
 | Server | Model file | Where it goes | Port |
 |---|---|---|---|
@@ -227,22 +283,31 @@ app/
   focus.py         picks what to ask ABOUT; the model only words it
   budget.py        per-question cap plus a shared session pool
   observe.py       quote extraction, with grounding
-  provider.py      the language model over llama-server: turns, posteriors, the exact-model gate
-  servers.py       starts the three llama-server processes, in order
+  provider.py      the language model, over llama-server or a cloud provider's API: turns,
+                   posteriors, the exact-model gate, usage and cost
+  settings.py      what Settings chose: the interviewer, the voice, first-run setup
+  secret.py        the cloud API key, encrypted with Windows DPAPI
+  hardware.py      which NVIDIA GPU there is, and what that allows
+  servers.py       starts the llama-server processes, on the GPU or the processor
   download.py      first-run downloads: pinned sources, SHA-256 checks
-  launch.py        what the installed shortcut runs: download, servers, app, browser
+  supervisor.py    downloads and server starts in the background, behind the setup page
+  launch.py        what the installed shortcut runs: serve the app, then get the chosen mode ready
   embed.py         OPTIONAL local sentence similarity; returns None when absent
   score.py         the rubric, as arithmetic
   report.py        the feedback, and the rules about how it is worded
+  corrections.py   answers corrected after the interview, laid over the originals for scoring
+  compare.py       two interviews side by side, from their reports
+  examples.py      example answers for the weakest responses, cloud only
   detour.py        the candidate's own questions, answered from documents or declined
-  export.py        one interview as a single file, recordings inside it
+  export.py        one interview as a single file, recordings inside it; Markdown and JSON
   session.py       plan validation and persistence
   bank.py          the curated question bank and its closed competency vocabulary
   planner.py       description -> competencies -> plan; generation, and stock plans
   review.py        the operations a person performs on a plan before it is run
   resume.py        carrying a live session between processes
   audio.py         PCM framing, the wire protocol, where to cut a growing answer
-  speech.py        the TTS port, onto LFM3-Audio
+  speech.py        the TTS port, onto LFM3-Audio or Piper
+  piper.py         the Piper voices, in-process through sherpa-onnx
   listen.py        the ASR port, onto LFM3-Audio, a slice at a time
   lfm3.py          LFM3-Audio through llama-server: one process that hears and speaks
   endpoint.py      live mode's endpointer: when an answer has ended, from silence
@@ -250,15 +315,18 @@ app/
 api/
   main.py          the HTTP surface, and the static host for the built interface
   voice.py         the WebSocket carrying microphone up and speech down
+  origin.py        refuses a request that changes anything when it comes from another site
 ui/
   src/lib/         design tokens, the shared on-air state, the icon set
   src/lib/audio/   the browser half of the transport, and the phase machine
-  src/routes/      the three surfaces: plan, interview, history
+  src/routes/      plan, interview, history (with compare), settings, and first-run setup
   static/fonts/    the three faces, self-hosted so the app renders offline
 config/            interview plans, the question bank, and what the interview may say
                    about itself (about.md)
-installer/         the Windows installer: build script, Inno Setup script, locked wheels, and
-                   the app icon with the script that renders it from the logo
+installer/         the Windows installer: build script, Inno Setup script, locked wheels, the
+                   app icon with the script that renders it from the logo, and the release
+                   workflow's notes and tag check
+.github/workflows/ release.yml, which builds a draft release from a version tag
 LICENSES/          licence texts for third-party code the installer ships (GPL-3.0)
 tests/             deterministic unit and integration coverage
 tools/shots.sh     screenshots every surface at both widths, for design review
@@ -303,9 +371,11 @@ intentionally ignored by Git.
 
 ## Status
 
-The text interview, rubric scoring, report, the natural-probing wave and the planner are
-implemented, with 657 automated tests passing. An interview can be planned from a job
-description or from a stock plan, reviewed and edited, saved, and then conducted.
+Version 1.1.0. The text and spoken interview, rubric scoring, the report, the planner, the
+cloud interviewer, the no-GPU path, transcript correction and comparison are implemented, with
+919 automated tests passing. An interview can be planned from a job description or from a stock
+plan, reviewed and edited, saved, and then conducted. [CHANGELOG.md](CHANGELOG.md) lists what
+each release added and [ROADMAP.md](ROADMAP.md) what comes next.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
 closed all 14 questions in 25 turns and a strong one in 16, with no reask, family crossing,
@@ -321,7 +391,10 @@ measured 20% apart depending on how warm the GPU was.
 
 The browser interface is built. It is one page per stage of a run: a **plan** as a numbered
 running order with per-phase durations, which you edit and approve before anything is asked; the
-**interview** itself; and a **history** of past interviews with the report for any one of them.
+**interview** itself, which you can leave partway through and keep what you answered; and a
+**history** of past interviews with the report for any one of them
+and a side-by-side comparison of any two. **Settings** chooses the interviewer, the voice and
+speech recognition, and a **setup** page handles the first start.
 
 Its design follows the product's own rule that no judgement reaches the candidate mid-interview.
 The interview is a dark studio under a red on-air light; the plan and the report are that
@@ -366,8 +439,8 @@ yours to edit.
 conversation. The microphone opens when the interviewer finishes, your answer ends once you have
 been quiet for a pause you choose (2.5 s by default; 1.5, 4 and 6 are offered), and it is sent
 as it was heard. Space still finishes early, and switching back to Tap mid-answer hands the end
-back to you. It trades away correcting the transcript before it is scored, and says so where it
-is switched on.
+back to you. Its answers are sent as they were heard, so the chance to correct them moves to
+after the interview, before the report scores them, and the switch says so.
 
 The end of an answer is decided by silence length alone, measured by Silero VAD. A semantic
 turn detector (Smart Turn v3.2) was replayed over recorded answers first and could not tell a
@@ -383,7 +456,19 @@ beside the language model on a 6 GB card in either load order (5,965 of 6,144 Mi
 
 Measured on mains with the language model resident: an 84 s answer recognised in 2.2 s, a
 spoken line rendered in about a fifth of its own length, and the language model's turns no
-slower. Inside one answer, a word on a slice boundary can come back twice.
+slower. A word heard on both sides of a slice boundary is kept once where the slices are joined,
+unless the first slice ended a sentence.
+
+**The interviewer can also speak in a Piper voice**, chosen in Settings and previewed there:
+kristin and norman (trained on public-domain recordings) and hfc_female and ryan (trained on
+CC BY-NC-SA 4.0 recordings, so non-commercial use only, which the picker says). They run
+in-process through sherpa-onnx, on the processor, at a real-time factor of 0.053 to 0.065 on
+this laptop, a long question in under half a second. LFM3 speaks only where its model is on a
+GPU; on a processor it renders at 1.4x real time, so there a chosen LFM3 voice gives way to
+kristin and the session records why. Each Piper voice is a 64 MB download on first use,
+pinned by checksum (`config/voices.json`; `python -m app.download --voice kristin` from source).
+`python tools/voice_audition.py` renders the same ten lines in every voice that can speak here,
+to compare by ear.
 
 Voice needs two things this repository does not ship, because neither is ours, besides the
 llama.cpp build the language model already needs. `python -m app.download` fetches both:
@@ -438,12 +523,40 @@ The criteria are also shown **before** the interview, on the plan sheet, with th
 applies to. Being told how you will be judged is ordinary assessment practice, and it is what
 makes the report afterwards something you can argue with rather than something to accept.
 
+## Correcting what was heard
+
+Recognition errors fall hardest on accented speech, so nothing is scored as it was misheard
+without a chance to fix it. After a spoken interview the first report opens with a review: each
+answer with its recording, what the recogniser heard and what was sent, in a box you can edit.
+"Score these answers" saves the corrections and builds the report; "Correct a transcript" on a
+report reopens the review later.
+
+Corrections live in their own `corrections.json` beside the interview. The transcript, the
+interviewer's decisions and `session.json` are never rewritten, because the follow-ups were
+asked on what was heard and that stays on record: correcting changes the score, not the
+conversation. The report lists every correction beside what was heard, and the exports carry
+both. Nothing can be corrected while the interview is still running.
+
+## Example answers
+
+In cloud mode the report offers example answers for up to three of the weakest scored
+responses: the ones that met the smallest share of their criteria. The cloud model writes one
+for each from the question, your answer and what it missed, keeping your situation and your
+facts. A fact only you know, such as the latency you measured, is left as a bracketed
+placeholder rather than invented, because an example with a made-up figure teaches you to
+recite it.
+
+Each one is labelled as written by the model, an example, not scored. They are not offered with
+the local model: a 4B model writing a model answer is likely to be confidently wrong. An
+interview held on this computer asks twice before its answers go to the cloud model, as the
+report does.
+
 ## Taking an interview with you
 
 Any report exports as a single HTML file with the recordings embedded in it, or without them
-for one that travels by email, plus a JSON sidecar carrying the same facts without the
-presentation. Everything here is local, so export *is* the sharing mechanism -- there is no
-link to send.
+for one that travels by email, as Markdown for notes and documents, and as a JSON sidecar
+carrying the same facts without the presentation. Everything here is local, so export *is* the
+sharing mechanism -- there is no link to send.
 
 Self-contained is the requirement rather than a nicety: the file fetches no stylesheet, no
 script, no font and no audio, so it opens on a machine that never had Mockingbird installed,
@@ -484,20 +597,43 @@ It reads reports that have already been built, and says how many interviews have
 Scoring one costs a full extraction pass, so sixty of them is hours of model time rather than
 something a page can do while you look at it.
 
+"Compare two" on the same page puts any two interviews side by side: each criterion's count,
+each question's answers with what they met and missed, and the delivery measurements. It reads
+the two reports as they were scored and re-scores nothing, so every number matches the report
+it came from. Questions are paired by their wording, the earlier interview is always on the
+left, and two interviews from different plans can be compared, with a note saying so.
+
 ## Where your interviews are
 
 The history page names the directory they are in, how many there are, how many recordings
 they hold and how much disk that is -- and whether any of it leaves this computer.
 
-**That last part is derived, not asserted.** It is computed from the model provider actually
-in use, so a cloud provider would make the page say what it sends and where, rather than
-leaving a reassuring sentence that nobody remembered to edit. A claim about privacy is worth
-nothing if it cannot go false.
+**That last part is derived, not asserted.** It is computed from the provider Settings point
+at, so choosing a cloud provider makes the page name it and say that the text of each
+interview goes there, rather than leaving a reassuring sentence that nobody remembered to
+edit. A claim about privacy is worth nothing if it cannot go false. Recordings stay on the
+computer in either mode.
 
 Any interview can be deleted from that page, and deleting one takes its recordings with it.
 It takes two presses rather than a dialog, and the interview currently being conducted is
 refused. A product that records your voice and offers no way to remove it has not earned the
 sentence above.
+
+## Code signing policy
+
+The installer is not code-signed yet, so Windows SmartScreen warns before it runs. The plan is
+SignPath's free code signing for open-source projects, and this is the policy releases will be
+signed under.
+
+- Only installers built by `.github/workflows/release.yml` from a tag in this repository are
+  signed, never a build from someone's own computer.
+- Committer and reviewer: Duy Nguyen ([zuychin03](https://github.com/zuychin03)).
+- Approver: Duy Nguyen, who reads every draft release before it is published.
+
+Privacy: Mockingbird sends nothing to another networked system unless the person installing or
+operating it asks it to. The first start downloads the models and the runtime only after you
+choose a mode on the setup page. The text of an interview goes to a cloud provider only after you
+choose one in Settings and confirm what it sends. Recordings never leave the computer.
 
 ## Licence
 

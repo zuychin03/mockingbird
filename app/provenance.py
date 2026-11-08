@@ -54,10 +54,12 @@ def contract_hash() -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
-def snapshot(model: dict | None = None) -> dict:
-    """`model` is what `provider.served_model()` returned, or None when it is unavailable."""
+def snapshot(model: dict | None = None, provider: dict | None = None) -> dict:
+    """`model` is what `provider.served_model()` returned, or None when it is unavailable or
+    the interview runs on a cloud model; `provider` is `provider.describe()` of what served it."""
     m = model or {}
     return {
+        "provider": provider,
         "code_revision": code_revision(),
         "contract_hash": contract_hash(),
         "python": sys.version.split()[0],
