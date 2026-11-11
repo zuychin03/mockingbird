@@ -94,6 +94,10 @@ is weak will change their answer, and the assessment stops measuring what it cla
 
 ## Installing it on Windows
 
+The latest release, 1.0.1, is on the [Releases page](https://github.com/zuychin03/mockingbird/releases).
+This section describes 1.1.0, which is not released yet: the setup page, the cloud interviewer
+and the stored API key arrive with it.
+
 `python installer/build.py` builds `dist/Mockingbird-Setup-<version>.exe`, a 33 MB installer
 carrying its own Python, the app and the built interface. It needs Inno Setup 6 and the
 interface built first (`npm --prefix ui run build`). The installer:
@@ -102,13 +106,13 @@ interface built first (`npm --prefix ui run build`). The installer:
   `%LOCALAPPDATA%\Programs\Mockingbird`, and adds a Start-menu shortcut;
 * on first start opens a setup page that finds the GPU and asks where the interviewer runs,
   before anything is downloaded:
-  * **on this computer**, with a 6 GB NVIDIA GPU: about 5 GB once, the models from Hugging
+  * **on this computer**, with a 6 GB NVIDIA GPU: about 5.6 GB once, the models from Hugging
     Face and llama.cpp's CUDA build from GitHub;
-  * **in the cloud**, for a computer without one: llama.cpp's CPU build (24 MB) and the
-    embedder, plus the voice model if answers are spoken. The voice then only listens, on the
-    processor, and a check on a shipped clip (`config/voice_check.wav`) decides whether it is
-    fast enough; below 1.5x real time answers are typed. The provider and key are set in
-    Settings;
+  * **in the cloud**, for a computer without one: llama.cpp's CPU build (24 MB), the embedder
+    and the pause detector. If answers are spoken it also fetches the voice model, which then
+    only listens, on the processor, and Piper's kristin voice to speak the questions. A check
+    on a shipped clip (`config/voice_check.wav`) decides whether listening is fast enough;
+    below 1.5x real time answers are typed. The provider and key are set in Settings;
 * pins every download to an exact revision and checks it against SHA-256 before it is used,
   and installs Parselmouth from PyPI;
 * serves the app at once and gets the chosen mode ready behind it, with the progress on the
@@ -136,9 +140,9 @@ Settings says what is sent before anything is: the job description, every questi
 text of every answer. Recordings are not sent; speech is recognised on the computer in every
 mode. The acknowledgement carries a version, and changing its wording asks again.
 
-`config/cloud_models.json` lists only models that passed the gate the local model passed
-(`tools/tier1_cloud_gate.py`, over the 49 product fixtures and 118 held-out answers), each with
-its results and the date it was measured. Qwen3.8 27B on Groq's free tier is the first: 49/49
+`config/cloud_models.json` lists only models that passed the gate the local model passed (over
+the 49 product fixtures and 118 held-out answers), each with its results and the date it was
+measured. Qwen3.8 27B on Groq's free tier is the first: 49/49
 on the fixtures and a 235 ms median turn, but 77/118 on the held-out answers, five short of the
 bar, because it probes answers that were already complete. It is listed with that note. Any
 other model can be typed in, and it runs labelled as unmeasured in Settings, the interview
@@ -167,14 +171,20 @@ python -m app.servers
 
 `app.download` puts every file below in place, each checked against a pinned SHA-256, and skips
 whatever is already there; `--from DIR` takes matching files from a folder that already holds
-them. Point `MOCKINGBIRD_LLAMA_SERVER` at an existing `llama-server.exe` instead of fetching the
-runtime into `runtime/`.
+them. Point `MOCKINGBIRD_LLAMA_SERVER` at an existing `llama-server.exe` to run it instead of the
+one in `runtime/`; `app.download` still fetches the runtime.
+
+`python -m app.launch` runs it the way the installed shortcut does: it serves the app at
+http://127.0.0.1:8000, opens it in the browser (`--no-browser` skips that), and gets the mode
+chosen on the setup page ready behind it, with the model servers' output in
+`data/logs/servers.log`.
 
 From source, `MOCKINGBIRD_PROVIDER` (`openai`, `openrouter`, `gemini`, `groq` or `local`),
-`MOCKINGBIRD_MODEL` and `MOCKINGBIRD_API_KEY` override the interviewer chosen in Settings, and
-`MOCKINGBIRD_FORCE_CPU=1` acts as if there were no NVIDIA GPU, to try the path a computer
-without one takes. A checkout inside OneDrive keeps its encrypted key in
-`%LOCALAPPDATA%\Mockingbird` rather than syncing it; `MOCKINGBIRD_KEY_FILE` moves it.
+`MOCKINGBIRD_MODEL` and `MOCKINGBIRD_API_KEY` override the interviewer chosen in Settings. With
+`python -m app.launch`, `MOCKINGBIRD_FORCE_CPU=1` acts as if there were no NVIDIA GPU, to try
+the path a computer without one takes; `app.download` and `app.servers` ignore it. A checkout
+inside OneDrive keeps its encrypted key in `%LOCALAPPDATA%\Mockingbird` rather than syncing it;
+`MOCKINGBIRD_KEY_FILE` moves it.
 
 | Server | Model file | Where it goes | Port |
 |---|---|---|---|
@@ -188,7 +198,7 @@ card together.
 
 The embedder is optional and worth having. Two of the speech controls compare what a probe
 MEANS rather than how it is spelled, and without it they fall back to comparing words, which is
-quieter and weaker rather than an error. The model was chosen by measuring six candidates on
+quieter and weaker rather than an error. The model was chosen by measuring five candidates on
 labelled probe pairs from real sessions rather than by leaderboard: all-MiniLM-L6-v2 at 22M
 parameters beat nomic-embed-v1.5, mxbai-embed-large and embeddinggemma-300m, because those are
 tuned for matching a short query to a long document while this compares two questions of the
@@ -216,10 +226,11 @@ repo was taken against:
 python -m app.cli
 ```
 
-The runtime is standard library only. Tests need pytest:
+The runtime is standard library only, but some tests import numpy, FastAPI or the voice
+packages, so install those extras with pytest:
 
 ```bash
-pip install -e ".[test]"
+pip install -e ".[test,web,voice]"
 python -m pytest
 ```
 
@@ -276,6 +287,7 @@ false positives -- a cheap filter on the obvious cases, not a guarantee.
 ```
 app/
   runner.py        the loop: one decision per turn, dispatch over pure functions
+  cli.py           a text interview in the terminal (`python -m app.cli`)
   contract.py      the normal turn and speech-only repair schemas and prompts
   guards.py        the five guards
   intent.py        stop / skip / carry-on parsing
@@ -283,6 +295,9 @@ app/
   focus.py         picks what to ask ABOUT; the model only words it
   budget.py        per-question cap plus a shared session pool
   observe.py       quote extraction, with grounding
+  result_check.py  whether a quote offered as a result is actually one
+  depth_signals.py observations a probe decision can rest on, computed without the model
+  history.py       the running summary of completed questions given to each turn
   provider.py      the language model, over llama-server or a cloud provider's API: turns,
                    posteriors, the exact-model gate, usage and cost
   settings.py      what Settings chose: the interviewer, the voice, first-run setup
@@ -301,6 +316,7 @@ app/
   detour.py        the candidate's own questions, answered from documents or declined
   export.py        one interview as a single file, recordings inside it; Markdown and JSON
   session.py       plan validation and persistence
+  provenance.py    what produced a session: runtime, quantisation, context, prompt, revision
   bank.py          the curated question bank and its closed competency vocabulary
   planner.py       description -> competencies -> plan; generation, and stock plans
   review.py        the operations a person performs on a plan before it is run
@@ -321,6 +337,7 @@ ui/
   src/lib/audio/   the browser half of the transport, and the phase machine
   src/routes/      plan, interview, history (with compare), settings, and first-run setup
   static/fonts/    the three faces, self-hosted so the app renders offline
+docs/              ARCHITECTURE.md, how the parts fit together, and an HTML explorer of it
 config/            interview plans, the question bank, and what the interview may say
                    about itself (about.md)
 installer/         the Windows installer: build script, Inno Setup script, locked wheels, the
@@ -371,11 +388,12 @@ intentionally ignored by Git.
 
 ## Status
 
-Version 1.1.0. The text and spoken interview, rubric scoring, the report, the planner, the
-cloud interviewer, the no-GPU path, transcript correction and comparison are implemented, with
-919 automated tests passing. An interview can be planned from a job description or from a stock
-plan, reviewed and edited, saved, and then conducted. [CHANGELOG.md](CHANGELOG.md) lists what
-each release added and [ROADMAP.md](ROADMAP.md) what comes next.
+Version 1.1.0, not released yet; the latest release is 1.0.1. The text and spoken interview,
+rubric scoring, the report, the planner, the cloud interviewer, the no-GPU path, transcript
+correction and comparison are implemented, with 919 automated tests passing. An interview can
+be planned from a job description or from a stock plan, reviewed and edited, saved, and then
+conducted. [CHANGELOG.md](CHANGELOG.md) lists what each release added and
+[ROADMAP.md](ROADMAP.md) what comes next.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview
 closed all 14 questions in 25 turns and a strong one in 16, with no reask, family crossing,
@@ -464,9 +482,10 @@ kristin and norman (trained on public-domain recordings) and hfc_female and ryan
 CC BY-NC-SA 4.0 recordings, so non-commercial use only, which the picker says). They run
 in-process through sherpa-onnx, on the processor, at a real-time factor of 0.053 to 0.065 on
 this laptop, a long question in under half a second. LFM3 speaks only where its model is on a
-GPU; on a processor it renders at 1.4x real time, so there a chosen LFM3 voice gives way to
-kristin and the session records why. Each Piper voice is a 64 MB download on first use,
-pinned by checksum (`config/voices.json`; `python -m app.download --voice kristin` from source).
+GPU; on a processor it takes 1.4 seconds to render each second of speech, so there a chosen LFM3
+voice gives way to kristin and the session records why. Each Piper voice is a 64 MB download
+on first use, pinned by checksum (`config/voices.json`; `python -m app.download --voice kristin`
+from source).
 `python tools/voice_audition.py` renders the same ten lines in every voice that can speak here,
 to compare by ear.
 
@@ -638,7 +657,9 @@ choose one in Settings and confirm what it sends. Recordings never leave the com
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and what a change has to keep true, and
-[SECURITY.md](SECURITY.md) to report a vulnerability privately.
+[SECURITY.md](SECURITY.md) to report a vulnerability privately. The
+[architecture](docs/ARCHITECTURE.md) explains how the parts fit together, and
+[DESIGN.md](DESIGN.md) is the design system the interface is built from.
 
 ## Licence
 
