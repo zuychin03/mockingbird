@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/zuychin03/mockingbird/security/policy
+    about: Please report vulnerabilities privately, not in a public issue.
+  - name: Install and run it
+    url: https://github.com/zuychin03/mockingbird#installing-it-on-windows
+    about: The Windows installer, cloud providers and running from source.

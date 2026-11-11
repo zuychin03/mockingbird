@@ -635,6 +635,11 @@ operating it asks it to. The first start downloads the models and the runtime on
 choose a mode on the setup page. The text of an interview goes to a cloud provider only after you
 choose one in Settings and confirm what it sends. Recordings never leave the computer.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, tests and what a change has to keep true, and
+[SECURITY.md](SECURITY.md) to report a vulnerability privately.
+
 ## Licence
 
 MIT, in [LICENSE](LICENSE).

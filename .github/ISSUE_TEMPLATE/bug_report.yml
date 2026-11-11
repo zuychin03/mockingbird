@@ -1,0 +1,73 @@
+name: Bug report
+description: Something doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. For a security problem, use the private report on the Security tab instead.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you saw, including any error message.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Plan a 20-minute technical interview
+        2. Answer the first question with voice
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Planning an interview
+        - The interview itself
+        - Voice or live mode
+        - The report or scores
+        - History, compare or export
+        - Settings or a cloud provider
+        - Install, first-run setup or downloads
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: e.g. 1.1.0, or a commit hash if you run from source
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Windows version and graphics card
+      placeholder: e.g. Windows 11 24H2, RTX 4050 6 GB, or no NVIDIA card
+    validations:
+      required: true
+  - type: dropdown
+    id: interviewer
+    attributes:
+      label: Interviewer
+      options:
+        - Local model
+        - Cloud provider
+        - Not sure
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs
+      description: Remove API keys, recordings and anything personal in your answers before posting.
