@@ -21,7 +21,9 @@ that justified it, so each carries its log reference.
 
 from __future__ import annotations
 
-ACTIONS = ["advance", "probe", "reask", "clarify", "skip", "end"]
+from . import fields
+
+ACTIONS =["advance", "probe", "reask", "clarify", "skip", "end"]
 
 CONTINUE = frozenset({"advance", "probe", "reask", "clarify"})
 HALT = frozenset({"skip", "end"})
@@ -111,6 +113,39 @@ Return only the literal interviewer speech in "say".
 # earlier. Quoting them back is not the fix: doing so was measured and the model copied the
 # rejected line on two retries. Repetition is caught deterministically after the fact instead,
 # against `said_this_question` and `said_this_session`, which needs no cooperation.
+
+
+# The prompt arms for the other fields (V1.2_PLAN D9), chosen by tools/tier1_field_gate.py:
+#   A  the software prompts word for word
+#   B  the field named in place of "a software-engineering job interview"
+#   C  B, with the turn prompt's one software example swapped for a field-neutral one
+# Software always gets SYSTEM and SPEECH_SYSTEM themselves, whatever the arm: every measured
+# result rests on those exact strings. SPEECH_SYSTEM has no example, so its B and C match.
+ARMS = ("A", "B", "C")
+_NAMED = fields.FIELDS[fields.SOFTWARE].interview
+_EXAMPLE = '"We split a table while live"'
+NEUTRAL_EXAMPLE = '"We turned the project around"'
+
+
+def _arm(field: str, arm: str) -> fields.Field | None:
+    """The field to name, or None where the software constants apply."""
+    if arm not in ARMS:
+        raise ValueError("unknown prompt arm %r; known: %s" % (arm, ", ".join(ARMS)))
+    f = fields.get(field)
+    return None if f.id == fields.SOFTWARE or arm == "A" else f
+
+
+def system_for(field: str, arm: str) -> str:
+    f = _arm(field, arm)
+    if f is None:
+        return SYSTEM
+    text = SYSTEM.replace(_NAMED, f.interview)
+    return text.replace(_EXAMPLE, NEUTRAL_EXAMPLE) if arm == "C" else text
+
+
+def speech_for(field: str, arm: str) -> str:
+    f = _arm(field, arm)
+    return SPEECH_SYSTEM if f is None else SPEECH_SYSTEM.replace(_NAMED, f.interview)
 
 
 def render(question: str, answer: str, history: str = "") -> str:

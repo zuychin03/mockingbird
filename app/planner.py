@@ -22,6 +22,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import fields
 from .bank import LEVELS, Bank, Question
 from .observe import _grounded as _grounded_in
 from .provider import Provider
@@ -97,14 +98,18 @@ def schema(bank: Bank) -> dict:
     }
 
 
-async def read_jd(provider: Provider, bank: Bank, text: str) -> JobSpec:
-    """Extract FR-1's role, seniority and ranked competencies from a pasted description."""
+def _jd(text: str) -> str:
     jd = (text or "").strip()
     if len(jd.split()) < 20:
         raise ValueError("this does not look like a job description: %d words. FR-4 runs a "
                          "stock plan without one, which is the path for having no JD."
                          % len(jd.split()))
-    jd = jd[:MAX_JD_CHARS]
+    return jd[:MAX_JD_CHARS]
+
+
+async def read_jd(provider: Provider, bank: Bank, text: str) -> JobSpec:
+    """Extract FR-1's role, seniority and ranked competencies from a pasted description."""
+    jd = _jd(text)
 
     out = await provider.complete(SYSTEM, jd, schema=schema(bank), max_tokens=800)
     raw = out.json() or {}
@@ -137,6 +142,68 @@ async def read_jd(provider: Provider, bank: Bank, text: str) -> JobSpec:
 
     return JobSpec(role=role, seniority=seniority,
                    requirements=tuple(kept), dropped=tuple(dropped))
+
+
+# Its own call before `read_jd` (V1.2_PLAN D13): `read_jd`'s competency enum depends on the
+# field, which one schema cannot choose in the same reply.
+FIELD_SYSTEM = """You are reading a job description to choose which kind of practice interview fits it.
+
+Choose the ONE field the job's day-to-day work belongs to:
+- software: building, testing or running software. Software, data, platform, reliability and
+  front-end engineers, and managers of engineering teams.
+- data_analytics: turning data into answers for the business. Data analysts, business
+  intelligence analysts, analytics engineers, and data scientists whose work is analysis.
+- product_management: deciding what a product should do and why. Product managers and product
+  owners, technical ones included.
+- ux_design: designing how people use a product. UX, UI, interaction and product designers,
+  and UX researchers.
+- project_management: delivering projects and programmes on time and on budget. Project,
+  programme and delivery managers, technical ones included.
+- general: any other kind of work.
+
+Rules:
+- Judge by the work the job does, not by the industry or the tools it names.
+- "evidence" is a span COPIED WORD FOR WORD from the description that shows what the work is.
+  Do not paraphrase it, do not tidy it, and do not write a span that is not there. Copy at
+  least a full clause."""
+
+# Evidence before the field, so the reply quotes the work before it names a field for it.
+FIELD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "evidence": {"type": "string"},
+        "field": {"type": "string", "enum": list(fields.IDS)},
+    },
+    "required": ["evidence", "field"],
+    "additionalProperties": False,
+}
+
+
+@dataclass(frozen=True)
+class Detection:
+    """`field` is None when the reading cannot be trusted; `reason` says why, and `named` is
+    what the model chose regardless."""
+    field: str | None
+    evidence: str
+    reason: str = ""
+    named: str | None = None
+
+
+async def detect_field(provider: Provider, text: str) -> Detection:
+    """Which field a description is for, with the words that say so. Ungrounded evidence
+    gives no field: a plan built on a reading the description does not support is the
+    phantom-requirement failure `read_jd` drops."""
+    jd = _jd(text)
+    out = await provider.complete(FIELD_SYSTEM, jd, schema=FIELD_SCHEMA, max_tokens=300)
+    raw = out.json() or {}
+    named = raw.get("field")
+    evidence = " ".join((raw.get("evidence") or "").split())
+    if named not in fields.FIELDS:
+        return Detection(None, evidence, "the reply named no known field: %r" % (named,),
+                         named=None if named is None else str(named))
+    if not _grounded_in(evidence, jd):
+        return Detection(None, evidence, "its evidence is not in the description", named=named)
+    return Detection(named, evidence, named=named)
 
 
 # A proposal is one question, and the model is told the shape rather than trusted to infer it.

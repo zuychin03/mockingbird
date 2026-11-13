@@ -324,6 +324,40 @@ def test_a_real_refusal_still_skips():
         assert r.act == "skip", said
 
 
+HONEST = ("I'd rather not make one up. I honestly can't remember presenting to anyone "
+          "outside the data team.",
+          "I'd rather not pretend. I've never had people outside my team deliver for me, so I "
+          "can't think of an example.",
+          "I'd probably look up how other people do it before building it, honestly. It feels "
+          "like a solved problem and I'd rather not get it subtly wrong.",
+          "I would prefer not to guess at that.")
+
+
+def test_declining_to_invent_an_answer_is_not_a_refusal():
+    """The 1.2 field gate's two crossings: the model said reask and guard 2d made it skip."""
+    for said in HONEST:
+        assert not guards.refuses(said), said
+        assert not guards.skip_requested(said), said
+        assert guards.apply(g("skip", ""), said, []).act == "reask", said
+        assert guards.apply(g("reask", "Think of another time?"), said, []).act == "reask", said
+        assert guards.apply(g("probe", "What did you build?"), said, []).act == "probe", said
+
+
+def test_a_refusal_next_to_an_honesty_phrase_still_skips():
+    for said in ("I'd rather not make one up, can we skip it?",
+                 "I'd rather not pretend. I'd rather not go into that one.",
+                 "I'd rather not make something up. Next question please."):
+        assert guards.skip_requested(said), said
+        assert guards.apply(g("probe", "Can you say more?"), said, []).act == "skip", said
+
+
+def test_the_honesty_exception_does_not_swallow_nearby_refusals():
+    for said in ("I'd rather not get into wrong calls my old manager made.",
+                 "I'd rather not go into what went wrong there.",
+                 "I'd rather not, honestly."):
+        assert guards.refuses(said), said
+
+
 
 # --------------- guard 2b, provenance: `ask` must be the candidate's (log 8.21)
 def test_a_model_authored_ask_does_not_satisfy_the_clarify_gate():

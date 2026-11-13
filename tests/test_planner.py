@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import bank, planner  # noqa: E402
+from app import bank, fields, planner  # noqa: E402
 from app import session as sess  # noqa: E402
 from app.provider import Completion  # noqa: E402
 
@@ -529,3 +529,48 @@ def test_a_phase_left_alone_still_claims_its_questions(tmp_path):
     assert asked.count(shared) == 1, asked
     collab = next(ph["questions"] for ph in a.plan["phases"] if ph["id"] == "collaboration")
     assert collab == ["Tell me about the first beta thing?", "Tell me about another beta thing?"]
+
+
+DA_JD = """Data Analyst, Customer Insights
+
+You will turn our product and sales data into answers the commercial team can act on. Most
+weeks you will build and maintain dashboards, write SQL against our warehouse, and present
+what you find to managers who do not read SQL. Experience designing and reading A/B tests is
+a plus.
+"""
+
+
+def detect(**payload):
+    return run(planner.detect_field(Model(payload), DA_JD))
+
+
+def test_a_grounded_field_is_kept():
+    d = detect(field="data_analytics",
+               evidence="turn our product and sales data into answers the commercial team can act on")
+    assert d.field == "data_analytics"
+    assert d.reason == ""
+
+
+def test_an_ungrounded_field_is_not_trusted():
+    d = detect(field="data_analytics", evidence="owns the analytics roadmap for the whole company")
+    assert d.field is None
+    assert "not in the description" in d.reason
+    assert d.named == "data_analytics"
+
+
+def test_an_unknown_field_gives_none():
+    d = detect(field="nursing", evidence="build and maintain dashboards, write SQL against our warehouse")
+    assert d.field is None
+    assert d.named == "nursing"
+
+
+def test_the_field_enum_is_the_closed_field_list_and_evidence_comes_first():
+    m = Model({"field": "general", "evidence": "x"})
+    run(planner.detect_field(m, DA_JD))
+    assert m.schema["properties"]["field"]["enum"] == list(fields.IDS)
+    assert list(m.schema["properties"]) == ["evidence", "field"]
+
+
+def test_detection_refuses_what_is_not_a_description():
+    with pytest.raises(ValueError):
+        run(planner.detect_field(Model({}), "Data analyst wanted."))

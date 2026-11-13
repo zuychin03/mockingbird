@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import contract
+from . import contract, fields
 
 ROOT = Path(__file__).resolve().parent.parent
 BUILD = ROOT / "BUILD"     # written by installer/build.py: an install has no git to ask
@@ -43,12 +43,17 @@ def code_revision() -> str:
     return rev
 
 
-def contract_hash() -> str:
-    """Every prompt and schema that can contribute model-written spoken output."""
+def contract_hash(field: str = fields.SOFTWARE, arm: str = "A") -> str:
+    """Every prompt and schema that can contribute model-written spoken output, as this
+    field and prompt arm resolve them."""
+    try:
+        system, speech = contract.system_for(field, arm), contract.speech_for(field, arm)
+    except (KeyError, ValueError):
+        return "unknown"
     blob = "".join((
-        contract.SYSTEM,
+        system,
         json.dumps(contract.TURN_SCHEMA, sort_keys=True),
-        contract.SPEECH_SYSTEM,
+        speech,
         json.dumps(contract.SPEECH_SCHEMA, sort_keys=True),
     ))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]

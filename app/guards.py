@@ -292,6 +292,19 @@ REFUSES = ["rather not", "prefer not", "d rather skip", "pass on that", "pass on
            "don t want to answer", "dont want to answer", "not going to answer",
            "next question please", "rather move on"]
 
+# Declining to invent or botch an answer is honesty, not declining the question: "I'd rather
+# not make one up. I honestly can't remember..." (1.2 field gate), and the stored answer
+# "...a solved problem and I'd rather not get it subtly wrong".
+_NOT_A_REFUSAL = re.compile(
+    r"\b(?:rather|prefer)\s+not\s+(?:(?:really|honestly|just|actually)\s+)?(?:to\s+)?(?:"
+    r"make\s+(?:\w+\s+){0,2}up|pretend|invent|fabricate|guess|bluff|fake|lie|exaggerate|"
+    r"embellish|get\s+(?:(?:it|this|that|things|them|the\s+\w+)\s+)?(?:\w+ly\s+)?wrong"
+    r")\b")
+
+
+def _refusal_words(low: str) -> str:
+    return _NOT_A_REFUSAL.sub(" ", low)
+
 # The reverse: no experience to draw on. These belong to `reask`, which puts the question a
 # different way, and several of them then produced a real answer live.
 CANNOT = ["haven t done", "havent done", "have not done", "never done", "not done that",
@@ -386,7 +399,7 @@ def cannot_answer(utterance: str) -> bool:
     # The new endpoint phrases are weaker evidence than an explicit refusal. Suppressing
     # only these rules preserves the established CANNOT-over-REFUSES ordering for direct
     # no-experience language while keeping consent/control language in the skip family.
-    explicit_skip = (any(p in whole for p in REFUSES)
+    explicit_skip = (any(p in _refusal_words(whole) for p in REFUSES)
                      or intent.asked_to_skip(utterance))
     if explicit_skip:
         return False
@@ -398,7 +411,7 @@ def cannot_answer(utterance: str) -> bool:
 
 def refuses(utterance: str) -> bool:
     """Guard 2c's evidence test: the REFUSAL has to be in the candidate's own words."""
-    low = _norm(utterance)
+    low = _refusal_words(_norm(utterance))
     # CANNOT beats REFUSES, so both tests have to read the same vocabulary or a phrasing one
     # of them recognises quietly changes what the other returns (section 6.3).
     if cannot_answer(utterance):
