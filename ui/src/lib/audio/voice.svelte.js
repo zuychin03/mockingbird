@@ -244,9 +244,11 @@ export function clearRecording() {
   voice.recorded = null;
 }
 
-export function say(text) {
+/* `awaitAnswer: false` for a line nothing follows, so live mode does not open the microphone on
+ * a finished interview. */
+export function say(text, { awaitAnswer = true } = {}) {
   if (!link || !text) return;
-  awaitingAnswer = true;
+  awaitingAnswer = awaitAnswer;
   link.say(text);
 }
 

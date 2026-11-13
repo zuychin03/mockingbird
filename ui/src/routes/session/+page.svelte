@@ -35,7 +35,7 @@
   // Plain, not reactive: they only exist to stop the same line being spoken or the same
   // transcript being adopted twice, and making them state would re-run the effects that set
   // them.
-  let spokenLine = '';
+  let spokenKey = '';
   let adopted = 0;
   // What the recogniser produced for the answer in the box, before any edit (FR-31). Kept beside
   // the answer so a correction later can be measured against it; empty for typed answers.
@@ -202,13 +202,31 @@
   // reads state means a later edit turns a caption toggle into "voice switches itself off".
   $effect(() => () => voiceOff());
 
-  // The interviewer speaks its own line. Guarded on the text rather than the question number
-  // because a probe and a reask both keep the number and are different lines.
+  // Everything the interviewer has said since the candidate last spoke. Closing a question puts
+  // its acknowledgement and the next question in two turns, and speaking only the last left the
+  // acknowledgement on screen and silent. Joined, because `say` replaces whatever is playing.
+  function unspoken(s) {
+    const lines = [];
+    for (let i = s.turns.length - 1; i >= 0 && s.turns[i].who === 'interviewer'; i--)
+      lines.unshift(s.turns[i].text);
+    const text = lines.join(' ');
+    return { text, key: `${s.turns.length}:${text}` };
+  }
+
+  // Keyed on the turn count as well as the text, because a probe and a reask both keep the
+  // question number and are different lines.
   $effect(() => {
-    const line = pending;
-    if (voice.phase === 'off' || !line || line === spokenLine) return;
-    spokenLine = line;
-    say(line);
+    if (!session) return;
+    const { text, key } = unspoken(session);
+    if (!text || key === spokenKey) return;
+    // A finished interview's last line is spoken only as it arrives, never replayed by switching
+    // voice on later or reopening the page.
+    if (voice.phase === 'off') {
+      if (session.done) spokenKey = key;
+      return;
+    }
+    spokenKey = key;
+    say(text, { awaitAnswer: !session.done });
   });
 
   // A recognised answer lands in the composer rather than being sent: 12.6 makes correcting
