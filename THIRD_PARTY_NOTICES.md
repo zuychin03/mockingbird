@@ -21,6 +21,20 @@ which the build copies next to the fonts.
 repository with Piper's `en_US-kristin-medium` voice, which was trained on public-domain
 LibriVox recordings.
 
+### O*NET® data
+
+`config/question_bank.json` names the O*NET® generalized work activities each competency
+observes, and `config/fields.json` ranks each field's competencies by the mean importance of
+those activities for the field's occupations. Both are derived from the O*NET® 31.0 Database:
+
+This page includes information from the O*NET® 31.0 Database by the U.S. Department of Labor,
+Employment and Training Administration (USDOL/ETA). Used under the
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) license. O*NET® is a trademark of
+USDOL/ETA. The Mockingbird project has modified all or some of this information: it keeps only
+work-activity titles and importance ratings, averages the ratings into a rank per competency,
+and blends two occupations for product management. USDOL/ETA has not approved, endorsed, or
+tested these modifications. `tools/onet_rank.py` is the full record of the change.
+
 ## Compiled into the built interface
 
 `ui/build` is generated, not committed, and carries Svelte's runtime. The installer ships it.

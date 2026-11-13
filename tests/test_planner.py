@@ -72,6 +72,22 @@ def test_the_competency_enum_is_built_from_the_bank():
     assert "communication" not in enum
 
 
+def test_software_reads_a_description_on_1_1s_ten():
+    """The view's five new shared competencies turned 4 of 9 software reads into `influence`
+    first on the cloud model (13/11), so they wait for P3's measurement. Other views are
+    read whole."""
+    def enum(view):
+        m = Model({"role": "R", "seniority": "mid", "competencies": []})
+        run(planner.read_jd(m, view, JD))
+        return set(m.schema["properties"]["competencies"]["items"]["properties"]["name"]["enum"])
+
+    full = bank.load(Path(__file__).resolve().parent.parent / "config" / "question_bank.json",
+                     templates=fields.templates())
+    assert "influence" in full.view("software").competencies
+    assert enum(full.view("software")) == planner.SOFTWARE_1_1
+    assert enum(full.view("data_analytics")) == set(full.view("data_analytics").competencies)
+
+
 def test_a_cited_competency_is_kept_and_ranking_is_the_order_given():
     s = spec(competencies=[
         {"name": "data_modelling",
@@ -574,3 +590,46 @@ def test_the_field_enum_is_the_closed_field_list_and_evidence_comes_first():
 def test_detection_refuses_what_is_not_a_description():
     with pytest.raises(ValueError):
         run(planner.detect_field(Model({}), "Data analyst wanted."))
+
+
+# --- every field's stock plans (V1.2_PLAN P2) ------------------------------------------------
+
+FIELD_KINDS = [(f.id, k.id) for f in fields.FIELDS.values() if f.id != fields.SOFTWARE
+               for k in f.kinds]
+ALL_VIEWS = bank.load(Path(__file__).resolve().parent.parent / "config" / "question_bank.json",
+                      templates=fields.templates())
+
+
+@pytest.mark.parametrize("field,kind", FIELD_KINDS)
+def test_every_fields_stock_plan_assembles_on_its_view(field, kind, tmp_path):
+    """The same selection software's plans go through, on the field's template and view: every
+    phase holds what the kind's shape asks, nothing is asked twice, and the case phase holds
+    case questions, learned from the template rather than from a phase called `design`."""
+    view = ALL_VIEWS.view(field)
+    k = fields.get(field).kind(kind)
+    a = planner.stock_plan(kind, view, field=field)
+    assert {ph["id"]: len(ph["questions"]) for ph in a.plan["phases"]} == \
+        {p: n for p, n in k.shape.items() if n}
+    assert len({q.lower() for q in a.questions}) == len(a.questions)
+    assert a.gaps == ()
+    by_text = {q.text: q for q in view.questions}
+    shapes = bank.template_shapes(fields.get(field).template)
+    for ph in a.plan["phases"]:
+        for q in ph["questions"]:
+            if q in by_text and ph["id"] in shapes:
+                assert by_text[q].shape == shapes[ph["id"]], (ph["id"], q)
+    p = tmp_path / "plan.json"
+    p.write_text(json.dumps(a.plan), encoding="utf-8")
+    assert sess.load_plan(p)
+
+
+def test_a_round_label_reads_as_written():
+    a = planner.stock_plan("ux", ALL_VIEWS.view("ux_design"), field="ux_design")
+    assert a.plan["label"] == "UX interview (mid)"
+    assert a.plan["notes"].startswith("Stock UX plan, no job description.")
+
+
+def test_an_unknown_kind_names_the_fields_own():
+    with pytest.raises(KeyError, match="known: analytics, behavioural, mixed"):
+        planner.stock_plan("technical", ALL_VIEWS.view("data_analytics"),
+                           field="data_analytics")

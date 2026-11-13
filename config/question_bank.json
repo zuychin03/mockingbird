@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "notes": "Curated interview questions, tagged against a CLOSED competency vocabulary. The vocabulary is closed for the same reason rubric_criteria is validated at load: a planner that may invent a competency name produces tags the bank can never match, and the failure is silent. Warmup and closing questions are deliberately absent -- they are structural, identical in every plan, and carry no competency. A question carries BOTH a source (where the text came from, immutable) and a status (whether it may be asked). Generation writes source=generated status=proposed; approval flips the status and never the source, because FR-2 requires a generated question to stay marked as one. `phase_affinity` says which phase of the plan a competency belongs to. It is data rather than logic because the mapping is a judgement someone should be able to read and disagree with, and because the design phase is not scored -- putting a competency there decides that it will be described rather than graded. `min_level` is the least senior candidate a question is fair to ask, junior when omitted. A question is marked mid when it can only be answered from a live system, a team whose decisions you work within, or colleagues' work to review -- experience a junior may simply not have had, so asking it measures their CV rather than how they answer. A junior plan asks one only where nothing fairer fills the slot.",
+  "version": 2,
+  "notes": "Curated interview questions, tagged against a CLOSED competency vocabulary. The vocabulary is closed for the same reason rubric_criteria is validated at load: a planner that may invent a competency name produces tags the bank can never match, and the failure is silent. Warmup and closing questions are deliberately absent -- they are structural, identical in every plan, and carry no competency. A question carries BOTH a source (where the text came from, immutable) and a status (whether it may be asked). Generation writes source=generated status=proposed; approval flips the status and never the source, because FR-2 requires a generated question to stay marked as one. `phase_affinity` says which phase of the plan a competency belongs to. It is data rather than logic because the mapping is a judgement someone should be able to read and disagree with, and because the design phase is not scored -- putting a competency there decides that it will be described rather than graded. `min_level` is the least senior candidate a question is fair to ask, junior when omitted. A question is marked mid when it can only be answered from a live system, a team whose decisions you work within, or colleagues' work to review -- experience a junior may simply not have had, so asking it measures their CV rather than how they answer. A junior plan asks one only where nothing fairer fills the slot. Format 2 (1.2): every competency and question names its field, `shared` or one field, and a plan only ever draws on one field's view: its own competencies and questions plus the shared ones. Questions the app generates never live here; they are kept in data/bank_local.json.",
   "competencies": {
     "incident_response": "diagnosing and resolving production failures, and what changed afterwards",
     "performance": "finding and fixing a scalability or latency problem, with measurement",
@@ -11,24 +11,398 @@
     "ownership": "supporting what they built after it shipped",
     "learning": "getting productive in an unfamiliar system quickly",
     "technical_judgement": "choosing between options and revisiting the choice later",
-    "mentoring": "raising the people around them"
+    "mentoring": "raising the people around them",
+    "prioritisation": "choosing what comes first when not everything can be done",
+    "stakeholder_management": "keeping the people a piece of work affects informed and on side",
+    "influence": "changing a decision or a habit they had no authority over",
+    "decision_making": "making a call on incomplete information and owning how it went",
+    "coordination": "getting several people's work to land together",
+    "analysis": "turning a question into an analysis someone acted on",
+    "data_quality": "finding and handling data that was wrong, missing or misleading",
+    "insight_communication": "getting a finding understood and used by people who are not analysts",
+    "metric_design": "defining a measure so it tracks what matters",
+    "investigation": "working an open analytical problem from question to approach",
+    "discovery": "finding out what users need before building it",
+    "product_strategy": "choosing where a product goes next and getting it agreed",
+    "product_metrics": "judging a product by measures chosen in advance",
+    "scope_tradeoffs": "cutting or reshaping scope to ship something useful",
+    "product_sense": "reasoning through a product problem from user to solution",
+    "user_research": "learning first-hand how people behave and what they need",
+    "design_iteration": "changing a design on evidence rather than taste",
+    "usability_evaluation": "testing whether people can use a design and acting on what failed",
+    "accessibility": "making a design work for people with disabilities",
+    "design_handoff": "getting a design built as intended",
+    "design_process": "working a design problem from brief to a proposal",
+    "planning_scheduling": "turning a goal into a schedule people commit to",
+    "risk_management": "spotting what could go wrong and acting before it did",
+    "scope_control": "handling requests to change what was agreed",
+    "resource_budget": "delivering within the people and money a project had",
+    "status_reporting": "telling people where a project really stands",
+    "delivery_planning": "planning the delivery of a described project from scratch"
+  },
+  "competency_fields": {
+    "incident_response": "software",
+    "performance": "software",
+    "data_modelling": "software",
+    "system_design": "software",
+    "testing_quality": "software",
+    "collaboration": "shared",
+    "ownership": "shared",
+    "learning": "shared",
+    "technical_judgement": "software",
+    "mentoring": "shared",
+    "prioritisation": "shared",
+    "stakeholder_management": "shared",
+    "influence": "shared",
+    "decision_making": "shared",
+    "coordination": "shared",
+    "analysis": "data_analytics",
+    "data_quality": "data_analytics",
+    "insight_communication": "data_analytics",
+    "metric_design": "data_analytics",
+    "investigation": "data_analytics",
+    "discovery": "product_management",
+    "product_strategy": "product_management",
+    "product_metrics": "product_management",
+    "scope_tradeoffs": "product_management",
+    "product_sense": "product_management",
+    "user_research": "ux_design",
+    "design_iteration": "ux_design",
+    "usability_evaluation": "ux_design",
+    "accessibility": "ux_design",
+    "design_handoff": "ux_design",
+    "design_process": "ux_design",
+    "planning_scheduling": "project_management",
+    "risk_management": "project_management",
+    "scope_control": "project_management",
+    "resource_budget": "project_management",
+    "status_reporting": "project_management",
+    "delivery_planning": "project_management"
+  },
+  "onet": {
+    "incident_response": [
+      {
+        "id": "4.A.2.b.1",
+        "title": "Making Decisions and Solving Problems"
+      },
+      {
+        "id": "4.A.1.a.2",
+        "title": "Monitoring Processes, Materials, or Surroundings"
+      }
+    ],
+    "performance": [
+      {
+        "id": "4.A.2.a.4",
+        "title": "Analyzing Data or Information"
+      },
+      {
+        "id": "4.A.3.b.1",
+        "title": "Working with Computers"
+      }
+    ],
+    "data_modelling": [
+      {
+        "id": "4.A.3.b.1",
+        "title": "Working with Computers"
+      },
+      {
+        "id": "4.A.2.a.2",
+        "title": "Processing Information"
+      }
+    ],
+    "system_design": [
+      {
+        "id": "4.A.3.b.2",
+        "title": "Drafting, Laying Out, and Specifying Technical Devices, Parts, and Equipment"
+      },
+      {
+        "id": "4.A.2.b.2",
+        "title": "Thinking Creatively"
+      }
+    ],
+    "testing_quality": [
+      {
+        "id": "4.A.2.a.3",
+        "title": "Evaluating Information to Determine Compliance with Standards"
+      },
+      {
+        "id": "4.A.2.a.1",
+        "title": "Judging the Qualities of Objects, Services, or People"
+      }
+    ],
+    "collaboration": [
+      {
+        "id": "4.A.4.a.7",
+        "title": "Resolving Conflicts and Negotiating with Others"
+      },
+      {
+        "id": "4.A.4.a.2",
+        "title": "Communicating with Supervisors, Peers, or Subordinates"
+      }
+    ],
+    "ownership": [
+      {
+        "id": "4.A.2.b.1",
+        "title": "Making Decisions and Solving Problems"
+      },
+      {
+        "id": "4.A.2.b.6",
+        "title": "Organizing, Planning, and Prioritizing Work"
+      }
+    ],
+    "learning": [
+      {
+        "id": "4.A.2.b.3",
+        "title": "Updating and Using Relevant Knowledge"
+      }
+    ],
+    "technical_judgement": [
+      {
+        "id": "4.A.2.b.1",
+        "title": "Making Decisions and Solving Problems"
+      },
+      {
+        "id": "4.A.2.a.4",
+        "title": "Analyzing Data or Information"
+      }
+    ],
+    "mentoring": [
+      {
+        "id": "4.A.4.b.5",
+        "title": "Coaching and Developing Others"
+      },
+      {
+        "id": "4.A.4.b.3",
+        "title": "Training and Teaching Others"
+      }
+    ],
+    "prioritisation": [
+      {
+        "id": "4.A.2.b.6",
+        "title": "Organizing, Planning, and Prioritizing Work"
+      }
+    ],
+    "stakeholder_management": [
+      {
+        "id": "4.A.4.a.4",
+        "title": "Establishing and Maintaining Interpersonal Relationships"
+      },
+      {
+        "id": "4.A.4.a.3",
+        "title": "Communicating with People Outside the Organization"
+      }
+    ],
+    "influence": [
+      {
+        "id": "4.A.4.a.6",
+        "title": "Selling or Influencing Others"
+      }
+    ],
+    "decision_making": [
+      {
+        "id": "4.A.2.b.1",
+        "title": "Making Decisions and Solving Problems"
+      }
+    ],
+    "coordination": [
+      {
+        "id": "4.A.4.b.1",
+        "title": "Coordinating the Work and Activities of Others"
+      }
+    ],
+    "analysis": [
+      {
+        "id": "4.A.2.a.4",
+        "title": "Analyzing Data or Information"
+      }
+    ],
+    "data_quality": [
+      {
+        "id": "4.A.2.a.3",
+        "title": "Evaluating Information to Determine Compliance with Standards"
+      }
+    ],
+    "insight_communication": [
+      {
+        "id": "4.A.4.a.1",
+        "title": "Interpreting the Meaning of Information for Others"
+      }
+    ],
+    "metric_design": [
+      {
+        "id": "4.A.1.b.3",
+        "title": "Estimating the Quantifiable Characteristics of Products, Events, or Information"
+      }
+    ],
+    "investigation": [
+      {
+        "id": "4.A.2.a.4",
+        "title": "Analyzing Data or Information"
+      },
+      {
+        "id": "4.A.2.b.1",
+        "title": "Making Decisions and Solving Problems"
+      }
+    ],
+    "discovery": [
+      {
+        "id": "4.A.1.a.1",
+        "title": "Getting Information"
+      }
+    ],
+    "product_strategy": [
+      {
+        "id": "4.A.2.b.4",
+        "title": "Developing Objectives and Strategies"
+      }
+    ],
+    "product_metrics": [
+      {
+        "id": "4.A.2.a.4",
+        "title": "Analyzing Data or Information"
+      }
+    ],
+    "scope_tradeoffs": [
+      {
+        "id": "4.A.2.b.1",
+        "title": "Making Decisions and Solving Problems"
+      }
+    ],
+    "product_sense": [
+      {
+        "id": "4.A.2.b.2",
+        "title": "Thinking Creatively"
+      },
+      {
+        "id": "4.A.2.b.4",
+        "title": "Developing Objectives and Strategies"
+      }
+    ],
+    "user_research": [
+      {
+        "id": "4.A.1.a.1",
+        "title": "Getting Information"
+      }
+    ],
+    "design_iteration": [
+      {
+        "id": "4.A.2.b.2",
+        "title": "Thinking Creatively"
+      }
+    ],
+    "usability_evaluation": [
+      {
+        "id": "4.A.2.a.1",
+        "title": "Judging the Qualities of Objects, Services, or People"
+      }
+    ],
+    "accessibility": [
+      {
+        "id": "4.A.2.a.3",
+        "title": "Evaluating Information to Determine Compliance with Standards"
+      }
+    ],
+    "design_handoff": [
+      {
+        "id": "4.A.3.b.2",
+        "title": "Drafting, Laying Out, and Specifying Technical Devices, Parts, and Equipment"
+      }
+    ],
+    "design_process": [
+      {
+        "id": "4.A.2.b.2",
+        "title": "Thinking Creatively"
+      },
+      {
+        "id": "4.A.1.a.1",
+        "title": "Getting Information"
+      }
+    ],
+    "planning_scheduling": [
+      {
+        "id": "4.A.2.b.5",
+        "title": "Scheduling Work and Activities"
+      }
+    ],
+    "risk_management": [
+      {
+        "id": "4.A.1.a.2",
+        "title": "Monitoring Processes, Materials, or Surroundings"
+      }
+    ],
+    "scope_control": [
+      {
+        "id": "4.A.2.b.4",
+        "title": "Developing Objectives and Strategies"
+      }
+    ],
+    "resource_budget": [
+      {
+        "id": "4.A.4.c.3",
+        "title": "Monitoring and Controlling Resources"
+      }
+    ],
+    "status_reporting": [
+      {
+        "id": "4.A.3.b.6",
+        "title": "Documenting/Recording Information"
+      }
+    ],
+    "delivery_planning": [
+      {
+        "id": "4.A.2.b.5",
+        "title": "Scheduling Work and Activities"
+      },
+      {
+        "id": "4.A.2.b.6",
+        "title": "Organizing, Planning, and Prioritizing Work"
+      }
+    ]
   },
   "phase_affinity": {
     "incident_response": "behavioural_core",
+    "performance": "technical_experience",
+    "data_modelling": "technical_experience",
+    "system_design": "design",
+    "testing_quality": "technical_experience",
+    "collaboration": "collaboration",
     "ownership": "behavioural_core",
     "learning": "behavioural_core",
     "technical_judgement": "behavioural_core",
-    "performance": "technical_experience",
-    "data_modelling": "technical_experience",
-    "testing_quality": "technical_experience",
-    "collaboration": "collaboration",
     "mentoring": "collaboration",
-    "system_design": "design"
+    "prioritisation": "behavioural_core",
+    "stakeholder_management": "collaboration",
+    "influence": "collaboration",
+    "decision_making": "behavioural_core",
+    "coordination": "collaboration",
+    "analysis": "analytics_experience",
+    "data_quality": "analytics_experience",
+    "insight_communication": "analytics_experience",
+    "metric_design": "analytics_experience",
+    "investigation": "analytics_case",
+    "discovery": "product_experience",
+    "product_strategy": "product_experience",
+    "product_metrics": "product_experience",
+    "scope_tradeoffs": "product_experience",
+    "product_sense": "product_case",
+    "user_research": "ux_experience",
+    "design_iteration": "ux_experience",
+    "usability_evaluation": "ux_experience",
+    "accessibility": "ux_experience",
+    "design_handoff": "ux_experience",
+    "design_process": "ux_case",
+    "planning_scheduling": "delivery_experience",
+    "risk_management": "delivery_experience",
+    "scope_control": "delivery_experience",
+    "resource_budget": "delivery_experience",
+    "status_reporting": "delivery_experience",
+    "delivery_planning": "delivery_case"
   },
   "questions": [
     {
       "id": "bank.incident.1",
       "text": "Describe a production incident you were responsible for resolving.",
+      "field": "software",
       "competencies": [
         "incident_response",
         "ownership"
@@ -41,6 +415,7 @@
     {
       "id": "bank.incident.2",
       "text": "Tell me about a time you found the cause of something only after your first explanation turned out to be wrong.",
+      "field": "software",
       "competencies": [
         "incident_response",
         "technical_judgement"
@@ -52,6 +427,7 @@
     {
       "id": "bank.incident.3",
       "text": "Describe a failure that reached users before anyone on the team noticed it.",
+      "field": "software",
       "competencies": [
         "incident_response",
         "ownership"
@@ -64,6 +440,7 @@
     {
       "id": "bank.perf.1",
       "text": "Walk me through a performance or scalability problem you've hit. What did you measure, and what did you change?",
+      "field": "software",
       "competencies": [
         "performance"
       ],
@@ -74,6 +451,7 @@
     {
       "id": "bank.perf.2",
       "text": "Tell me about a time you made something faster and could show by how much.",
+      "field": "software",
       "competencies": [
         "performance",
         "testing_quality"
@@ -85,6 +463,7 @@
     {
       "id": "bank.perf.3",
       "text": "Describe a time you decided a performance problem was not worth fixing.",
+      "field": "software",
       "competencies": [
         "performance",
         "technical_judgement"
@@ -96,6 +475,7 @@
     {
       "id": "bank.data.1",
       "text": "Tell me about a schema or data-model change you've made to a system that was already live.",
+      "field": "software",
       "competencies": [
         "data_modelling"
       ],
@@ -107,6 +487,7 @@
     {
       "id": "bank.data.2",
       "text": "Describe a data model you inherited and had to work against rather than change.",
+      "field": "software",
       "competencies": [
         "data_modelling",
         "technical_judgement"
@@ -119,6 +500,7 @@
     {
       "id": "bank.data.3",
       "text": "Tell me about a migration or backfill you ran, and how you knew it had worked.",
+      "field": "software",
       "competencies": [
         "data_modelling",
         "testing_quality"
@@ -130,6 +512,7 @@
     {
       "id": "bank.design.1",
       "text": "Walk me through how you'd design a rate limiter for a public API. Take a minute first if you want.",
+      "field": "software",
       "competencies": [
         "system_design"
       ],
@@ -140,6 +523,7 @@
     {
       "id": "bank.design.2",
       "text": "How would you design a service that has to keep working when the database it depends on is unavailable? Take a minute first if you want.",
+      "field": "software",
       "competencies": [
         "system_design"
       ],
@@ -150,6 +534,7 @@
     {
       "id": "bank.design.3",
       "text": "Suppose you had to move a nightly batch job to run continuously instead. How would you approach it? Take a minute first if you want.",
+      "field": "software",
       "competencies": [
         "system_design",
         "data_modelling"
@@ -161,6 +546,7 @@
     {
       "id": "bank.quality.1",
       "text": "Describe how you decide a change is ready to ship. Use a recent example.",
+      "field": "software",
       "competencies": [
         "testing_quality"
       ],
@@ -171,6 +557,7 @@
     {
       "id": "bank.quality.2",
       "text": "Tell me about a bug that your tests should have caught and didn't.",
+      "field": "software",
       "competencies": [
         "testing_quality",
         "technical_judgement"
@@ -182,6 +569,7 @@
     {
       "id": "bank.quality.3",
       "text": "Describe a time you shipped something deliberately without full test coverage.",
+      "field": "software",
       "competencies": [
         "testing_quality",
         "technical_judgement"
@@ -193,6 +581,7 @@
     {
       "id": "bank.collab.1",
       "text": "Tell me about a time you disagreed with a technical decision on your team.",
+      "field": "software",
       "competencies": [
         "collaboration",
         "technical_judgement"
@@ -205,6 +594,7 @@
     {
       "id": "bank.collab.2",
       "text": "Tell me about a time you gave difficult feedback to a colleague.",
+      "field": "shared",
       "competencies": [
         "collaboration",
         "mentoring"
@@ -217,6 +607,7 @@
     {
       "id": "bank.collab.3",
       "text": "Describe a decision your team made that you disagreed with and went along with anyway.",
+      "field": "software",
       "competencies": [
         "collaboration",
         "technical_judgement"
@@ -229,6 +620,7 @@
     {
       "id": "bank.own.1",
       "text": "Describe how you've handled being on-call, or supporting something you built.",
+      "field": "software",
       "competencies": [
         "ownership",
         "incident_response"
@@ -240,6 +632,7 @@
     {
       "id": "bank.own.2",
       "text": "Tell me about something you shipped that didn't work out the way you expected.",
+      "field": "software",
       "competencies": [
         "ownership",
         "technical_judgement"
@@ -251,6 +644,7 @@
     {
       "id": "bank.own.3",
       "text": "Tell me about a piece of work you finished that nobody asked you to do.",
+      "field": "shared",
       "competencies": [
         "ownership"
       ],
@@ -261,6 +655,7 @@
     {
       "id": "bank.learn.1",
       "text": "Tell me about a time you had to learn an unfamiliar codebase quickly.",
+      "field": "software",
       "competencies": [
         "learning"
       ],
@@ -271,6 +666,7 @@
     {
       "id": "bank.learn.2",
       "text": "Describe something technical you had to learn recently because the work required it.",
+      "field": "software",
       "competencies": [
         "learning"
       ],
@@ -281,6 +677,7 @@
     {
       "id": "bank.judge.1",
       "text": "Tell me about a technical decision you made that you'd make differently now.",
+      "field": "software",
       "competencies": [
         "technical_judgement"
       ],
@@ -291,6 +688,7 @@
     {
       "id": "bank.judge.2",
       "text": "Describe a time you chose the slower, more careful approach and had to justify it.",
+      "field": "software",
       "competencies": [
         "technical_judgement",
         "collaboration"
@@ -302,6 +700,7 @@
     {
       "id": "bank.judge.3",
       "text": "Tell me about a time you removed something rather than adding to it.",
+      "field": "software",
       "competencies": [
         "technical_judgement",
         "ownership"
@@ -313,6 +712,7 @@
     {
       "id": "bank.mentor.1",
       "text": "Describe a time you helped someone else get unstuck on work that wasn't yours.",
+      "field": "shared",
       "competencies": [
         "mentoring",
         "collaboration"
@@ -324,6 +724,7 @@
     {
       "id": "bank.mentor.2",
       "text": "Tell me about a review comment you left that changed how someone worked.",
+      "field": "software",
       "competencies": [
         "mentoring",
         "collaboration"
@@ -332,6 +733,1041 @@
       "source": "curated",
       "status": "approved",
       "min_level": "mid"
+    },
+    {
+      "id": "shared.collab.1",
+      "text": "Tell me about a time you worked with someone you found difficult.",
+      "field": "shared",
+      "competencies": [
+        "collaboration"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.collab.2",
+      "text": "Describe a time someone gave you feedback you didn't agree with at first.",
+      "field": "shared",
+      "competencies": [
+        "collaboration",
+        "learning"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.collab.3",
+      "text": "Tell me about a time you and a colleague wanted to do the same piece of work in different ways.",
+      "field": "shared",
+      "competencies": [
+        "collaboration"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.own.1",
+      "text": "Describe a mistake you made at work, and what you did about it.",
+      "field": "shared",
+      "competencies": [
+        "ownership",
+        "learning"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.own.2",
+      "text": "Tell me about a time you took on something outside your usual responsibilities.",
+      "field": "shared",
+      "competencies": [
+        "ownership"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.own.3",
+      "text": "Tell me about a commitment you made that you couldn't keep, and how you handled it.",
+      "field": "shared",
+      "competencies": [
+        "ownership"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.learn.1",
+      "text": "Tell me about a time you had to get up to speed quickly in an area you knew little about.",
+      "field": "shared",
+      "competencies": [
+        "learning"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.learn.2",
+      "text": "Describe a skill you taught yourself because your work needed it.",
+      "field": "shared",
+      "competencies": [
+        "learning"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.learn.3",
+      "text": "Tell me about a piece of feedback that changed how you work.",
+      "field": "shared",
+      "competencies": [
+        "learning"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.mentor.1",
+      "text": "Describe a time you explained something difficult to a colleague so they could do it on their own.",
+      "field": "shared",
+      "competencies": [
+        "mentoring"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.mentor.2",
+      "text": "Tell me about someone you supported over several weeks, and what changed for them.",
+      "field": "shared",
+      "competencies": [
+        "mentoring"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "shared.mentor.3",
+      "text": "Tell me about a time you handed someone a task you could have done faster yourself.",
+      "field": "shared",
+      "competencies": [
+        "mentoring"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "shared.prior.1",
+      "text": "Tell me about a time you had to meet a tight deadline.",
+      "field": "shared",
+      "competencies": [
+        "prioritisation"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.prior.2",
+      "text": "Describe a time you said no to a request, or pushed it back, so something more important got done.",
+      "field": "shared",
+      "competencies": [
+        "prioritisation",
+        "stakeholder_management"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.prior.3",
+      "text": "Tell me about a time your priorities changed suddenly part-way through a piece of work.",
+      "field": "shared",
+      "competencies": [
+        "prioritisation"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.stake.1",
+      "text": "Tell me about a time two people you were working for wanted different things from you.",
+      "field": "shared",
+      "competencies": [
+        "stakeholder_management"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.stake.2",
+      "text": "Describe a time you had to tell someone outside your team news they didn't want to hear.",
+      "field": "shared",
+      "competencies": [
+        "stakeholder_management"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "shared.stake.3",
+      "text": "Tell me about a time you kept people outside your team up to date on work that affected them.",
+      "field": "shared",
+      "competencies": [
+        "stakeholder_management",
+        "coordination"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "shared.infl.1",
+      "text": "Describe a time you changed how something was done at work.",
+      "field": "shared",
+      "competencies": [
+        "influence"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.infl.2",
+      "text": "Tell me about a time you changed someone's mind about a decision that wasn't yours to make.",
+      "field": "shared",
+      "competencies": [
+        "influence",
+        "collaboration"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.infl.3",
+      "text": "Tell me about a time you tried to persuade someone and didn't succeed.",
+      "field": "shared",
+      "competencies": [
+        "influence",
+        "learning"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.decide.1",
+      "text": "Tell me about a decision you made without all the information you wanted.",
+      "field": "shared",
+      "competencies": [
+        "decision_making"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.decide.2",
+      "text": "Describe a decision you made that turned out to be wrong, and what you did when you found out.",
+      "field": "shared",
+      "competencies": [
+        "decision_making",
+        "ownership"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.decide.3",
+      "text": "Tell me about a time you had to choose between two reasonable options. How did you decide?",
+      "field": "shared",
+      "competencies": [
+        "decision_making"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.coord.1",
+      "text": "Tell me about a time you had to get several people's work to come together by a deadline.",
+      "field": "shared",
+      "competencies": [
+        "coordination"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "shared.coord.2",
+      "text": "Describe a time a hand-off between you and someone else went wrong.",
+      "field": "shared",
+      "competencies": [
+        "coordination"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "shared.coord.3",
+      "text": "Tell me about a time you depended on another team to get your work done.",
+      "field": "shared",
+      "competencies": [
+        "coordination"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.analysis.1",
+      "text": "Tell me about an analysis you did that changed a decision someone was about to make.",
+      "field": "data_analytics",
+      "competencies": [
+        "analysis"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.analysis.2",
+      "text": "Walk me through an analysis where the first answer you found turned out to be wrong.",
+      "field": "data_analytics",
+      "competencies": [
+        "analysis",
+        "data_quality"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.analysis.3",
+      "text": "Tell me about a time you were given a vague question and had to work out what was really being asked.",
+      "field": "data_analytics",
+      "competencies": [
+        "analysis"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.analysis.4",
+      "text": "Walk me through an experiment or A/B test you analysed, and what you concluded.",
+      "field": "data_analytics",
+      "competencies": [
+        "analysis",
+        "metric_design"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.quality.1",
+      "text": "Describe a time the data you were given turned out to be wrong or incomplete.",
+      "field": "data_analytics",
+      "competencies": [
+        "data_quality"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.quality.2",
+      "text": "Tell me how you checked that a dataset was fit to use before relying on it. Use a recent example.",
+      "field": "data_analytics",
+      "competencies": [
+        "data_quality"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.quality.3",
+      "text": "Tell me about a time you found a problem in data that other people were already using.",
+      "field": "data_analytics",
+      "competencies": [
+        "data_quality",
+        "insight_communication"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.comm.1",
+      "text": "Tell me about a time you explained a finding to people without a data background.",
+      "field": "data_analytics",
+      "competencies": [
+        "insight_communication"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.comm.2",
+      "text": "Describe a time someone misread or misused a number or chart you'd produced. What did you do?",
+      "field": "data_analytics",
+      "competencies": [
+        "insight_communication"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.comm.3",
+      "text": "Tell me about a recommendation you made from data that people pushed back on.",
+      "field": "data_analytics",
+      "competencies": [
+        "insight_communication",
+        "analysis"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "da.metric.1",
+      "text": "Tell me about a dashboard or report you built. How did you know people used it?",
+      "field": "data_analytics",
+      "competencies": [
+        "metric_design",
+        "insight_communication"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.metric.2",
+      "text": "Tell me about a metric you defined or changed. How did you make sure it measured the right thing?",
+      "field": "data_analytics",
+      "competencies": [
+        "metric_design"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.metric.3",
+      "text": "Describe a time a number was improving while the thing it was meant to track was getting worse.",
+      "field": "data_analytics",
+      "competencies": [
+        "metric_design"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "da.case.1",
+      "text": "Suppose weekly sign-ups dropped by twenty per cent last week and nobody knows why. How would you find out? Take a minute first if you want.",
+      "field": "data_analytics",
+      "competencies": [
+        "investigation"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.case.2",
+      "text": "Suppose a team wants to know whether a new feature made customers spend more. How would you work that out? Take a minute first if you want.",
+      "field": "data_analytics",
+      "competencies": [
+        "investigation"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "da.case.3",
+      "text": "How would you measure customer satisfaction for a delivery service using only the data it already collects? Take a minute first if you want.",
+      "field": "data_analytics",
+      "competencies": [
+        "investigation"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pm.discovery.1",
+      "text": "Walk me through how customer research changed a product decision you'd made.",
+      "field": "product_management",
+      "competencies": [
+        "discovery"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pm.discovery.2",
+      "text": "Describe how you found out whether a problem was worth solving before a team started building.",
+      "field": "product_management",
+      "competencies": [
+        "discovery"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "pm.discovery.3",
+      "text": "Tell me about a time what users asked for and what they needed turned out to be different.",
+      "field": "product_management",
+      "competencies": [
+        "discovery"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pm.strategy.1",
+      "text": "Tell me about a time two stakeholders wanted different things from your roadmap.",
+      "field": "product_management",
+      "competencies": [
+        "product_strategy",
+        "stakeholder_management"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "pm.strategy.2",
+      "text": "Tell me about a product direction you set or changed, and how you got others behind it.",
+      "field": "product_management",
+      "competencies": [
+        "product_strategy",
+        "influence"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "pm.strategy.3",
+      "text": "Tell me about a product bet you made that didn't pay off.",
+      "field": "product_management",
+      "competencies": [
+        "product_strategy"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pm.metrics.1",
+      "text": "Tell me about a metric you set for a product, and how it moved.",
+      "field": "product_management",
+      "competencies": [
+        "product_metrics"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pm.metrics.2",
+      "text": "Describe a launch that didn't go the way you planned.",
+      "field": "product_management",
+      "competencies": [
+        "product_metrics"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pm.metrics.3",
+      "text": "Tell me about a time you stopped or rolled back something because of what the data showed.",
+      "field": "product_management",
+      "competencies": [
+        "product_metrics",
+        "scope_tradeoffs"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "pm.scope.1",
+      "text": "Tell me about a feature you decided not to build, and how you made that call.",
+      "field": "product_management",
+      "competencies": [
+        "scope_tradeoffs",
+        "discovery"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pm.scope.2",
+      "text": "Tell me about a time you cut scope to hit a date. How did you decide what to cut?",
+      "field": "product_management",
+      "competencies": [
+        "scope_tradeoffs"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pm.scope.3",
+      "text": "Describe a time engineers told you something would take far longer than you expected. What did you do?",
+      "field": "product_management",
+      "competencies": [
+        "scope_tradeoffs"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "pm.case.1",
+      "text": "Suppose you run the app a public library uses for borrowing, and loans have fallen this year. What would you look at, and what might you build? Take a minute first if you want.",
+      "field": "product_management",
+      "competencies": [
+        "product_sense"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pm.case.2",
+      "text": "How would you decide what to build first in a new app that helps housemates split bills? Take a minute first if you want.",
+      "field": "product_management",
+      "competencies": [
+        "product_sense"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pm.case.3",
+      "text": "Suppose a few loud customers keep asking for a feature most customers would never use. How would you decide whether to build it? Take a minute first if you want.",
+      "field": "product_management",
+      "competencies": [
+        "product_sense"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.research.1",
+      "text": "Tell me about a piece of research you ran that changed a design's direction.",
+      "field": "ux_design",
+      "competencies": [
+        "user_research"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.research.2",
+      "text": "Describe a time what users said and what they did turned out to be different.",
+      "field": "ux_design",
+      "competencies": [
+        "user_research",
+        "usability_evaluation"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.research.3",
+      "text": "Tell me about a project where you had very little user research to work from.",
+      "field": "ux_design",
+      "competencies": [
+        "user_research"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.usability.1",
+      "text": "Tell me about a design decision you changed after usability testing.",
+      "field": "ux_design",
+      "competencies": [
+        "usability_evaluation",
+        "design_iteration"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.usability.2",
+      "text": "Describe a time a design tested well but caused problems once people used it for real.",
+      "field": "ux_design",
+      "competencies": [
+        "usability_evaluation"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "ux.iterate.1",
+      "text": "Tell me about a design you reworked substantially because of feedback. What changed, and why?",
+      "field": "ux_design",
+      "competencies": [
+        "design_iteration"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.iterate.2",
+      "text": "Describe a time you had to let go of a design you liked.",
+      "field": "ux_design",
+      "competencies": [
+        "design_iteration"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.iterate.3",
+      "text": "Describe a time you had to defend a design to a stakeholder who disagreed.",
+      "field": "ux_design",
+      "competencies": [
+        "design_iteration",
+        "stakeholder_management"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.access.1",
+      "text": "Walk me through how you made something you designed more accessible.",
+      "field": "ux_design",
+      "competencies": [
+        "accessibility"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.access.2",
+      "text": "Describe a time you argued for an accessibility fix that others saw as optional.",
+      "field": "ux_design",
+      "competencies": [
+        "accessibility",
+        "influence"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "ux.handoff.1",
+      "text": "Tell me about a time an engineering constraint forced you to change a design.",
+      "field": "ux_design",
+      "competencies": [
+        "design_handoff",
+        "design_iteration"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.handoff.2",
+      "text": "Tell me about a design that was built differently from how you designed it. What happened?",
+      "field": "ux_design",
+      "competencies": [
+        "design_handoff"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.handoff.3",
+      "text": "Describe how you worked with engineers to get a tricky interaction built the way you intended.",
+      "field": "ux_design",
+      "competencies": [
+        "design_handoff"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.case.1",
+      "text": "Suppose a council wants residents to report potholes from their phones. How would you approach designing that? Take a minute first if you want.",
+      "field": "ux_design",
+      "competencies": [
+        "design_process"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.case.2",
+      "text": "How would you approach redesigning a checkout that many customers abandon at the payment step? Take a minute first if you want.",
+      "field": "ux_design",
+      "competencies": [
+        "design_process"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "ux.case.3",
+      "text": "Suppose you had one week to improve an internal form that staff complain about. How would you spend it? Take a minute first if you want.",
+      "field": "ux_design",
+      "competencies": [
+        "design_process"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.plan.1",
+      "text": "Tell me about a project plan you put together. How did you work out the schedule?",
+      "field": "project_management",
+      "competencies": [
+        "planning_scheduling"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.plan.2",
+      "text": "Tell me about a project that was slipping, and how you brought it back.",
+      "field": "project_management",
+      "competencies": [
+        "planning_scheduling",
+        "risk_management"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "pj.plan.3",
+      "text": "Tell me about a deadline you thought was unrealistic. What did you do about it?",
+      "field": "project_management",
+      "competencies": [
+        "planning_scheduling"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.plan.4",
+      "text": "Describe how you got people who didn't report to you to deliver on time.",
+      "field": "project_management",
+      "competencies": [
+        "planning_scheduling",
+        "coordination"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.risk.1",
+      "text": "Tell me about a risk you spotted early, and what you did about it.",
+      "field": "project_management",
+      "competencies": [
+        "risk_management"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.risk.2",
+      "text": "Describe a risk you missed. What happened, and what do you do differently now?",
+      "field": "project_management",
+      "competencies": [
+        "risk_management",
+        "learning"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.risk.3",
+      "text": "Tell me about a time you had to decide whether to escalate a problem or handle it yourself.",
+      "field": "project_management",
+      "competencies": [
+        "risk_management",
+        "status_reporting"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.scope.1",
+      "text": "Describe a time you had to manage scope creep.",
+      "field": "project_management",
+      "competencies": [
+        "scope_control"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.scope.2",
+      "text": "Tell me about a time someone asked to add work to a project part-way through. How did you handle it?",
+      "field": "project_management",
+      "competencies": [
+        "scope_control"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.budget.1",
+      "text": "Tell me about a project where you had to work within a tight budget or headcount.",
+      "field": "project_management",
+      "competencies": [
+        "resource_budget"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "pj.budget.2",
+      "text": "Describe a time you lost a key person part-way through a project. What did you do?",
+      "field": "project_management",
+      "competencies": [
+        "resource_budget",
+        "planning_scheduling"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "pj.status.1",
+      "text": "Tell me about a time you had to deliver bad news to a sponsor or client.",
+      "field": "project_management",
+      "competencies": [
+        "status_reporting",
+        "stakeholder_management"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved",
+      "min_level": "mid"
+    },
+    {
+      "id": "pj.status.2",
+      "text": "Tell me about a time a status report you wrote turned out to be too optimistic.",
+      "field": "project_management",
+      "competencies": [
+        "status_reporting"
+      ],
+      "shape": "star",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.case.1",
+      "text": "Suppose you're asked to move a forty-person office to a new building in three months without disrupting work. How would you plan it? Take a minute first if you want.",
+      "field": "project_management",
+      "competencies": [
+        "delivery_planning"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.case.2",
+      "text": "How would you plan the rollout of a new booking system to five clinics, when one of them is much busier than the rest? Take a minute first if you want.",
+      "field": "project_management",
+      "competencies": [
+        "delivery_planning"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
+    },
+    {
+      "id": "pj.case.3",
+      "text": "Suppose you've just taken over a project that is six weeks late, and the sponsor wants a new date by Friday. How would you approach it? Take a minute first if you want.",
+      "field": "project_management",
+      "competencies": [
+        "delivery_planning"
+      ],
+      "shape": "design",
+      "source": "curated",
+      "status": "approved"
     }
   ]
 }

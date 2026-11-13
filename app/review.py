@@ -23,6 +23,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import bank as bank_mod
+from . import fields
 from . import session as sess
 from .bank import Bank, Question
 from .planner import Assembled, JobSpec
@@ -168,9 +169,10 @@ def propose_into_bank(draft: Draft, question: Question) -> Draft:
     return replace(draft, bank=bank_mod.with_question(draft.bank, question))
 
 
-def save(draft: Draft, plan_path: str | Path, bank_path: str | Path | None = None) -> None:
-    """Write the reviewed plan, and the bank if approvals happened. Both round-trip through
-    their validators first, so an unusable file is never written."""
+def save(draft: Draft, plan_path: str | Path, local_path: str | Path | None = None) -> None:
+    """Write the reviewed plan, and the draft's generated questions to the local bank file if
+    approvals happened (V1.2_PLAN D12: the shipped bank is never written). The plan
+    round-trips through its validator first, so an unusable file is never written."""
     plan = _copy(draft)
     if draft.edited_from:
         plan["notes"] = (plan.get("notes", "") + " Reviewed by hand: %d question(s) edited."
@@ -180,8 +182,8 @@ def save(draft: Draft, plan_path: str | Path, bank_path: str | Path | None = Non
     tmp.write_text(text, encoding="utf-8", newline="\n")
     sess.load_plan(tmp)
     tmp.replace(plan_path)
-    if bank_path is not None:
-        bank_mod.save(draft.bank, bank_path)
+    if local_path is not None:
+        bank_mod.save_local(draft.bank, local_path)
 
 
 # A draft outlives the process that made it: the terminal tool runs one command per process,
@@ -202,9 +204,10 @@ def to_json(draft: Draft) -> dict:
         # lost an approval the moment it happened. They stay here rather than in the shipped
         # bank because that file is read by every future plan, and an approval belongs to this
         # review until someone saves it.
-        "draft_questions": [{"id": q.id, "text": q.text,
+        "draft_questions": [{"id": q.id, "text": q.text, "field": q.field,
                              "competencies": list(q.competencies), "shape": q.shape,
-                             "source": q.source, "status": q.status}
+                             "source": q.source, "status": q.status,
+                             "min_level": q.min_level}
                             for q in draft.bank.questions if q.generated],
     }
 
@@ -216,9 +219,12 @@ def from_json(raw: dict, bank: Bank) -> Draft:
     for item in raw.get("draft_questions", []):
         if any(q.id == item["id"] for q in b.questions):
             continue
+        # A draft written before 1.2 carries neither, and meant software at junior.
         b = bank_mod.with_question(b, Question(
             id=item["id"], text=item["text"], competencies=tuple(item["competencies"]),
-            shape=item["shape"], source=item["source"], status=item["status"]))
+            shape=item["shape"], source=item["source"], status=item["status"],
+            min_level=item.get("min_level", "junior"),
+            field=item.get("field", fields.SOFTWARE)))
     spec = None
     if raw.get("spec"):
         s = raw["spec"]

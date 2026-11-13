@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -10,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import bank  # noqa: E402
+from app import bank, fields  # noqa: E402
 from app import session as sess  # noqa: E402
 
 BANK = Path(__file__).resolve().parent.parent / "config" / "question_bank.json"
@@ -94,6 +95,7 @@ def test_an_unknown_shape_or_source_is_refused(tmp_path):
 def test_an_uncovered_competency_is_refused(tmp_path):
     raw = json.loads(BANK.read_text(encoding="utf-8"))
     raw["competencies"]["deployment"] = "shipping to production"
+    raw["competency_fields"]["deployment"] = "software"
     p = tmp_path / "b.json"
     p.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="no question covers"):
@@ -178,7 +180,9 @@ def test_a_competency_covered_only_by_proposals_is_still_uncovered(tmp_path):
     it, or the planner reports a hole as filled while the interview still has one."""
     raw = json.loads(BANK.read_text(encoding="utf-8"))
     raw["competencies"]["deployment"] = "shipping to production"
+    raw["competency_fields"]["deployment"] = "software"
     raw["questions"].append({"id": "gen.deploy.1", "text": "How do you deploy?",
+                             "field": "software",
                              "competencies": ["deployment"], "shape": "star",
                              "source": "generated", "status": "proposed"})
     p = tmp_path / "b.json"
@@ -274,3 +278,284 @@ def test_approving_a_proposal_keeps_the_files_notes(tmp_path):
     bank.save(bank.approve(bank.with_question(b, pending), "gen.test.2"), out)
     assert bank.load(out).notes == b.notes
     assert "min_level" in bank.load(out).notes
+
+
+# --- format 2: fields, views, the local file (V1.2_PLAN P2) ----------------------------------
+
+TEMPLATE = BANK.parent / "interview_swe_general.json"
+SWE_TEN = ("incident_response", "performance", "data_modelling", "system_design",
+           "testing_quality", "collaboration", "ownership", "learning", "technical_judgement",
+           "mentoring")
+
+
+def _sha(obj) -> str:
+    return hashlib.sha256(json.dumps(obj, ensure_ascii=False).encode()).hexdigest()[:12]
+
+
+# Software questions activation item 4 moved to shared (13/11): their text and tags are 1.1's.
+MOVED = ("bank.own.3", "bank.mentor.1", "bank.collab.2")
+
+
+def test_the_software_questions_and_descriptions_are_the_1_1_ones():
+    """D5: sharing the bank changes what SWE plans may pick, never the 28 or their tags."""
+    b = bank.load(BANK)
+    sw = [[q.id, q.text, list(q.competencies), q.shape, q.min_level]
+          for q in b.questions if q.field == "software" or q.id in MOVED]
+    assert len(sw) == 28 and _sha(sw) == "9cba03a2d752"
+    assert {q.field for q in b.questions if q.id in MOVED} == {"shared"}
+    assert _sha(dict(sorted((c, b.competencies[c]) for c in SWE_TEN))) == "1f990cd508b2"
+
+
+def _one_one() -> dict:
+    """The shipped bank cut back to what 1.1 held: the ten competencies and the 28."""
+    raw = json.loads(BANK.read_text(encoding="utf-8"))
+    for key in ("competencies", "competency_fields", "phase_affinity", "onet"):
+        raw[key] = {c: v for c, v in raw[key].items() if c in SWE_TEN}
+    raw["questions"] = [dict(q, field="software") for q in raw["questions"]
+                        if q["field"] == "software" or q["id"] in MOVED]
+    return raw
+
+
+def _two_fields(tmp_path, *, case_shape="design"):
+    """1.1's bank plus a data-analytics competency pair and a template for them."""
+    raw = _one_one()
+    raw["competencies"].update({"analysis": "turning data into a finding someone acted on",
+                                "investigation": "working an open analytics problem through"})
+    raw["competency_fields"].update({"analysis": "data_analytics",
+                                     "investigation": "data_analytics"})
+    raw["phase_affinity"].update({"analysis": "analytics_experience",
+                                  "investigation": "analytics_case"})
+    raw["questions"] += [
+        {"id": "da.analysis.1", "text": "Tell me about an analysis that changed a decision.",
+         "field": "data_analytics", "competencies": ["analysis"], "shape": "star",
+         "source": "curated", "status": "approved"},
+        {"id": "da.case.1", "text": "How would you find out why sign-ups fell last week?",
+         "field": "data_analytics", "competencies": ["investigation"], "shape": case_shape,
+         "source": "curated", "status": "approved"},
+        {"id": "shared.collab.1", "text": "Tell me about a time you changed someone's mind.",
+         "field": "shared", "competencies": ["collaboration"], "shape": "star",
+         "source": "curated", "status": "approved"},
+        {"id": "shared.own.1", "text": "Tell me about something you kept running after launch.",
+         "field": "shared", "competencies": ["ownership", "learning", "mentoring"],
+         "shape": "star", "source": "curated", "status": "approved"},
+    ]
+    p = tmp_path / "bank.json"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    plan = json.loads(TEMPLATE.read_text(encoding="utf-8"))
+    for ph in plan["phases"]:
+        ph["id"] = {"technical_experience": "analytics_experience",
+                    "design": "analytics_case"}.get(ph["id"], ph["id"])
+    t = tmp_path / "interview_data_analytics.json"
+    t.write_text(json.dumps(plan), encoding="utf-8")
+    return p, {"software": TEMPLATE, "data_analytics": t}
+
+
+def test_a_version_1_bank_loads_as_software(tmp_path):
+    raw = _one_one()
+    raw["version"] = 1
+    raw.pop("competency_fields")
+    for q in raw["questions"]:
+        q.pop("field")
+    p = tmp_path / "v1.json"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    b = bank.load(p)
+    assert {q.field for q in b.questions} == {"software"}
+    assert set(b.competency_fields.values()) == {"software"}
+    assert b.view("software").questions == b.questions
+
+
+def test_a_version_2_question_must_name_its_field(tmp_path):
+    raw = json.loads(BANK.read_text(encoding="utf-8"))
+    raw["questions"][0].pop("field")
+    p = tmp_path / "b.json"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="declares field None"):
+        bank.load(p)
+
+
+def test_an_unknown_format_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="format 3"):
+        bank.load(_write(tmp_path, version=3))
+
+
+def test_a_question_cannot_carry_another_fields_competency(tmp_path):
+    p, templates = _two_fields(tmp_path)
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    raw["questions"][0]["competencies"].append("analysis")
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="belong to another field"):
+        bank.load(p, templates=templates)
+
+
+def test_a_shared_question_carries_shared_competencies_only(tmp_path):
+    p, templates = _two_fields(tmp_path)
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    raw["questions"][-1]["competencies"].append("performance")
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="belong to another field"):
+        bank.load(p, templates=templates)
+
+
+def test_a_view_holds_its_field_and_the_shared_ones(tmp_path):
+    p, templates = _two_fields(tmp_path)
+    b = bank.load(p, templates=templates)
+    da, sw = b.view("data_analytics"), b.view("software")
+    assert set(da.competencies) == {"analysis", "investigation", "collaboration", "ownership",
+                                    "learning", "mentoring"}
+    assert {q.id for q in da.questions} == {"da.analysis.1", "da.case.1", "shared.collab.1",
+                                            "shared.own.1"}
+    assert "analysis" not in sw.competencies and "performance" in sw.competencies
+    assert "shared.collab.1" in {q.id for q in sw.questions}
+    assert da.view_of == "data_analytics" and b.view_of is None
+    with pytest.raises(KeyError, match="unknown field"):
+        b.view("nursing")
+
+
+def test_every_view_is_checked_against_its_template(tmp_path):
+    """Without its shared questions the data-analytics view has a hole the whole bank does
+    not, and it fails at load rather than mid-interview."""
+    p, templates = _two_fields(tmp_path)
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    raw["questions"] = [q for q in raw["questions"] if q["field"] != "shared"]
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    bank.load(p)
+    with pytest.raises(ValueError, match="no question covers collaboration, learning, "
+                                         "mentoring, ownership in the data_analytics view"):
+        bank.load(p, templates=templates)
+
+
+def test_a_phase_the_template_lacks_is_refused(tmp_path):
+    p, _ = _two_fields(tmp_path)
+    with pytest.raises(ValueError, match="phase, which the data_analytics template does not"):
+        bank.load(p, templates={"software": TEMPLATE, "data_analytics": TEMPLATE})
+
+
+def test_the_case_phase_shape_comes_from_the_template(tmp_path):
+    """Learned from `observation_shape`, not from a phase called `design`."""
+    p, templates = _two_fields(tmp_path)
+    assert bank.template_shapes(templates["data_analytics"])["analytics_case"] == "design"
+    bank.load(p, templates=templates)
+    p, templates = _two_fields(tmp_path, case_shape="star")
+    with pytest.raises(ValueError, match="can only hold design questions"):
+        bank.load(p, templates=templates)
+
+
+def test_a_view_cannot_be_saved_over_the_bank(tmp_path):
+    with pytest.raises(ValueError, match="software view"):
+        bank.save(bank.load(BANK).view("software"), tmp_path / "b.json")
+
+
+def test_onet_round_trips_and_a_bad_id_is_refused(tmp_path):
+    raw = json.loads(BANK.read_text(encoding="utf-8"))
+    raw["onet"] = {"performance": [{"id": "4.A.2.a.4",
+                                    "title": "Analyzing Data or Information"}]}
+    p = tmp_path / "b.json"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    out = tmp_path / "saved.json"
+    bank.save(bank.load(p), out)
+    assert bank.load(out).onet == {"performance": (("4.A.2.a.4",
+                                                    "Analyzing Data or Information"),)}
+    raw["onet"]["performance"][0]["id"] = "2.A.1"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError, match="O\\*NET"):
+        bank.load(p)
+
+
+def _local(tmp_path, *rows, **extra):
+    p = tmp_path / "local.json"
+    p.write_text(json.dumps({"version": 2, "questions": list(rows), **extra}), encoding="utf-8")
+    return p
+
+
+GEN = {"id": "gen.performance.1", "text": "Tell me about a slow page you made fast?",
+       "field": "software", "competencies": ["performance"], "shape": "star",
+       "source": "generated", "status": "approved", "min_level": "mid"}
+
+
+def test_local_questions_join_the_bank_and_never_its_file(tmp_path):
+    b = bank.load(BANK, local=_local(tmp_path, GEN))
+    assert b.for_competency("performance")[-1].id == "gen.performance.1"
+    assert b.local_ids == {"gen.performance.1"}
+    out = tmp_path / "saved.json"
+    bank.save(b, out)
+    assert out.read_bytes() == BANK.read_bytes()
+
+
+def test_the_local_file_holds_generated_questions_only(tmp_path):
+    with pytest.raises(ValueError, match="only generated questions"):
+        bank.load(BANK, local=_local(tmp_path, {**GEN, "source": "curated"}))
+    with pytest.raises(ValueError, match="repeats question id"):
+        bank.load(BANK, local=_local(tmp_path, {**GEN, "id": "bank.perf.1"}))
+
+
+def test_saving_one_views_approvals_keeps_the_others(tmp_path):
+    other = {**GEN, "id": "gen.analysis.1", "field": "data_analytics"}
+    p = _local(tmp_path, other, imported_1_1={"imported": []})
+    q = bank.Question(id="gen.learning.7", text="Tell me about a tool you learned fast?",
+                      competencies=("learning",), shape="star", source="generated",
+                      status="proposed")
+    b = bank.approve(bank.with_question(bank.load(BANK), q), "gen.learning.7")
+    bank.save_local(b.view("software"), p)
+    saved = json.loads(p.read_text(encoding="utf-8"))
+    assert [r["id"] for r in saved["questions"]] == ["gen.analysis.1", "gen.learning.7"]
+    assert saved["questions"][1]["status"] == "approved"
+    assert saved["imported_1_1"] == {"imported": []}
+
+
+def _legacy(tmp_path, *extra):
+    raw = json.loads(BANK.read_text(encoding="utf-8"))
+    raw["version"] = 1
+    raw.pop("competency_fields")
+    for q in raw["questions"]:
+        q.pop("field")
+    raw["questions"] += [{k: v for k, v in GEN.items() if k != "field"}, *extra]
+    p = tmp_path / "bank_1.1.json"
+    p.write_text(json.dumps(raw), encoding="utf-8")
+    return p
+
+
+def test_a_1_1_banks_generated_questions_are_imported_once(tmp_path):
+    """D12: every upgrade since 1.0 replaced config/question_bank.json and lost them."""
+    dup = {**GEN, "id": "gen.performance.2"}
+    bad = {**GEN, "id": "gen.performance.3", "text": "Something else?", "competencies": ["x"]}
+    legacy, local = _legacy(tmp_path, dup, bad), tmp_path / "local.json"
+    shipped = bank.load(BANK)
+    assert bank.import_legacy(shipped, legacy, local) == ["gen.performance.1"]
+    record = json.loads(local.read_text(encoding="utf-8"))["imported_1_1"]
+    assert record["imported"] == ["gen.performance.1"]
+    assert record["skipped"] == ["gen.performance.2", "gen.performance.3"]
+    assert bank.import_legacy(shipped, legacy, local) == []
+    got = bank.load(BANK, local=local).for_competency("performance")[-1]
+    assert (got.id, got.field, got.status, got.min_level) == ("gen.performance.1", "software",
+                                                              "approved", "mid")
+
+
+def test_an_unreadable_1_1_bank_does_not_stop_the_app(tmp_path):
+    legacy = tmp_path / "bank_1.1.json"
+    legacy.write_text("{not json", encoding="utf-8")
+    local = tmp_path / "local.json"
+    assert bank.import_legacy(bank.load(BANK), legacy, local) == []
+    assert json.loads(local.read_text(encoding="utf-8"))["imported_1_1"]["imported"] == []
+
+
+def test_the_installed_bank_carries_the_import(tmp_path, monkeypatch):
+    shipped = BANK.read_bytes()
+    monkeypatch.setattr(bank, "LEGACY", _legacy(tmp_path))
+    assert "gen.performance.1" in bank.installed(BANK).local_ids
+    assert BANK.read_bytes() == shipped
+
+
+def test_every_shipped_view_validates_against_its_template():
+    """Activation item 4's bank: each field's view covers every competency with a question of
+    the shape its phase holds, on that field's own template."""
+    b = bank.load(BANK, templates=fields.templates())
+    for fid in fields.IDS:
+        v = b.view(fid)
+        assert v.questions and v.competencies, fid
+
+
+def test_the_installed_bank_can_be_narrowed_to_a_field():
+    b = bank.installed(BANK, field="software")
+    assert b.view_of == "software"
+    assert "analysis" not in b.competencies and "performance" in b.competencies
+    assert bank.installed(BANK).view_of is None

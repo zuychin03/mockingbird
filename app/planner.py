@@ -19,11 +19,11 @@ changes every question that follows.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import fields
-from .bank import LEVELS, Bank, Question
+from .bank import LEVELS, Bank, Question, template_shapes
 from .observe import _grounded as _grounded_in
 from .provider import Provider
 
@@ -107,9 +107,25 @@ def _jd(text: str) -> str:
     return jd[:MAX_JD_CHARS]
 
 
+# 1.1's software vocabulary. The software view also holds the five competencies 1.2 shares
+# across fields; on qwen3.8-27b they changed 5 of 9 software descriptions' reads, 4 of them to
+# `influence` first (13/11). Software's read keeps to these ten until P3 measures the view's.
+SOFTWARE_1_1 = frozenset({"incident_response", "performance", "data_modelling",
+                          "system_design", "testing_quality", "collaboration", "ownership",
+                          "learning", "technical_judgement", "mentoring"})
+
+
+def _vocabulary(bank: Bank) -> Bank:
+    if bank.view_of != fields.SOFTWARE:
+        return bank
+    return replace(bank, competencies={c: d for c, d in bank.competencies.items()
+                                       if c in SOFTWARE_1_1})
+
+
 async def read_jd(provider: Provider, bank: Bank, text: str) -> JobSpec:
     """Extract FR-1's role, seniority and ranked competencies from a pasted description."""
     jd = _jd(text)
+    bank = _vocabulary(bank)
 
     out = await provider.complete(SYSTEM, jd, schema=schema(bank), max_tokens=800)
     raw = out.json() or {}
@@ -291,15 +307,11 @@ async def propose_question(provider: Provider, bank: Bank, competency: str, evid
 # phase's `scored: false` and the paragraph explaining why scoring it inverts the ranking
 # (9.6), each phase's focus ladder. A planner that re-derived those would be re-litigating
 # settled measurements with a model, so assembly chooses QUESTIONS and nothing else.
-# Anchored to the package, not to the working directory. It was relative until the HTTP
-# surface tried to load it: every existing caller happened to run from the repo root, so a
-# path that only worked from there looked correct for as long as nothing ran from anywhere
-# else.
-TEMPLATE = Path(__file__).resolve().parent.parent / "config" / "interview_swe_general.json"
+TEMPLATE = fields.get(fields.SOFTWARE).template
 
-# Phases whose questions assembly selects. Warmup and closing are structural: identical in
-# every plan, carrying no competency, and their wording is the disclosure and the sign-off.
-SELECTABLE = ("behavioural_core", "technical_experience", "design", "collaboration")
+# Assembly selects into the template's discussion and long-turn phases (`template_shapes`).
+# Warmup and closing are structural: identical in every plan, carrying no competency, and their
+# wording is the disclosure and the sign-off.
 
 
 @dataclass(frozen=True)
@@ -411,7 +423,8 @@ def _select(role: str, seniority: str, ranked: list[Requirement], bank: Bank,
     def fitted(texts: list[str]) -> list[str]:
         return [t for t in texts if fits(t)] + [t for t in texts if not fits(t)]
 
-    chosen: dict[str, list[str]] = {pid: [] for pid in SELECTABLE}
+    shapes = template_shapes(template)
+    chosen: dict[str, list[str]] = {pid: [] for pid in shapes}
     used: set[str] = set()
     # Question TEXT already committed anywhere in the plan. Ids are not enough: the bank was
     # seeded from this template, so the same sentence exists as a bank entry and as a template
@@ -425,7 +438,7 @@ def _select(role: str, seniority: str, ranked: list[Requirement], bank: Bank,
         if phase not in chosen:
             gaps.append(req.name)
             continue
-        want = "design" if phase == "design" else "star"
+        want = shapes[phase]
         options = [q for q in bank.for_competency(req.name)
                    if q.shape == want and q.id not in used
                    and q.text.lower() not in spoken]
@@ -473,7 +486,7 @@ def _select(role: str, seniority: str, ranked: list[Requirement], bank: Bank,
         # the shortfall is otherwise silent -- the plan simply has fewer questions than the
         # reviewed one it was built from. The spares are also what replaces a template line
         # that does not fit the level, so they are gathered before the phase is filled.
-        want_shape = "design" if pid == "design" else "star"
+        want_shape = shapes[pid]
         phase_competencies = [c for c, ph_id in bank.phase_affinity.items() if ph_id == pid]
         taken = {x.lower() for x in picked + keep}
         spare = [q.text for q in bank.questions
@@ -519,43 +532,27 @@ def assemble(spec: JobSpec, bank: Bank, *, template: str | Path = TEMPLATE,
                    minutes, "Generated from a job description.")
 
 
-# FR-4's three stock plans. Each carries a ranked competency list AND a phase shape, because
-# the ranking alone does not produce three different interviews: every plan keeps the same
-# phases, so a "technical" one still held two behavioural questions and a "behavioural" one
-# two technical. Measured on the first version -- behavioural and technical shared 7 of 8
-# questions, which made the choice cosmetic.
+# FR-4's stock plans live in `config/fields.json`, per field. Each carries a ranked competency
+# list AND a phase shape, because the ranking alone does not produce different interviews:
+# every plan keeps the same phases, so a "technical" one still held two behavioural questions
+# and a "behavioural" one two technical. Measured on the first version -- behavioural and
+# technical shared 7 of 8 questions, which made the choice cosmetic.
 #
-# `questions` is the number of questions that phase holds; 0 drops the phase entirely rather
+# A shape's number is how many questions that phase holds; 0 drops the phase entirely rather
 # than leaving it empty, because a scored phase with no questions gives the rubric a
-# denominator of zero. Dropping `design` is safe in a way dropping a scored phase is not: it
-# is observed and described, never scored (9.6).
+# denominator of zero. Dropping the design or case phase is safe in a way dropping a scored
+# phase is not: it is observed and described, never scored (9.6).
 #
 # `mixed` is not the union of the other two. It alternates so that trimming for length takes
 # from both halves evenly -- a mixed interview cut to twenty minutes should still be mixed.
-STOCK: dict[str, dict] = {
-    "behavioural": {
-        "ranked": ("collaboration", "ownership", "incident_response", "mentoring",
-                   "learning", "technical_judgement"),
-        "shape": {"warmup": 2, "behavioural_core": 5, "technical_experience": 1,
-                  "design": 0, "collaboration": 3, "closing": 1},
-    },
-    "technical": {
-        "ranked": ("data_modelling", "performance", "system_design", "testing_quality",
-                   "incident_response", "technical_judgement"),
-        "shape": {"warmup": 1, "behavioural_core": 1, "technical_experience": 6,
-                  "design": 2, "collaboration": 1, "closing": 1},
-    },
-    "mixed": {
-        "ranked": ("collaboration", "data_modelling", "ownership", "performance",
-                   "system_design", "mentoring", "testing_quality", "learning"),
-        "shape": {"warmup": 2, "behavioural_core": 3, "technical_experience": 3,
-                  "design": 1, "collaboration": 2, "closing": 1},
-    },
-}
+#
+# Software's, for the callers that do not name a field yet (V1.2_PLAN P3).
+STOCK: dict[str, dict] = {k.id: {"ranked": k.ranked, "shape": k.shape}
+                          for k in fields.get(fields.SOFTWARE).kinds}
 
 
 def stock_plan(kind: str, bank: Bank, *, minutes: int | None = None,
-               template: str | Path = TEMPLATE) -> Assembled:
+               template: str | Path | None = None, field: str = fields.SOFTWARE) -> Assembled:
     """FR-4: an interview with no job description behind it.
 
     The same selection as the JD path, with a fixed ranked list standing in for what a
@@ -563,9 +560,9 @@ def stock_plan(kind: str, bank: Bank, *, minutes: int | None = None,
     no evidence, because there is no employer text to cite and a fabricated citation is
     exactly what the JD path drops.
     """
-    if kind not in STOCK:
-        raise KeyError("unknown stock plan %r; known: %s" % (kind, ", ".join(sorted(STOCK))))
-    ranked = [Requirement(name=n, evidence="") for n in STOCK[kind]["ranked"]]
-    return _select(kind.capitalize() + " interview", "mid", ranked, bank, template, minutes,
-                   "Stock %s plan, no job description." % kind,
-                   shape=STOCK[kind]["shape"])
+    f = fields.get(field)
+    k = f.kind(kind)
+    ranked = [Requirement(name=n, evidence="") for n in k.ranked]
+    name = k.label if k.label.isupper() else k.label.lower()
+    return _select(k.label + " interview", "mid", ranked, bank, template or f.template, minutes,
+                   "Stock %s plan, no job description." % name, shape=k.shape)

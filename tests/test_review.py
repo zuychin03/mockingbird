@@ -126,13 +126,23 @@ def test_reordering_changes_the_order_and_nothing_else():
     assert sorted(after) == sorted(before)
 
 
-def test_saving_writes_the_bank_only_when_asked(tmp_path):
-    d = draft()
-    plan_out, bank_out = tmp_path / "p.json", tmp_path / "b.json"
+def test_saving_writes_the_local_bank_only_when_asked(tmp_path):
+    """V1.2_PLAN D12: approvals go to the local file, never into the shipped bank, which
+    every installer upgrade replaces."""
+    proposal = bank.Question(id="gen.perf.97", text="A proposed latency question?",
+                             competencies=("performance",), shape="star",
+                             source="generated", status="proposed", min_level="mid")
+    d = review.approve(review.propose_into_bank(draft(), proposal), "gen.perf.97")
+    plan_out, local_out = tmp_path / "p.json", tmp_path / "local.json"
+    shipped = bank.SHIPPED.read_bytes()
     review.save(d, plan_out)
-    assert plan_out.exists() and not bank_out.exists()
-    review.save(d, plan_out, bank_out)
-    assert bank.load(bank_out).questions
+    assert plan_out.exists() and not local_out.exists()
+    review.save(d, plan_out, local_out)
+    rows = json.loads(local_out.read_text(encoding="utf-8"))["questions"]
+    assert [(r["id"], r["status"], r["min_level"]) for r in rows] == [("gen.perf.97", "approved",
+                                                                       "mid")]
+    assert bank.SHIPPED.read_bytes() == shipped
+    assert bank.load(bank.SHIPPED, local=local_out).for_competency("performance")[-1].id == "gen.perf.97"
 
 
 def test_a_saved_plan_records_that_it_was_edited(tmp_path):
@@ -153,3 +163,14 @@ def test_no_temp_file_is_left_behind(tmp_path):
     review.save(d, tmp_path / "p.json")
     assert not list(tmp_path.glob("*.tmp"))
     assert not list(ROOT.glob(".plan-check.tmp.json"))
+
+
+def test_a_saved_draft_keeps_a_proposals_field_and_level(tmp_path):
+    """The bank format's round-trip lesson, on the draft: a field it does not write reverts."""
+    proposal = bank.Question(id="gen.perf.96", text="A proposed latency question?",
+                             competencies=("performance",), shape="star",
+                             source="generated", status="proposed", min_level="senior")
+    d = review.propose_into_bank(draft(), proposal)
+    review.write_draft(d, tmp_path / "draft.json")
+    got = review.read_draft(tmp_path / "draft.json", BANK).bank.questions[-1]
+    assert (got.id, got.field, got.min_level) == ("gen.perf.96", "software", "senior")

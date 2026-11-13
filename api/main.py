@@ -35,7 +35,7 @@ from app import bank as bank_mod  # noqa: E402
 from app import compare as compare_mod  # noqa: E402
 from app import corrections as corrections_mod  # noqa: E402
 from app import examples as examples_mod  # noqa: E402
-from app import (contract, detour as detour_mod, embed, hardware,  # noqa: E402
+from app import (contract, detour as detour_mod, embed, fields, hardware,  # noqa: E402
                  export as export_mod, observe, planner, provenance,
                  provider as prov, report as report_mod, resume, review,
                  score as score_mod, secret, session as sess, settings as settings_mod,
@@ -63,7 +63,9 @@ async def same_origin_only(request: Request, call_next):
 
 
 def _bank() -> bank_mod.Bank:
-    return bank_mod.load(BANK)
+    # Software's view until the plan page names a field (V1.2_PLAN P3). The whole bank would
+    # let read_jd and the top-up reach the other fields' competencies and questions.
+    return bank_mod.installed(BANK, field=fields.SOFTWARE)
 
 
 def _draft() -> review.Draft:
@@ -228,7 +230,7 @@ def save(path: str = Body(..., embed=True)) -> dict:
     if ROOT not in target.resolve().parents:
         raise HTTPException(400, "a plan is saved inside the project, not outside it")
     wrote_bank = any(q.generated and q.askable for q in d.bank.questions)
-    _guard(review.save, d, target, BANK if wrote_bank else None)
+    _guard(review.save, d, target, bank_mod.LOCAL if wrote_bank else None)
     return {"saved": str(target.relative_to(ROOT)), "bank_updated": wrote_bank}
 
 

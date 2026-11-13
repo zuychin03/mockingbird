@@ -1,0 +1,575 @@
+{
+  "version": 1,
+  "fields": [
+    {
+      "id": "software",
+      "label": "Software engineering",
+      "interview": "a software-engineering job interview",
+      "template": "config/interview_swe_general.json",
+      "prompt_arm": "A",
+      "measured_note": null,
+      "onet_occupations": [
+        {
+          "code": "15-1252.00",
+          "title": "Software Developers"
+        }
+      ],
+      "onet_note": "vocabulary only; the SWE stock plans stay as 1.1 shipped them",
+      "kinds": [
+        {
+          "id": "behavioural",
+          "label": "Behavioural",
+          "note": "How you have worked, told as stories about real situations.",
+          "ranked": [
+            "collaboration",
+            "ownership",
+            "incident_response",
+            "mentoring",
+            "learning",
+            "technical_judgement"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 5,
+            "technical_experience": 1,
+            "design": 0,
+            "collaboration": 3,
+            "closing": 1
+          }
+        },
+        {
+          "id": "mixed",
+          "label": "Mixed",
+          "note": "Behavioural and technical in one sitting. The usual first round.",
+          "ranked": [
+            "collaboration",
+            "data_modelling",
+            "ownership",
+            "performance",
+            "system_design",
+            "mentoring",
+            "testing_quality",
+            "learning"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 3,
+            "technical_experience": 3,
+            "design": 1,
+            "collaboration": 2,
+            "closing": 1
+          }
+        },
+        {
+          "id": "technical",
+          "label": "Technical",
+          "note": "What you have built, changed and measured.",
+          "ranked": [
+            "data_modelling",
+            "performance",
+            "system_design",
+            "testing_quality",
+            "incident_response",
+            "technical_judgement"
+          ],
+          "shape": {
+            "warmup": 1,
+            "behavioural_core": 1,
+            "technical_experience": 6,
+            "design": 2,
+            "collaboration": 1,
+            "closing": 1
+          }
+        }
+      ],
+      "onet_importance": {
+        "data_modelling": 4.495,
+        "performance": 4.405,
+        "decision_making": 4.34,
+        "technical_judgement": 4.27,
+        "ownership": 4.2,
+        "learning": 4.1,
+        "prioritisation": 4.06,
+        "incident_response": 4.02,
+        "collaboration": 3.31,
+        "testing_quality": 3.275,
+        "stakeholder_management": 3.03,
+        "system_design": 3.01,
+        "mentoring": 2.77,
+        "coordination": 2.34,
+        "influence": 1.61
+      }
+    },
+    {
+      "id": "data_analytics",
+      "label": "Data analytics",
+      "interview": "a data-analytics job interview",
+      "template": "config/interview_data_analytics.json",
+      "prompt_arm": "A",
+      "measured_note": null,
+      "onet_occupations": [
+        {
+          "code": "15-2051.01",
+          "title": "Business Intelligence Analysts"
+        },
+        {
+          "code": "15-2051.00",
+          "title": "Data Scientists"
+        }
+      ],
+      "kinds": [
+        {
+          "id": "behavioural",
+          "label": "Behavioural",
+          "note": "How you have worked, told as stories about real situations.",
+          "ranked": [
+            "learning",
+            "analysis",
+            "decision_making",
+            "ownership",
+            "prioritisation",
+            "collaboration",
+            "stakeholder_management",
+            "mentoring"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 5,
+            "analytics_experience": 1,
+            "analytics_case": 0,
+            "collaboration": 3,
+            "closing": 1
+          }
+        },
+        {
+          "id": "mixed",
+          "label": "Mixed",
+          "note": "Behavioural and analytics in one sitting. The usual first round.",
+          "ranked": [
+            "learning",
+            "analysis",
+            "decision_making",
+            "insight_communication",
+            "ownership",
+            "investigation",
+            "collaboration",
+            "metric_design",
+            "stakeholder_management"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 3,
+            "analytics_experience": 3,
+            "analytics_case": 1,
+            "collaboration": 2,
+            "closing": 1
+          }
+        },
+        {
+          "id": "analytics",
+          "label": "Analytics",
+          "note": "Analyses you have run, the data behind them and what they changed.",
+          "ranked": [
+            "learning",
+            "analysis",
+            "collaboration",
+            "insight_communication",
+            "investigation",
+            "metric_design",
+            "data_quality"
+          ],
+          "shape": {
+            "warmup": 1,
+            "behavioural_core": 1,
+            "analytics_experience": 6,
+            "analytics_case": 2,
+            "collaboration": 1,
+            "closing": 1
+          }
+        }
+      ],
+      "onet_importance": {
+        "analysis": 4.78,
+        "insight_communication": 4.515,
+        "investigation": 4.428,
+        "learning": 4.19,
+        "decision_making": 4.075,
+        "ownership": 3.91,
+        "prioritisation": 3.745,
+        "metric_design": 3.245,
+        "collaboration": 3.205,
+        "stakeholder_management": 3.07,
+        "data_quality": 2.97,
+        "mentoring": 2.8,
+        "coordination": 2.765,
+        "influence": 2.385
+      }
+    },
+    {
+      "id": "product_management",
+      "label": "Product management",
+      "interview": "a product-management job interview",
+      "template": "config/interview_product_management.json",
+      "prompt_arm": "A",
+      "measured_note": null,
+      "onet_occupations": [
+        {
+          "code": "11-2021.00",
+          "title": "Marketing Managers"
+        },
+        {
+          "code": "11-3021.00",
+          "title": "Computer and Information Systems Managers"
+        }
+      ],
+      "onet_note": "a blend: O*NET has no product-manager occupation",
+      "kinds": [
+        {
+          "id": "behavioural",
+          "label": "Behavioural",
+          "note": "How you have worked, told as stories about real situations.",
+          "ranked": [
+            "learning",
+            "discovery",
+            "prioritisation",
+            "ownership",
+            "decision_making",
+            "stakeholder_management",
+            "collaboration",
+            "influence"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 5,
+            "product_experience": 1,
+            "product_case": 0,
+            "collaboration": 3,
+            "closing": 1
+          }
+        },
+        {
+          "id": "mixed",
+          "label": "Mixed",
+          "note": "Behavioural and product in one sitting. The usual first round.",
+          "ranked": [
+            "learning",
+            "discovery",
+            "prioritisation",
+            "product_strategy",
+            "ownership",
+            "product_sense",
+            "stakeholder_management",
+            "scope_tradeoffs",
+            "collaboration"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 3,
+            "product_experience": 3,
+            "product_case": 1,
+            "collaboration": 2,
+            "closing": 1
+          }
+        },
+        {
+          "id": "product",
+          "label": "Product",
+          "note": "Products you have shaped: what you learned, chose and moved.",
+          "ranked": [
+            "learning",
+            "discovery",
+            "stakeholder_management",
+            "product_strategy",
+            "product_sense",
+            "scope_tradeoffs",
+            "product_metrics"
+          ],
+          "shape": {
+            "warmup": 1,
+            "behavioural_core": 1,
+            "product_experience": 6,
+            "product_case": 2,
+            "collaboration": 1,
+            "closing": 1
+          }
+        }
+      ],
+      "onet_importance": {
+        "discovery": 4.325,
+        "product_strategy": 4.25,
+        "learning": 4.245,
+        "prioritisation": 4.21,
+        "ownership": 4.145,
+        "product_sense": 4.095,
+        "decision_making": 4.08,
+        "scope_tradeoffs": 4.08,
+        "stakeholder_management": 4.027,
+        "collaboration": 3.958,
+        "product_metrics": 3.815,
+        "influence": 3.805,
+        "coordination": 3.645,
+        "mentoring": 3.428
+      }
+    },
+    {
+      "id": "ux_design",
+      "label": "UX design",
+      "interview": "a UX-design job interview",
+      "template": "config/interview_ux_design.json",
+      "prompt_arm": "A",
+      "measured_note": null,
+      "onet_occupations": [
+        {
+          "code": "15-1255.00",
+          "title": "Web and Digital Interface Designers"
+        }
+      ],
+      "kinds": [
+        {
+          "id": "behavioural",
+          "label": "Behavioural",
+          "note": "How you have worked, told as stories about real situations.",
+          "ranked": [
+            "decision_making",
+            "user_research",
+            "ownership",
+            "prioritisation",
+            "learning",
+            "stakeholder_management",
+            "collaboration",
+            "mentoring"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 5,
+            "ux_experience": 1,
+            "ux_case": 0,
+            "collaboration": 3,
+            "closing": 1
+          }
+        },
+        {
+          "id": "mixed",
+          "label": "Mixed",
+          "note": "Behavioural and UX in one sitting. The usual first round.",
+          "ranked": [
+            "decision_making",
+            "user_research",
+            "ownership",
+            "design_process",
+            "prioritisation",
+            "design_iteration",
+            "stakeholder_management",
+            "accessibility",
+            "collaboration"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 3,
+            "ux_experience": 3,
+            "ux_case": 1,
+            "collaboration": 2,
+            "closing": 1
+          }
+        },
+        {
+          "id": "ux",
+          "label": "UX",
+          "note": "Designs you have shipped, the research behind them and how they tested.",
+          "ranked": [
+            "decision_making",
+            "user_research",
+            "stakeholder_management",
+            "design_process",
+            "design_iteration",
+            "accessibility",
+            "usability_evaluation",
+            "design_handoff"
+          ],
+          "shape": {
+            "warmup": 1,
+            "behavioural_core": 1,
+            "ux_experience": 6,
+            "ux_case": 2,
+            "collaboration": 1,
+            "closing": 1
+          }
+        }
+      ],
+      "onet_importance": {
+        "user_research": 4.78,
+        "design_process": 4.555,
+        "decision_making": 4.53,
+        "design_iteration": 4.33,
+        "ownership": 4.255,
+        "prioritisation": 3.98,
+        "learning": 3.7,
+        "accessibility": 3.5,
+        "usability_evaluation": 3.46,
+        "stakeholder_management": 3.215,
+        "collaboration": 2.785,
+        "mentoring": 2.35,
+        "coordination": 2.18,
+        "design_handoff": 2.09,
+        "influence": 1.91
+      }
+    },
+    {
+      "id": "project_management",
+      "label": "Project management",
+      "interview": "a project-management job interview",
+      "template": "config/interview_project_management.json",
+      "prompt_arm": "A",
+      "measured_note": null,
+      "onet_occupations": [
+        {
+          "code": "13-1082.00",
+          "title": "Project Management Specialists"
+        }
+      ],
+      "kinds": [
+        {
+          "id": "behavioural",
+          "label": "Behavioural",
+          "note": "How you have worked, told as stories about real situations.",
+          "ranked": [
+            "decision_making",
+            "planning_scheduling",
+            "ownership",
+            "prioritisation",
+            "collaboration",
+            "coordination",
+            "learning",
+            "stakeholder_management"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 5,
+            "delivery_experience": 1,
+            "delivery_case": 0,
+            "collaboration": 3,
+            "closing": 1
+          }
+        },
+        {
+          "id": "mixed",
+          "label": "Mixed",
+          "note": "Behavioural and delivery in one sitting. The usual first round.",
+          "ranked": [
+            "decision_making",
+            "delivery_planning",
+            "ownership",
+            "planning_scheduling",
+            "prioritisation",
+            "status_reporting",
+            "collaboration",
+            "scope_control",
+            "coordination"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 3,
+            "delivery_experience": 3,
+            "delivery_case": 1,
+            "collaboration": 2,
+            "closing": 1
+          }
+        },
+        {
+          "id": "delivery",
+          "label": "Delivery",
+          "note": "Projects you have run: the plan, the risks and how they landed.",
+          "ranked": [
+            "decision_making",
+            "delivery_planning",
+            "collaboration",
+            "planning_scheduling",
+            "status_reporting",
+            "scope_control",
+            "risk_management",
+            "resource_budget"
+          ],
+          "shape": {
+            "warmup": 1,
+            "behavioural_core": 1,
+            "delivery_experience": 6,
+            "delivery_case": 2,
+            "collaboration": 1,
+            "closing": 1
+          }
+        }
+      ],
+      "onet_importance": {
+        "decision_making": 4.36,
+        "ownership": 4.36,
+        "prioritisation": 4.36,
+        "delivery_planning": 4.255,
+        "planning_scheduling": 4.15,
+        "status_reporting": 4.12,
+        "collaboration": 4.075,
+        "coordination": 4.06,
+        "learning": 3.88,
+        "stakeholder_management": 3.85,
+        "scope_control": 3.73,
+        "risk_management": 3.67,
+        "resource_budget": 3.55,
+        "mentoring": 3.15,
+        "influence": 2.61
+      }
+    },
+    {
+      "id": "general",
+      "label": "General",
+      "interview": "a job interview",
+      "template": "config/interview_general.json",
+      "prompt_arm": "A",
+      "measured_note": null,
+      "onet_occupations": [],
+      "onet_mean_of": [
+        "data_analytics",
+        "product_management",
+        "ux_design",
+        "project_management"
+      ],
+      "kinds": [
+        {
+          "id": "behavioural",
+          "label": "Behavioural",
+          "note": "How you have worked, told as stories about real situations.",
+          "ranked": [
+            "decision_making",
+            "ownership",
+            "prioritisation",
+            "learning",
+            "stakeholder_management",
+            "collaboration",
+            "coordination"
+          ],
+          "shape": {
+            "warmup": 2,
+            "behavioural_core": 5,
+            "collaboration": 3,
+            "closing": 1
+          }
+        }
+      ],
+      "onet_importance": {
+        "decision_making": 4.261,
+        "ownership": 4.168,
+        "prioritisation": 4.074,
+        "learning": 4.004,
+        "stakeholder_management": 3.54,
+        "collaboration": 3.506,
+        "coordination": 3.163,
+        "mentoring": 2.932,
+        "influence": 2.677
+      }
+    }
+  ],
+  "onet_database": {
+    "version": "31.0",
+    "ranked": "2026-11-13",
+    "scale": "IM",
+    "file": "work_activities.csv"
+  }
+}

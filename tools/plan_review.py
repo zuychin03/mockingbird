@@ -37,7 +37,7 @@ from tools._console import utf8  # noqa: E402
 utf8()
 
 from app import bank as bank_mod  # noqa: E402
-from app import embed, planner, provider as prov, review  # noqa: E402
+from app import embed, fields, planner, provider as prov, review  # noqa: E402
 
 STATE = ROOT / "data" / "plan_draft.json"
 BANK = ROOT / "config" / "question_bank.json"
@@ -50,7 +50,7 @@ def save_state(d: review.Draft) -> None:
 def load_state() -> review.Draft:
     if not STATE.exists():
         raise SystemExit("no draft in progress. Start one with --jd <file> or --stock <kind>")
-    return review.read_draft(STATE, bank_mod.load(BANK))
+    return review.read_draft(STATE, bank_mod.installed(BANK, field=fields.SOFTWARE))
 
 
 def show(d: review.Draft) -> None:
@@ -88,7 +88,7 @@ def show(d: review.Draft) -> None:
 
 
 async def start(jd_path: Path, minutes: int | None = None) -> review.Draft:
-    b = bank_mod.load(BANK)
+    b = bank_mod.installed(BANK, field=fields.SOFTWARE)
     p = prov.LlamaServer()
     spec = await planner.read_jd(p, b, jd_path.read_text(encoding="utf-8"))
     return review.from_assembled(planner.assemble(spec, b, minutes=minutes), b, spec)
@@ -97,7 +97,7 @@ async def start(jd_path: Path, minutes: int | None = None) -> review.Draft:
 def stock(kind: str, minutes: int | None) -> review.Draft:
     """FR-4. No model call at all: there is no description to read, so the whole path is
     selection over reviewed text."""
-    b = bank_mod.load(BANK)
+    b = bank_mod.installed(BANK, field=fields.SOFTWARE)
     return review.from_assembled(planner.stock_plan(kind, b, minutes=minutes), b, None)
 
 
@@ -128,7 +128,7 @@ async def main() -> int:
     ap.add_argument("--delete", nargs=2, metavar=("PHASE", "INDEX"))
     ap.add_argument("--move", nargs=3, metavar=("PHASE", "FROM", "TO"))
     ap.add_argument("--save", type=Path, metavar="PLAN")
-    ap.add_argument("--save-bank", type=Path, default=BANK)
+    ap.add_argument("--save-bank", type=Path, default=bank_mod.LOCAL)
     a = ap.parse_args()
 
     if a.jd and a.stock:
@@ -161,8 +161,8 @@ async def main() -> int:
         elif a.move:
             d = review.move(d, a.move[0], int(a.move[1]), int(a.move[2]))
         elif a.save:
-            # The bank is written only when an approval happened, so a plain review never
-            # rewrites the file every future plan reads from.
+            # The local bank file is written only when an approval happened; the shipped bank
+            # never is (V1.2_PLAN D12).
             wrote_bank = any(q.generated and q.askable for q in d.bank.questions)
             review.save(d, a.save, a.save_bank if wrote_bank else None)
             print("  wrote %s%s" % (a.save, " and %s" % a.save_bank if wrote_bank else ""))

@@ -22,6 +22,12 @@ def _sessions_in_tmp(tmp_path, monkeypatch):
     d.mkdir()
     monkeypatch.setattr(sess, "SESSIONS", d)
 
+    # A saved approval writes the user's local bank file, and its absence is what an install
+    # without one looks like (V1.2_PLAN D12).
+    from app import bank
+    monkeypatch.setattr(bank, "LOCAL", tmp_path / "bank_local.json")
+    monkeypatch.setattr(bank, "LEGACY", tmp_path / "bank_1.1.json")
+
     # Settings decide the provider and the voice; a developer's own cloud choice or key must not
     # reach a test, and no test may write the real file (V1.1_PLAN P2).
     from app import settings

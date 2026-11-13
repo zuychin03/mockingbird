@@ -1,0 +1,270 @@
+{
+  "id": "project_management_general_v1",
+  "label": "Project management, general",
+  "field": "project_management",
+  "notes": [
+    "v1, 1.2 (V1.2_PLAN P2). Phase settings are software's measured values, copied from",
+    "interview_swe_general.json: warmup, behavioural_core, collaboration and closing as",
+    "they are, the round from technical_experience and the case from design. Nothing",
+    "here was re-measured for this field; P3's scripted candidate is its first test.",
+    "The rubric catalogue is software's; only the phases' choices differ (D3)."
+  ],
+  "advice_priority": [
+    "states_outcome",
+    "first_person",
+    "describes_action",
+    "specific_detail",
+    "sets_context",
+    "measurement_stated"
+  ],
+  "rubric": {
+    "sets_context": {
+      "label": "Sets the scene",
+      "source": "model:has_situation",
+      "measured": "10/10 (log 7.9)",
+      "scored": true
+    },
+    "describes_action": {
+      "label": "Says what they did",
+      "source": "model:has_action",
+      "measured": "9/10 (log 7.9)",
+      "scored": true
+    },
+    "states_outcome": {
+      "label": "States an outcome",
+      "source": "model:has_result",
+      "measured": "10/10 (log 7.9)",
+      "scored": true,
+      "replaces": "impact — 28-65% and unstable across encodings (log 7.36)"
+    },
+    "answered_fully": {
+      "label": "Answered the question",
+      "source": "derived:sets_context AND describes_action AND states_outcome",
+      "measured": "10/10 derived, vs 6/10 asked directly (log 7.10)",
+      "scored": true,
+      "note": "Never ask the model this. Compute it."
+    },
+    "first_person": {
+      "label": "Own contribution is clear",
+      "source": "model:ownership enum i|we|unclear",
+      "measured": "15/18 (log 7.9)",
+      "scored": true,
+      "replaces": "ownership as a quality — 16% (log 7.36)"
+    },
+    "specific_detail": {
+      "label": "Concrete rather than general",
+      "source": "deterministic:gazetteer + figure detection",
+      "measured": "exact by construction; replaces model free-listing, which omitted 7 of 8 entities (log 7.9)",
+      "scored": true
+    },
+    "measurement_stated": {
+      "label": "Says how they know",
+      "source": "deterministic:depth_signals.unverified",
+      "measured": "fires on 40% of complete answers, 0% of incomplete (log 7.34)",
+      "scored": true,
+      "note": "Useless as a probe trigger, good as feedback: 'four figures with no measurement stated'."
+    },
+    "weighs_options": {
+      "label": "Considered alternatives",
+      "source": "model:mentions_tradeoff",
+      "measured": "14/20 (log 7.9); as a rubric quality it measured 0/9 (log 7.36)",
+      "scored": false,
+      "note": "Shown, not scored. Too weak to carry a score."
+    },
+    "technical_depth": {
+      "label": "Explains how, not just what",
+      "source": null,
+      "measured": "44% as an abstract quality (log 7.36); no concrete proxy measured",
+      "scored": false
+    },
+    "structure": {
+      "label": "Organised answer",
+      "source": null,
+      "measured": "untested",
+      "scored": false
+    }
+  },
+  "phases": [
+    {
+      "id": "warmup",
+      "type": "fixed_sequence",
+      "probe_budget": 1,
+      "detour_budget": 0,
+      "answer_shape": "open",
+      "prep_secs": 0,
+      "min_answer_secs": 15,
+      "max_answer_secs": 90,
+      "rubric_criteria": [],
+      "scored": false,
+      "questions": [
+        "To start — tell me a bit about yourself and what you're working on at the moment.",
+        "What drew you to this role in particular?"
+      ],
+      "focus_ladder": [
+        "REASON",
+        "ALTERNATIVE",
+        "CONTEXT",
+        "STEPS"
+      ],
+      "observation_shape": "star"
+    },
+    {
+      "id": "behavioural_core",
+      "type": "adaptive_discussion",
+      "probe_budget": 3,
+      "detour_budget": 1,
+      "answer_shape": "open",
+      "prep_secs": 0,
+      "min_answer_secs": 45,
+      "max_answer_secs": 240,
+      "rubric_criteria": [
+        "sets_context",
+        "describes_action",
+        "states_outcome",
+        "first_person",
+        "specific_detail"
+      ],
+      "shown_not_scored": [
+        "weighs_options",
+        "measurement_stated"
+      ],
+      "scored": true,
+      "questions": [
+        "Describe a mistake you made at work, and what you did about it.",
+        "Tell me about a time you had to meet a tight deadline.",
+        "Tell me about a decision you made without all the information you wanted.",
+        "Tell me about a time you had to get up to speed quickly in an area you knew little about."
+      ],
+      "focus_ladder": [
+        "STEPS",
+        "REASON",
+        "OUTCOME",
+        "ROLE",
+        "CHALLENGE",
+        "LESSON",
+        "MEASURE",
+        "CONTEXT",
+        "DURATION"
+      ],
+      "observation_shape": "star"
+    },
+    {
+      "id": "delivery_experience",
+      "type": "adaptive_discussion",
+      "probe_budget": 2,
+      "detour_budget": 1,
+      "answer_shape": "open",
+      "prep_secs": 0,
+      "min_answer_secs": 45,
+      "max_answer_secs": 240,
+      "rubric_criteria": [
+        "sets_context",
+        "describes_action",
+        "states_outcome",
+        "first_person",
+        "specific_detail"
+      ],
+      "shown_not_scored": [
+        "weighs_options",
+        "measurement_stated"
+      ],
+      "scored": true,
+      "questions": [
+        "Tell me about a project plan you put together. How did you work out the schedule?",
+        "Tell me about a risk you spotted early, and what you did about it.",
+        "Describe a time you had to manage scope creep.",
+        "Tell me about a time a status report you wrote turned out to be too optimistic."
+      ],
+      "focus_ladder": [
+        "MEASURE",
+        "STEPS",
+        "REASON",
+        "OUTCOME",
+        "ALTERNATIVE",
+        "CHALLENGE",
+        "ROLE",
+        "CONTEXT"
+      ],
+      "observation_shape": "star"
+    },
+    {
+      "id": "delivery_case",
+      "type": "long_turn",
+      "probe_budget": 2,
+      "detour_budget": 1,
+      "answer_shape": "open",
+      "prep_secs": 60,
+      "min_answer_secs": 90,
+      "max_answer_secs": 420,
+      "rubric_criteria": [],
+      "scored": false,
+      "questions": [
+        "Suppose you're asked to move a forty-person office to a new building in three months without disrupting work. How would you plan it? Take a minute first if you want."
+      ],
+      "focus_ladder": [
+        "ALTERNATIVE",
+        "CHALLENGE",
+        "MEASURE",
+        "REASON",
+        "STEPS"
+      ],
+      "observation_shape": "design",
+      "observed_not_scored": [
+        "approach",
+        "alternative",
+        "tradeoff",
+        "failure_mode"
+      ],
+      "scored_false_reason": "Observed but NOT scored. The four parts extract cleanly -- every quote is real text -- but scoring them inverts the ranking: the weakest of four measured answers scored 4/5, above two of the three strong ones (log 9.6). The criteria reward MENTIONING a topic, and 'I don't know how you'd stop that' is indistinguishable from anticipating a failure when both are quotes. Section 7.10 measured `mentions_tradeoff` at 7/10 and called it a genuine judgement call; quoting does not rescue it, because the judgement is in what counts as meeting the criterion, not in finding the text. The report DESCRIBES the design answer instead.",
+      "probe_budget_reason": "Lowered from 3 in log 9.10. It was raised when the design question drew ZERO probes because a fluent answer read as complete; `design-gap->probe` now guarantees one follow-up deterministically. The adaptive stop does NOT apply here -- a hypothetical has no situation, action or result -- so this budget is the only pacing the question has, and at 3 plus pool it ran to 5 follow-ups and became the longest question in the session, spending reserve the scored phases could have used."
+    },
+    {
+      "id": "collaboration",
+      "type": "adaptive_discussion",
+      "probe_budget": 2,
+      "detour_budget": 0,
+      "answer_shape": "open",
+      "prep_secs": 0,
+      "min_answer_secs": 30,
+      "max_answer_secs": 180,
+      "rubric_criteria": [
+        "sets_context",
+        "describes_action",
+        "states_outcome",
+        "first_person"
+      ],
+      "shown_not_scored": [],
+      "scored": true,
+      "questions": [
+        "Tell me about a time you worked with someone you found difficult.",
+        "Describe a time you changed how something was done at work."
+      ],
+      "focus_ladder": [
+        "STEPS",
+        "OUTCOME",
+        "ROLE",
+        "REASON",
+        "LESSON",
+        "CHALLENGE"
+      ],
+      "observation_shape": "star"
+    },
+    {
+      "id": "closing",
+      "type": "user_questions",
+      "probe_budget": 0,
+      "detour_budget": 3,
+      "answer_shape": "closed",
+      "prep_secs": 0,
+      "min_answer_secs": 5,
+      "max_answer_secs": 120,
+      "rubric_criteria": [],
+      "scored": false,
+      "questions": [
+        "That's everything from me. What questions do you have?"
+      ],
+      "focus_ladder": [],
+      "observation_shape": "none"
+    }
+  ]
+}
