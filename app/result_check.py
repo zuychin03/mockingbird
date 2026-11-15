@@ -56,9 +56,30 @@ CHANGE = re.compile(
     # Only these forms. Bare "passed"/"committed" let through 7 of 16 non-results, among them
     # "nothing gets committed until I've used it live" and "Redis errors passed 1%".
     r"|\bpassed (?:all|every|each|\w+ (?:out )?of)\b"
-    r"|\bcommitted (?:it|the|that|this|my|our)\b", re.I)
+    r"|\bcommitted (?:it|the|that|this|my|our)\b"
+    # End states and completions with no change verb (V1.2_PLAN R2, 16/11/2026). On the result
+    # gold set's saved quotes: live results on concrete outcomes 39 -> 47 of 73, none gained on
+    # asserted or no-outcome answers (tools/tier2_result_regate.py).
+    r"|\bwent back to\b|\b(?:they|he|she|we) kept (?:the|it|their|his|her|our)\b"
+    r"|\bsigned (?:anyway|off on (?:it|that|this)\b)|\bon time\b"
+    r"|\bmatched(?: exactly| up| perfectly| to| at)\b"
+    # Closing a clause, these name the state after: "no incidents since."
+    r"|\bsince(?=[,.;!?]|$)|\bnow(?=[,.;!?]|$)"
+    r"|\b(?:revert(?:ed)?|rolled (?:it |them |that )?back)\b"
+    r"|\b(?:days?|weeks?|months?|years?) later\b|\b(?:said|told me) (?:later|afterwards)\b"
+    r"|\b(?:recovered|restored|restoration)\b|\bgot (?:better|worse)\b", re.I)
+
+# The same words naming something other than the outcome, blanked before CHANGE is searched.
+NOT_CHANGE = re.compile(
+    # a problem growing: "went from 90 seconds to 11 minutes over a year as we added depots"
+    r"\bwent from\b[^.;]*\bas (?:we|they) (?:added|grew)\b"
+    # a duty landing on someone
+    r"|\bfell to (?:me|him|her|us|them)\b"
+    r"|\bwent back to (?:sleep|bed)\b"
+    # a reflection: "I'd weigh it differently now."
+    r"|\b(?:I'd|I would|we'd|we would)\b[^.;]*\bnow(?=[,.;!?]|$)", re.I)
 
 
 def states_change(quote: str) -> bool:
     """Does this text say something changed or completed?"""
-    return bool(CHANGE.search(quote or ""))
+    return bool(CHANGE.search(NOT_CHANGE.sub(" ", quote or "")))

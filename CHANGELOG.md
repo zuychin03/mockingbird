@@ -66,6 +66,8 @@ compared side by side.
 - Asked at the end what happens to their recording, or how they will get feedback, the
   interviewer now answers. Before, a cloud interviewer said it could not answer, and the local
   one could answer a different question.
+- When you have already said how a story ended, in words like "they kept the budget" or "no
+  incidents since", the interviewer no longer asks what happened in the end.
 
 ## 1.0.1 - 2026-11-08
 
