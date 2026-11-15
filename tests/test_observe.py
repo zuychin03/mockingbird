@@ -240,6 +240,16 @@ def test_a_design_answer_is_extracted_on_its_own_parts():
     assert not o.situation and not o.action and not o.result
 
 
+def test_the_design_prompt_points_failure_mode_at_what_breaks():
+    """Pinned as text because this is a property of the instruction. The old rule said to quote
+    "I don't know how you'd stop that" under failure_mode, and over 32 design questions the
+    model filed that admission, "I've not built one" and a sign-off there instead of what
+    breaks. This wording removed all three and caught a stated risk it had missed (15/11)."""
+    assert "I don't know how you'd stop that" not in observe.DESIGN_SYSTEM
+    assert "names what breaks" in observe.DESIGN_SYSTEM
+    assert "says nothing about the design" in observe.DESIGN_SYSTEM
+
+
 def test_a_design_answer_is_never_scored():
     """Scoring these inverted the ranking of four measured candidates (log 9.6)."""
     import json as _json

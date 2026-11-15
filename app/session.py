@@ -180,6 +180,23 @@ def load_plan(path: str | Path) -> dict:
     return plan
 
 
+def recently_asked(root: str | Path | None = None) -> dict[str, str]:
+    """D20: each question an interview in History asked, lowercased, and when it last began.
+    An unreadable interview is skipped; History is a preference here, not a record."""
+    out: dict[str, str] = {}
+    for path in Path(root or SESSIONS).glob("*/session.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        at = data.get("started_at") or ""
+        for q in data.get("questions") or []:
+            key = (q.get("question") or "").lower()
+            if key and at > out.get(key, ""):
+                out[key] = at
+    return out
+
+
 def iter_questions(plan: dict):
     """Flatten the plan into the order the runner will ask in."""
     for phase in plan.get("phases", []):

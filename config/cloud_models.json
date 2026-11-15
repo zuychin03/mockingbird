@@ -28,6 +28,35 @@
     "wait_ms_p90_at_a_person's_pace": 1285,
     "wait_note": "At a person's pace. Answers fired back to back exhaust the free tier's 8,000 tokens a minute and waits rise to about 8 s."
    }
+  },
+  {
+   "vendor": "gemini",
+   "model": "gemini-3.5-flash-lite",
+   "label": "Gemini 3.5 Flash-Lite (free tier)",
+   "logprobs": false,
+   "seed": false,
+   "temperature": true,
+   "reasoning": "minimal",
+   "price_in": 0.0,
+   "price_out": 0.0,
+   "free_tier": {"requests_per_day": 500, "requests_per_minute": 15, "tokens_per_minute": 250000},
+   "data_use": "On the free tier Google uses prompts and responses to improve its products (pricing page, 15/11/2026); the paid tier does not.",
+   "gate": {
+    "date": "2026-11-15",
+    "harness": "a3d029364662",
+    "fixtures": "48/49",
+    "fixture_family_crossings": 0,
+    "held_out": "79/118",
+    "held_out_bar": 82,
+    "held_out_note": "Below the bar, accepted by Duy on 15/11/2026: above qwen3.8-27b's accepted 77, with fewer follow-ups on complete answers (advance 18/45, against its 14/45 and the 4B's 28/45). One family crossing, as the 4B.",
+    "junior": "14/14, 4 of 4 gaps",
+    "turn_ms_p50": 1498,
+    "turn_ms_p90": 12145,
+    "turn_note": "The p90 is the free service, not the model: 21 of 177 gate calls took 8 to 28 s and 3 failed with 503 'high demand'. Held-out p50 1,271 ms, p90 1,813 ms.",
+    "wait_ms_p50_at_a_person's_pace": 2468,
+    "wait_ms_p90_at_a_person's_pace": 3176,
+    "wait_note": "At a person's pace (20 s between answers), with no provider error in 25 turns. Thinking cannot be turned off below 'minimal'."
+   }
   }
  ]
 }

@@ -15,8 +15,8 @@ compared side by side.
   job description, every question and the text of every answer) and what is not (your
   recordings), and asks you to confirm before anything is sent.
 - Cloud models that passed the same measurement as the local model are listed with their
-  results. Qwen3.8 27B on Groq's free tier is the first. Any other model runs labelled as
-  unmeasured.
+  results: Qwen3.8 27B on Groq's free tier and Gemini 3.5 Flash-Lite on Google's free tier. Any
+  other model runs labelled as unmeasured.
 - Your API key is encrypted with your Windows login and is never shown again after you save it.
   Uninstalling removes it.
 - An interview and its report stay with the provider that held the interview. Scoring it with a
@@ -60,6 +60,12 @@ compared side by side.
 - The voice bar no longer says nothing is uploaded when a cloud provider is reading the answers.
 - When the app was updated but the old version was still running, pages showed a JSON parse
   error. They now say to restart Mockingbird.
+- Reports now include the note on the design question: what you would build, the alternatives,
+  the costs and what could go wrong. It was written but never shown, because the design answer
+  was read as a story answer.
+- Asked at the end what happens to their recording, or how they will get feedback, the
+  interviewer now answers. Before, a cloud interviewer said it could not answer, and the local
+  one could answer a different question.
 
 ## 1.0.1 - 2026-11-08
 

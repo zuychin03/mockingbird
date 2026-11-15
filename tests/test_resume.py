@@ -54,8 +54,10 @@ def test_every_field_the_runner_carries_between_turns_is_persisted(tmp_path):
         # an edited policy page to whatever it said when the session started. That it really
         # does arrive back is pinned by `test_a_resumed_session_keeps_its_corpus`.
         "provider", "plan", "state", "observe_fn", "similarity", "history", "detour",
-        # Derived from the plan or the state, never independently mutated.
-        "questions", "pace", "max_say_words",
+        # Derived from the plan or the state, never independently mutated. The prompts and the
+        # case line are the plan field's (`contract.for_plan`, `fields.CaseFollowUp`).
+        "questions", "pace", "max_say_words", "system", "speech_system", "case_line",
+        "case_covered",
         # A live asyncio task. It cannot cross a process and is re-created by the next turn.
         "_pending",
         # Set at the top of `submit` and read by `_dispatch` in the same call. They are

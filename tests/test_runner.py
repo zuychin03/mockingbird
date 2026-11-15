@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import budget, contract, focus, guards, intent, observe, result_check, session  # noqa: E402
 from app import runner as runner_mod  # noqa: E402
-from app.provider import Completion, ProviderError  # noqa: E402
+from app.provider import Completion, Metered, ProviderError  # noqa: E402
 from app.runner import CONFIRM_NARROW, Runner, live_view  # noqa: E402
 
 
@@ -1649,6 +1649,67 @@ def test_every_focus_has_a_template_and_an_instruction():
     for name in focus.FOCUS:
         assert name in focus.TEMPLATE
         assert focus.instruction(name)
+    assert set(focus.DESIGN_FOCUS) == set(focus.FOCUS)
+
+
+def test_a_scored_turn_s_focus_instruction_is_unchanged():
+    """Every model was measured on this wording; only design and case turns changed (15/11)."""
+    assert focus.instruction("CHALLENGE") == (
+        "\n\nFor THIS turn, if you probe or reask, ask about the hardest part, or what went "
+        "wrong along the way. Ask only that, in one short question.")
+
+
+def test_no_design_focus_wording_is_past_tense():
+    past = re.compile(r"\b(?:did|was|were|went|took|happened|considered|chose|knew|worked)\b",
+                      re.I)
+    for name, text in focus.DESIGN_FOCUS.items():
+        assert not past.search(text), (name, text)
+        assert "would" in text or "could" in text, (name, text)
+
+
+def test_a_design_wording_spoken_as_is_still_names_its_focus():
+    """Gemini spoke "What other approach would you consider instead?" from an earlier
+    wording; `classify` could not name it, so the rotation spent a repair call on it."""
+    for name, text in focus.DESIGN_FOCUS.items():
+        if name in focus.classify(focus.FOCUS[name]):
+            assert name in focus.classify(text), (name, text)
+
+
+def test_a_design_turn_asks_for_its_focus_in_the_conditional(tmp_path):
+    runner, state = stage3_design_runner([d("probe", "How would you shard the counters?")],
+                                         tmp_path)
+    run(runner.ask())
+    run(runner.submit(NO_FAILURE))
+
+    turn = [s for s in runner.provider.systems if "For THIS turn" in s]
+    assert turn
+    for system in turn:
+        assert "The case is hypothetical" in system
+        assert any(text in system for text in focus.DESIGN_FOCUS.values())
+        assert not any(text in system for text in focus.FOCUS.values())
+
+
+def test_a_design_turn_s_speech_repair_asks_in_the_conditional(tmp_path):
+    runner, state = stage3_design_runner([d("probe", "")], tmp_path)
+    run(runner.ask())
+    run(runner.submit(WITH_FAILURE))
+
+    repair = [s for s in runner.provider.systems if "Required focus" in s]
+    assert repair
+    assert any(text in repair[0] for text in focus.DESIGN_FOCUS.values())
+    assert not any(text in repair[0] for text in focus.FOCUS.values())
+
+
+def test_a_scored_turn_keeps_the_past_tense_focus(tmp_path):
+    runner, state = build([d("probe", "Which parts of that were yours?")], tmp_path)
+    run(runner.ask())
+    run(runner.submit("We moved the billing service to a queue."))
+
+    turn = [s for s in runner.provider.systems if "For THIS turn" in s]
+    assert turn
+    for system in turn:
+        assert "hypothetical" not in system
+        assert any(text in system for text in focus.FOCUS.values())
 
 
 # --------------------------------------- contentless answers (log 8.22)
@@ -1987,6 +2048,148 @@ def test_the_design_follow_up_never_draws_on_the_shared_pool(tmp_path):
     before = r.pool
     run(r.submit(NO_FAILURE))
     assert r.pool == before
+
+
+# --- the case line as a reference the model rewords (Duy 14/11) ------------------------------
+
+PJ_CASE_PLAN = {
+    "id": "test-pj-case",
+    "field": "project_management",
+    "phases": [{
+        "id": "delivery_case", "answer_shape": "open", "probe_budget": 2, "scored": False,
+        "observation_shape": "design",
+        "questions": ["Suppose you're asked to move a forty-person office to a new building in "
+                      "three months without disrupting work. How would you plan it?"],
+    }],
+}
+PJ_PLAN_ANSWER = ("I'd agree the move dates with each team, order equipment early, and move in "
+                  "waves over two or three weekends.")
+PJ_LINE = "What's most likely to go wrong with that plan?"
+
+
+def pj_case_runner(decisions, tmp_path):
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(PJ_CASE_PLAN)
+    return Runner(ScriptedProvider(decisions), PJ_CASE_PLAN, state), state
+
+
+def test_a_field_case_question_uses_its_own_reference(tmp_path):
+    """Software's "under real load" followed an office move in the 14/11 field scripts."""
+    r, state = pj_case_runner([d("advance", "")], tmp_path)
+    run(r.ask())
+    out = run(r.submit(PJ_PLAN_ANSWER))
+    assert out.spoken.text == PJ_LINE
+    assert {"design-gap->probe", "case-line->reference"} <= set(state.turns[-1].guards)
+    assert last_decision(state)["speech_attempt"]["rejection"] == "empty"
+
+
+def test_a_rewording_that_still_asks_for_the_gap_is_spoken(tmp_path):
+    line = "What's most likely to go wrong with moving teams in waves over the weekends?"
+    r, state = pj_case_runner([d("advance", ""), speech(line)], tmp_path)
+    run(r.ask())
+    out = run(r.submit(PJ_PLAN_ANSWER))
+    assert out.spoken.text == line
+    assert "case-line->reworded" in state.turns[-1].guards
+    attempt = last_decision(state)["speech_attempt"]
+    assert attempt["accepted"] and attempt["reference"] == PJ_LINE
+    assert attempt["anchored"] is True
+    assert r.focus_used == {"CHALLENGE"}
+
+
+def test_a_rewording_without_the_fields_words_is_spoken_and_flagged(tmp_path):
+    """Duy 15/11: the words are a flag, not a gate. Gemini's "stumble" line was refused by
+    them and was the right question."""
+    line = "Which part of moving teams in waves worries you most?"
+    r, state = pj_case_runner([d("advance", ""), speech(line)], tmp_path)
+    run(r.ask())
+    out = run(r.submit(PJ_PLAN_ANSWER))
+    assert out.spoken.text == line
+    assert "case-line->reworded" in state.turns[-1].guards
+    attempt = last_decision(state)["speech_attempt"]
+    assert attempt["accepted"] and attempt["anchored"] is False and attempt["rejection"] is None
+
+
+@pytest.mark.parametrize("line, why", [
+    ("How did you know the move would go wrong?", "past_premise"),
+    ("What could go wrong? And who would you tell?", "multi_request"),
+    ("What is most likely to go wrong with " + "the plan " * 12 + "?", "over_length"),
+])
+def test_a_rewording_that_fails_a_check_speaks_the_reference(tmp_path, line, why):
+    r, state = pj_case_runner([d("advance", ""), speech(line)], tmp_path)
+    run(r.ask())
+    out = run(r.submit(PJ_PLAN_ANSWER))
+    assert out.spoken.text == PJ_LINE
+    assert "case-line->reference" in state.turns[-1].guards
+    assert last_decision(state)["speech_attempt"]["rejection"] == why
+
+
+def test_the_case_rewording_sees_only_the_case(tmp_path):
+    """15/11 junior runs: "What breaks first if the rate limiter under real load starts to fail
+    in Mockingbird's API?", Mockingbird being the candidate's Q1 project."""
+    line = "What's most likely to go wrong with moving teams in waves over the weekends?"
+    r, state = pj_case_runner([d("advance", ""), speech(line)], tmp_path)
+    r.history.summary = "The candidate described building Mockingbird's API."
+    run(r.ask())
+    run(r.submit(PJ_PLAN_ANSWER))
+    reword_head = focus.CASE_REWORD_SYSTEM.split("\n")[0]
+    reword = [u for s, u in zip(r.provider.systems, r.provider.prompts)
+              if s.startswith(reword_head)]
+    assert len(reword) == 1
+    assert "INTERVIEW SO FAR" not in reword[0] and "Mockingbird" not in reword[0]
+    assert PJ_PLAN_ANSWER in reword[0]
+    decide = [u for s, u in zip(r.provider.systems, r.provider.prompts)
+              if not s.startswith(reword_head)]
+    assert any("Mockingbird" in u for u in decide)
+
+
+class _SlowSpeech(ScriptedProvider):
+    vendor = None
+
+    async def complete(self, system, user, schema=None, max_tokens=400, **kw):
+        if schema is contract.SPEECH_SCHEMA:
+            await asyncio.sleep(0.1)
+        return await super().complete(system, user, schema, max_tokens, **kw)
+
+
+@pytest.mark.parametrize("vendor, reworded", [("gemini", True), (None, False)])
+def test_a_cloud_rewording_waits_past_the_local_grace(tmp_path, monkeypatch, vendor, reworded):
+    """15/11: 1.3 s refused 6 of the 11 speech calls Gemini made; alone they took 0.9 to 2.2 s."""
+    monkeypatch.setattr(runner_mod, "REPAIR_GRACE_S", 0.02)
+    monkeypatch.setattr(runner_mod, "CLOUD_REPAIR_GRACE_S", 2.0)
+    line = "What's most likely to go wrong with moving teams in waves over the weekends?"
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(PJ_CASE_PLAN)
+    inner = _SlowSpeech([d("advance", ""), speech(line)])
+    inner.vendor = vendor
+    r = Runner(Metered(inner), PJ_CASE_PLAN, state)
+    run(r.ask())
+    out = run(r.submit(PJ_PLAN_ANSWER))
+    attempt = last_decision(state)["speech_attempt"]
+    if reworded:
+        assert out.spoken.text == line and attempt["accepted"]
+    else:
+        assert out.spoken.text == PJ_LINE and attempt["rejection"] == "timeout"
+
+
+def test_a_field_answer_with_its_own_words_is_not_asked_the_case_line(tmp_path):
+    """Project's words, not software's: a risk list covers it there, and has no failure word
+    software would recognise."""
+    answer = PJ_PLAN_ANSWER + " I'd keep a risk list, with the network not being ready first."
+    assert focus.design_gap([answer]) == "FAILURE"
+    r, state = pj_case_runner([d("advance", "")], tmp_path)
+    run(r.ask())
+    out = run(r.submit(answer))
+    assert "design-gap->probe" not in state.turns[-1].guards
+    assert out.closed_question
+
+
+def test_software_rewords_its_own_line(tmp_path):
+    line = "What breaks first when this token bucket is under real load?"
+    r, state = design_runner([d("advance", ""), speech(line)], tmp_path)
+    run(r.ask())
+    out = run(r.submit(NO_FAILURE))
+    assert out.spoken.text == line
+    assert last_decision(state)["speech_attempt"]["reference"] == focus.DESIGN_FOLLOW_UP
 
 
 def test_a_design_question_cannot_extend_its_cap_with_the_shared_pool(tmp_path):
@@ -2402,19 +2605,57 @@ def test_a_design_past_premise_without_the_word_you_is_still_detected(said):
     "What else would you consider for the token bucket implementation?",
     "How would you handle a Redis outage?",
     "What was your reasoning there?",
+    "Why did you choose waves over a single move?",
+    "What did the brief leave out?",
+    "What happens if the movers are a day late?",
+    "How would that land with the teams?",
+    "What would you do if that didn't work?",
 ])
 def test_a_future_tense_design_probe_is_not_a_past_premise(said):
     assert not focus.design_past_premise(said), said
 
 
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("What went wrong along the way?", "What could go wrong along the way?"),
+    ("How long did that take to implement?", "How long would that take to implement?"),
+    ("How long did that take to build and test?", "How long would that take to build and test?"),
+    ("How did that land with the teams?", "How would that land with the teams?"),
+    ("How did that land with the council and residents after rollout?",
+     "How would that land with the council and residents after rollout?"),
+])
+def test_a_past_premise_with_the_case_as_subject_is_rewritten(raw, expected):
+    """Spoken on case and design questions in the 14/11 and 15/11 field scripts, local and
+    Gemini. Each says "did" or "went" about a case nobody has run."""
+    assert focus.design_past_premise(raw), raw
+    assert focus.rewrite_design_past_premise(raw) == expected
+    # The rewrite must still name a focus, or the rotation swaps it for a template.
+    assert focus.classify(expected) == focus.classify(raw), expected
+
+
+@pytest.mark.parametrize("said", [
+    "What happened when the old office closed?",
+    "Did that work for the night shift?",
+    "How did the teams react?",
+    "What was the outcome of the pilot?",
+    "What went well in the first wave?",
+])
+def test_other_case_past_premises_are_detected_and_left_to_the_template(said):
+    assert focus.design_past_premise(said), said
+    assert focus.rewrite_design_past_premise(said) is None
+
+
 def test_no_reviewed_design_line_reads_as_a_past_premise():
     """The detector's fallback is these lines, so flagging one would make the harness replace
     a safe line with another safe line forever."""
+    from app import fields
     for lines in focus.DESIGN_TEMPLATE.values():
         for line in lines:
             assert not focus.design_past_premise(line), line
     assert not focus.design_past_premise(focus.DESIGN_REASK)
     assert not focus.design_past_premise(focus.DESIGN_FOLLOW_UP)
+    for f in fields.FIELDS.values():
+        if f.case_follow_up:
+            assert not focus.design_past_premise(f.case_follow_up.line), f.id
 
 
 def test_the_live_past_premise_without_you_is_never_spoken(tmp_path):
@@ -2436,6 +2677,20 @@ def test_the_live_past_premise_without_you_is_never_spoken(tmp_path):
     # Provenance is untouched: the raw line is still recorded and no extra call was spent.
     assert decision["say_raw"] == raw
     assert decision["model_calls"] == 1
+
+
+def test_gemini_s_went_wrong_line_is_spoken_as_a_hypothetical(tmp_path):
+    """Gemini's project field script, 15/11, on the office-move case."""
+    raw = "What went wrong along the way?"
+    runner, state = stage3_design_runner([d("probe", raw)], tmp_path)
+    run(runner.ask())
+
+    out = run(runner.submit(WITH_FAILURE))
+    decision = last_decision(state)
+
+    assert out.spoken.text == "What could go wrong along the way?"
+    assert "hypothetical-tense->rewrite" in decision["guards"]
+    assert decision["say_raw"] == raw
 
 
 def test_the_ladder_orders_the_scored_criteria():
@@ -2500,6 +2755,65 @@ def test_a_criterion_with_no_observation_part_is_always_askable():
     got = focus.next_focus(answer, set(), criteria, ladder,
                            {"situation", "action", "result"})
     assert got in {"ROLE", "MEASURE"}
+
+
+DELIVERY_CRITERIA = ["sets_context", "describes_action", "states_outcome", "first_person",
+                     "specific_detail"]
+DELIVERY_LADDER = ["MEASURE", "STEPS", "REASON", "OUTCOME", "ALTERNATIVE", "CHALLENGE", "ROLE",
+                   "CONTEXT"]
+VIDEOS = ("Most of it was night shift staff who couldn't attend the day sessions, so I recorded "
+          "short videos for the common tasks and moved one trainer to two night sessions a week.")
+WE_OUTCOME = ("It cost a small part of the training budget, which we reused at the other three "
+              "sites, and completion went from around sixty to ninety-five before go-live.")
+
+
+def test_a_first_person_answer_has_answered_role():
+    assert focus.answered(VIDEOS) == {"ROLE"}
+    assert focus.answered(WE_OUTCOME) == set()
+
+
+def test_their_own_part_once_stated_is_not_asked_for_again():
+    """Gemini 15/11: "Which parts of that were yours?" after "I recorded short videos", because
+    the "we" signal read only the outcome answer that followed."""
+    assert focus.next_focus(WE_OUTCOME, {"MEASURE"}, DELIVERY_CRITERIA, DELIVERY_LADDER) == "ROLE"
+    got = focus.next_focus(WE_OUTCOME, {"MEASURE"}, DELIVERY_CRITERIA, DELIVERY_LADDER,
+                           earlier=[VIDEOS])
+    assert got not in {"ROLE", "MEASURE"}
+
+
+def test_a_criterion_the_answer_already_meets_is_not_owed_role():
+    assert focus.next_focus("We rang pathology to chase it.", set(), ["first_person"],
+                            ["ROLE", "STEPS"]) == "ROLE"
+    assert focus.next_focus("I rang pathology to chase it.", set(), ["first_person"],
+                            ["ROLE", "STEPS"]) == "STEPS"
+
+
+def test_an_unscored_ladder_skips_role_once_they_speak_for_themselves():
+    got = focus.next_focus("I'm a platform engineer, seven years", {"CONTEXT"}, [])
+    assert got == "REASON"
+
+
+ROLE_PLAN = {
+    "id": "test-role",
+    "phases": [{
+        "id": "delivery", "answer_shape": "open", "probe_budget": 2, "scored": True,
+        "rubric_criteria": DELIVERY_CRITERIA, "focus_ladder": DELIVERY_LADDER,
+        "questions": ["Tell me about a rollout that ran over its training budget."],
+    }],
+}
+
+
+def test_the_runner_gives_the_focus_selector_this_question_s_answers(tmp_path):
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(ROLE_PLAN)
+    r = Runner(ScriptedProvider([d("probe", "How did you measure the effect on the budget?"),
+                                 d("probe", "How did it land with the night shift?")]),
+               ROLE_PLAN, state)
+    run(r.ask())
+    run(r.submit(VIDEOS))
+    run(r.submit(WE_OUTCOME))
+    assert last_decision(state)["focus_asked"] != "ROLE"
+    assert focus.FOCUS["ROLE"] not in r.provider.systems[-1]
 
 
 def test_every_criterion_satisfied_falls_through_to_the_ladder():

@@ -144,15 +144,18 @@ mode. The acknowledgement carries a version, and changing its wording asks again
 the 49 product fixtures and 118 held-out answers), each with its results and the date it was
 measured. Qwen3.8 27B on Groq's free tier is the first: 49/49
 on the fixtures and a 235 ms median turn, but 77/118 on the held-out answers, five short of the
-bar, because it probes answers that were already complete. It is listed with that note. Any
-other model can be typed in, and it runs labelled as unmeasured in Settings, the interview
-header and the report.
+bar, because it probes answers that were already complete. It is listed with that note.
+Gemini 3.5 Flash-Lite on Google's free tier is the second: 48/49 on the fixtures, 79/118 on
+the held-out answers and 14/14 on the junior script, with a median turn of about 1.5 s and
+slower spells when the service is busy. Google's free tier uses what it is sent to improve its
+products. Any other model can be typed in, and it runs labelled as unmeasured in Settings, the
+interview header and the report.
 
 The key is encrypted with Windows DPAPI under your login, in `secrets\provider.key` beside an
 installed app. The API takes a key and never returns one, and uninstalling removes it. Free
 tiers have rate limits, so a refusal for rate is retried after the wait the provider names (up
-to 20 s, twice), and a call that still fails gives way to a scripted question rather than
-ending the interview.
+to 20 s, twice), a "too busy" refusal (HTTP 503) is retried once after 2 s, and a call that
+still fails gives way to a scripted question rather than ending the interview.
 
 An interview stays with the provider that held it. Its report is built by the same provider,
 so an interview held on this computer is never sent to a cloud provider just because Settings

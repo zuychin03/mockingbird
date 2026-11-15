@@ -148,6 +148,13 @@ def speech_for(field: str, arm: str) -> str:
     return SPEECH_SYSTEM if f is None else SPEECH_SYSTEM.replace(_NAMED, f.interview)
 
 
+def for_plan(plan: dict) -> tuple[str, str]:
+    """The turn and speech prompts for a plan's field and its chosen arm. A plan from before
+    1.2 names no field and is software."""
+    f = fields.get(plan.get("field", fields.SOFTWARE))
+    return system_for(f.id, f.prompt_arm), speech_for(f.id, f.prompt_arm)
+
+
 def render(question: str, answer: str, history: str = "") -> str:
     """Assemble the user turn.
 

@@ -97,14 +97,18 @@ is not there:
                    component, the algorithm.
 - "alternative"  : where they mention a DIFFERENT approach they considered or rejected.
 - "tradeoff"     : where they name a cost, limit or downside of an approach.
-- "failure_mode" : where they say what would go wrong, break, or happen under failure.
+- "failure_mode" : where they name a risk: what would go wrong, break, be got round, or
+                   happen under failure.
 
 Rules:
 - Copy the text exactly as they said it. Do not paraphrase, tidy or shorten.
 - One sentence per field. If a part is genuinely absent, return an empty string for it.
-- An empty string is a correct answer. "I don't know how you'd stop that" names a failure mode
-  and no fix -- quote it under "failure_mode" anyway; deciding whether it is a good answer is
-  not your job."""
+- An empty string is a correct answer. Deciding whether the answer is good is not your job.
+- For "failure_mode", quote the sentence that names what breaks, even when it sits next to an
+  admission that they do not know the fix: from "The cache could serve old prices. I'm not
+  sure how I'd stop that." quote the first sentence.
+- A sentence that says nothing about the design, only about the candidate (what they do not
+  know, have not built or have left to say), is none of the four."""
 
 DESIGN_SCHEMA = {
     "type": "object",

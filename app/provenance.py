@@ -59,14 +59,22 @@ def contract_hash(field: str = fields.SOFTWARE, arm: str = "A") -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
-def snapshot(model: dict | None = None, provider: dict | None = None) -> dict:
+def snapshot(model: dict | None = None, provider: dict | None = None,
+             plan: dict | None = None) -> dict:
     """`model` is what `provider.served_model()` returned, or None when it is unavailable or
-    the interview runs on a cloud model; `provider` is `provider.describe()` of what served it."""
+    the interview runs on a cloud model; `provider` is `provider.describe()` of what served it.
+    `plan` gives the field, its prompt arm and what wrote its generated questions."""
     m = model or {}
+    f = fields.get((plan or {}).get("field", fields.SOFTWARE))
+    rows = (plan or {}).get("generated") or []
     return {
         "provider": provider,
         "code_revision": code_revision(),
-        "contract_hash": contract_hash(),
+        "field": f.id,
+        "prompt_arm": f.prompt_arm,
+        "contract_hash": contract_hash(f.id, f.prompt_arm),
+        "generator": ({"model": rows[0].get("model"), "prompt_hash": rows[0].get("prompt_hash")}
+                      if rows else None),
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "model_id": m.get("id"),

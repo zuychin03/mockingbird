@@ -107,6 +107,31 @@
       "template": "config/interview_data_analytics.json",
       "prompt_arm": "A",
       "measured_note": null,
+      "case_follow_up": {
+        "line": "What could make that analysis give you the wrong answer?",
+        "covered": [
+          "wrong",
+          "mislead(?:s|ing)?",
+          "misled",
+          "bias(?:ed)?",
+          "confound(?:s|ed|ing)?",
+          "noise",
+          "noisy",
+          "seasonal(?:ity)?",
+          "coincidence",
+          "correlation",
+          "causation",
+          "sample size",
+          "outliers?",
+          "skew(?:s|ed)?",
+          "false (?:positive|negative)s?",
+          "caveats?",
+          "limitations?",
+          "measurement (?:problem|issue|error)s?",
+          "tracking (?:changed|broke)",
+          "rule[sd]? out"
+        ]
+      },
       "onet_occupations": [
         {
           "code": "15-2051.01",
@@ -212,6 +237,27 @@
       "template": "config/interview_product_management.json",
       "prompt_arm": "A",
       "measured_note": null,
+      "case_follow_up": {
+        "line": "How would you know if that turned out to be the wrong thing to build?",
+        "covered": [
+          "risks?",
+          "risky",
+          "wrong",
+          "mistakes?",
+          "assumptions?",
+          "validat(?:e|ed|ing|ion)",
+          "experiments?",
+          "fail(?:s|ed|ure)?",
+          "flop(?:s|ped)?",
+          "churn",
+          "abandon(?:s|ed)?",
+          "roll(?:ed|ing)? (?:it )?back",
+          "(?:doesn't|didn't|won't|wouldn't) work",
+          "measure success",
+          "success (?:metric|measure)",
+          "go back to"
+        ]
+      },
       "onet_occupations": [
         {
           "code": "11-2021.00",
@@ -318,6 +364,25 @@
       "template": "config/interview_ux_design.json",
       "prompt_arm": "A",
       "measured_note": null,
+      "case_follow_up": {
+        "line": "Where are people most likely to get stuck with that design?",
+        "covered": [
+          "stuck",
+          "confus(?:e|ed|es|ing|ion)",
+          "struggl(?:e|es|ed|ing)",
+          "stumbl(?:e|es|ed|ing)",
+          "frustrat(?:e|ed|ing|ion)",
+          "can't find",
+          "couldn't find",
+          "hard to (?:find|use|understand|read)",
+          "mistakes?",
+          "errors?",
+          "edge cases?",
+          "risks?",
+          "works? worst",
+          "worst for"
+        ]
+      },
       "onet_occupations": [
         {
           "code": "15-1255.00",
@@ -421,6 +486,23 @@
       "template": "config/interview_project_management.json",
       "prompt_arm": "A",
       "measured_note": null,
+      "case_follow_up": {
+        "line": "What's most likely to go wrong with that plan?",
+        "covered": [
+          "risks?",
+          "go(?:es)? wrong",
+          "went wrong",
+          "contingenc(?:y|ies)",
+          "fallback",
+          "fall back",
+          "plan b",
+          "mitigat(?:e|es|ed|ion)",
+          "blockers?",
+          "depend(?:s|ency|encies)",
+          "slip(?:s|ped|page)?",
+          "overruns?"
+        ]
+      },
       "onet_occupations": [
         {
           "code": "13-1082.00",

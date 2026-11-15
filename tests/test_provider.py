@@ -9,6 +9,7 @@ catches it.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import socket
@@ -88,6 +89,20 @@ def test_every_turn_carries_the_repeat_penalty_the_contract_was_measured_under(m
     monkeypatch.setattr(provider, "_post", fake_post)
     provider.LlamaServer()._call("s", "u", None, 10, None, None)
     assert sent[0]["repeat_penalty"] == provider.REPEAT_PENALTY == 1.1
+
+
+def test_temperature_is_zero_unless_a_caller_asks(monkeypatch):
+    """No caller asks for more than 0 yet; a question rewritten on request would."""
+    sent = []
+
+    def fake_post(path, body, timeout):
+        sent.append(body)
+        return {"choices": [{"message": {"content": "{}"}}]}
+
+    monkeypatch.setattr(provider, "_post", fake_post)
+    asyncio.run(provider.LlamaServer().complete("s", "u"))
+    asyncio.run(provider.LlamaServer().complete("s", "u", temperature=0.7))
+    assert [b["temperature"] for b in sent] == [0.0, 0.7]
 
 
 # --- the exact-model gate ----------------------------------------------------------------

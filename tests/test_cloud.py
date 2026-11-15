@@ -86,6 +86,14 @@ def test_groq_hides_reasoning_beside_a_schema_in_the_way_each_model_accepts():
     assert "reasoning_format" not in oss
 
 
+def test_gemini_flash_lite_sends_only_what_its_endpoint_accepts():
+    b = CloudClient(provider.profile_for("gemini", "gemini-3.5-flash-lite"), KEY).body(
+        "s", "u", contract.TURN_SCHEMA, 400, "act")
+    assert b["reasoning_effort"] == "minimal" and b["max_tokens"] == 400
+    assert not {"seed", "logprobs", "top_logprobs", "reasoning_format"} & set(b)
+    assert b["response_format"]["json_schema"]["strict"] is True
+
+
 def test_no_reasoning_field_when_the_model_has_no_reasoning_control():
     b = _body("openai")
     assert "reasoning_effort" not in b and "reasoning" not in b
@@ -158,6 +166,7 @@ def _http_error(code, body):
                                         (402, "out of credit"),
                                         (404, "has no model 'm'"),
                                         (429, "rate limiting"),
+                                        (503, "rejected the request (HTTP 503)"),
                                         (400, "rejected the request (HTTP 400)")])
 def test_vendor_refusals_say_what_to_do_and_never_echo_the_key(monkeypatch, code, words):
     def boom(req, timeout=None):
@@ -212,6 +221,67 @@ def test_a_long_wait_is_capped_and_a_persistent_limit_becomes_a_provider_error(m
     with pytest.raises(ProviderError, match="rate limiting"):
         _turn(CloudClient(Profile("groq", "m"), KEY))
     assert waits == [provider.RETRY_WAIT_CAP_S] * provider.RATE_RETRIES
+
+
+GEMINI_503 = ('{"error": {"code": 503, "message": "This model is currently experiencing high '
+              'demand. Spikes in demand are usually temporary. Please try again later.", '
+              '"status": "UNAVAILABLE"}}')
+
+
+class _Reply:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self):
+        return b'{"choices": [{"message": {"content": "{}"}}]}'
+
+
+def test_a_busy_service_is_tried_once_more_after_a_short_wait(monkeypatch):
+    """Gemini's 15/11 gate: 3 of 177 calls came back 503, and the next call answered."""
+    calls, waits = [], []
+
+    def busy_once(req, timeout=None):
+        calls.append(1)
+        if len(calls) == 1:
+            raise _http_error(503, GEMINI_503)
+        return _Reply()
+
+    monkeypatch.setattr(provider.urllib.request, "urlopen", busy_once)
+    monkeypatch.setattr(provider, "_sleep", waits.append)
+    _turn(CloudClient(Profile("gemini", "m"), KEY))
+    assert len(calls) == 2 and waits == [provider.OVERLOAD_WAIT_S]
+
+
+def test_a_service_still_busy_after_the_retry_is_a_provider_error(monkeypatch):
+    calls, waits = [], []
+
+    def busy(req, timeout=None):
+        calls.append(1)
+        raise _http_error(503, GEMINI_503)
+
+    monkeypatch.setattr(provider.urllib.request, "urlopen", busy)
+    monkeypatch.setattr(provider, "_sleep", waits.append)
+    with pytest.raises(ProviderError, match=r"HTTP 503.*high demand"):
+        _turn(CloudClient(Profile("gemini", "m"), KEY))
+    assert len(calls) == 1 + provider.OVERLOAD_RETRIES
+    assert waits == [provider.OVERLOAD_WAIT_S] * provider.OVERLOAD_RETRIES
+
+
+def test_a_busy_service_does_not_spend_the_rate_limit_retries(monkeypatch):
+    replies = [_http_error(503, GEMINI_503), _limited("1"), _limited("1")]
+
+    def mixed(req, timeout=None):
+        if replies:
+            raise replies.pop(0)
+        return _Reply()
+
+    monkeypatch.setattr(provider.urllib.request, "urlopen", mixed)
+    monkeypatch.setattr(provider, "_sleep", lambda s: None)
+    _turn(CloudClient(Profile("gemini", "m"), KEY))
+    assert not replies
 
 
 def test_groq_style_reset_headers_are_read():
@@ -290,6 +360,9 @@ def test_openrouter_capabilities_come_from_its_model_list(monkeypatch):
     floor = provider.openrouter_profile("a/floor")
     assert floor.reasoning == "minimal" and not floor.temperature and not floor.seed
     assert "temperature" not in CloudClient(floor, KEY).body("s", "u", None, 10, None)
+    assert "temperature" not in CloudClient(floor, KEY).body("s", "u", None, 10, None, 0.7)
+    assert CloudClient(off, KEY).body("s", "u", None, 10, None)["temperature"] == 0.0
+    assert CloudClient(off, KEY).body("s", "u", None, 10, None, 0.7)["temperature"] == 0.7
     assert provider.openrouter_profile("a/plain").reasoning is None
     with pytest.raises(ProviderError, match="strict structured output"):
         provider.openrouter_profile("a/loose")

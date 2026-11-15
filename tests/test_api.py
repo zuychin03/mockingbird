@@ -501,6 +501,48 @@ def test_refresh_forces_a_rebuild(client, monkeypatch, tmp_path):
     assert calls, "refresh=true did not rebuild"
 
 
+def test_a_design_answer_is_read_as_one_and_its_note_reaches_the_report(client, monkeypatch,
+                                                                         tmp_path):
+    """No shape was passed, so the design answer went through the S/A/R prompt and the design
+    note was missing from every report (15/11)."""
+    from app import observe as observe_mod
+
+    sid = "20260101-000000-design"
+    d = tmp_path / "s" / sid
+    d.mkdir(parents=True)
+    slow, limiter = "Tell me about a time you fixed something slow?", "Design a rate limiter."
+    (d / "session.json").write_text(json.dumps({
+        "session_id": sid, "plan_id": "p", "started_at": "2026-01-01T00:00:00",
+        "status": "complete",
+        "plan_snapshot": {
+            "label": "A plan",
+            "rubric": {"specific_detail": {"label": "Concrete rather than general"}},
+            "phases": [{"id": "behavioural_core", "rubric_criteria": ["specific_detail"],
+                        "questions": [slow]},
+                       {"id": "design", "observation_shape": "design", "questions": [limiter]}],
+        },
+        "questions": [
+            {"phase": "behavioural_core", "question_id": "behavioural_core.1", "question": slow,
+             "answers": ["We ran checkout on four boxes and it took eight seconds."]},
+            {"phase": "design", "question_id": "design.1", "question": limiter,
+             "answers": ["A token bucket per API key, kept in Redis."]}],
+    }), encoding="utf-8")
+    monkeypatch.setattr(api, "SESSIONS", tmp_path / "s")
+    shapes = {}
+
+    async def canned(provider, qid, question, answers, shape="star"):
+        shapes[qid] = shape
+        return observe_mod.Observation(
+            question_id=qid, question=question, answers=list(answers), shape=shape,
+            approach="A token bucket per API key" if shape == "design" else "")
+
+    monkeypatch.setattr(api.observe, "observe", canned)
+    rep = client.get("/api/sessions/%s/report" % sid).json()
+    assert shapes == {"behavioural_core.1": "star", "design.1": "design"}
+    assert "ON THE DESIGN QUESTION" in rep["text"]
+    assert rep["scored"] == 1, "the design question was scored"
+
+
 # ------------------------------------------------- 12.9's third layer: what the count rests on
 
 def _scored_session(root, sid="20260101-000000-quoted"):
@@ -535,7 +577,7 @@ def scored(client, monkeypatch, tmp_path):
     _scored_session(root)
     monkeypatch.setattr(api, "SESSIONS", root)
 
-    async def canned(provider, qid, question, answers):
+    async def canned(provider, qid, question, answers, shape="star"):
         return observe_mod.Observation(
             question_id=qid, question=question, answers=list(answers),
             situation="We ran checkout on four boxes",
@@ -1038,3 +1080,113 @@ def test_progress_survives_a_report_written_before_a_field_existed(client, monke
     assert got["criteria"][0]["name"] == "c"
     assert got["criteria"][0]["description"] == ""
     assert got["criteria"][0]["points"] == [{"at": 0, "met": 1, "of": 2, "rate": 0.5}]
+
+
+# --- V1.2_PLAN P3: a plan from a description in any field ---------------------------------------
+
+@pytest.fixture()
+def planning(client, monkeypatch, tmp_path):
+    """A fake model for every planning call, no embedder, an empty History and a local bank
+    in tmp: nothing here touches data/."""
+    import test_plan_description as pd
+    from app import bank as bank_mod
+
+    model = pd.Model()
+    monkeypatch.setattr(api.prov, "current", lambda: model)
+    monkeypatch.setattr(api.embed, "similarity", lambda a, b: None)
+    monkeypatch.setattr(api.sess, "recently_asked", lambda root=None: {})
+    monkeypatch.setattr(bank_mod, "LOCAL", tmp_path / "bank_local.json")
+    monkeypatch.setattr(bank_mod, "LEGACY", tmp_path / "bank_1.1.json")
+    r = client.post("/api/plan/from-description", json={"text": pd.JD})
+    assert r.status_code == 200, r.text
+    return model, r.json()
+
+
+def test_a_description_plan_carries_its_field_detection_and_slots(planning):
+    _, state = planning
+    assert state["field"] == "software"
+    assert state["detected"]["field"] == "software" and state["detected"]["evidence"]
+    assert state["job_description"]["text"].startswith("Backend Engineer, Payments")
+    assert state["generated"]
+    shown = {q["text"]: q for ph in state["phases"] for q in ph["questions"]}
+    for row in state["generated"]:
+        assert shown[row["text"]]["source"] == "generated"
+        assert shown[row["text"]]["generated"] == row["n"]
+    assert [f["id"] for f in state["fields"]] == list(api.fields.IDS)
+
+
+def test_the_switch_rereads_the_description_as_another_field(client, planning):
+    model, before = planning
+    model.systems.clear()
+    r = client.post("/api/plan/field", json={"field": "data_analytics"})
+    assert r.status_code == 200, r.text
+    after = r.json()
+    assert after["field"] == "data_analytics"
+    assert after["detected"] == before["detected"]
+    assert api.planner.FIELD_SYSTEM not in model.systems
+    assert after["stock_kinds"] == ["behavioural", "mixed", "analytics"]
+    assert "analytics_experience" in after["editable"]
+
+
+def test_a_standard_plan_has_no_description_to_switch(client, started):
+    r = client.post("/api/plan/field", json={"field": "data_analytics"})
+    assert r.status_code == 400 and "no description" in r.json()["detail"]
+
+
+def test_an_unknown_field_is_refused(client, started):
+    assert client.post("/api/plan/from-stock",
+                       json={"kind": "mixed", "field": "nursing"}).status_code == 400
+
+
+def test_a_standard_plan_is_chosen_by_field(client):
+    r = client.post("/api/plan/from-stock", json={"kind": "analytics", "field": "data_analytics"})
+    assert r.status_code == 200, r.text
+    state = r.json()
+    assert state["field"] == "data_analytics" and state["detected"] is None
+    assert "Not covered" not in state["notes"]
+
+
+def test_the_three_slot_actions(client, planning, tmp_path):
+    _, state = planning
+    row = state["generated"][0]
+    kept = client.post("/api/plan/generated/0/keep")
+    assert kept.status_code == 200 and kept.json()["generated"][0]["kept"]
+    local = json.loads((tmp_path / "bank_local.json").read_text(encoding="utf-8"))
+    assert [q["text"] for q in local["questions"]] == [row["text"]]
+
+    replaced = client.post("/api/plan/generated/0/replace")
+    assert replaced.status_code == 200, replaced.text
+    new = replaced.json()["generated"][0]
+    assert new["text"] != row["text"] and new["duty"] == row["duty"]
+
+    banked = client.post("/api/plan/generated/0/bank")
+    assert banked.status_code == 200
+    texts = [q["text"] for ph in banked.json()["phases"] for q in ph["questions"]]
+    assert new["text"] not in texts
+    assert len(banked.json()["generated"]) == len(state["generated"]) - 1
+
+    assert client.post("/api/plan/generated/9/bank").status_code == 400
+
+
+def test_a_failed_replace_keeps_the_slot(client, planning, monkeypatch):
+    import test_plan_description as pd
+    model, state = planning
+    model.write = pd.hypothetical
+    r = client.post("/api/plan/generated/0/replace")
+    assert r.status_code == 400 and "keeps its question" in r.json()["detail"]
+    assert client.get("/api/plan").json()["generated"] == state["generated"]
+
+
+def test_an_interviews_description_is_read_from_its_snapshot(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(api, "SESSIONS", tmp_path)
+    for sid, snap in (("with-jd", {"field": "ux_design",
+                                   "job_description": {"text": "Design things."}}),
+                      ("without", {})):
+        (tmp_path / sid).mkdir()
+        (tmp_path / sid / "session.json").write_text(json.dumps(
+            {"session_id": sid, "plan_snapshot": snap}), encoding="utf-8")
+    assert client.get("/api/sessions/with-jd/job-description").json() == {
+        "text": "Design things."}
+    assert client.get("/api/sessions/without/job-description").status_code == 404
+    listed = {s["session_id"]: s["field"] for s in client.get("/api/sessions").json()}
+    assert listed == {"with-jd": "ux_design", "without": "software"}

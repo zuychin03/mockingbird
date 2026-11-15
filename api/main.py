@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -62,16 +63,22 @@ async def same_origin_only(request: Request, call_next):
     return await call_next(request)
 
 
-def _bank() -> bank_mod.Bank:
-    # Software's view until the plan page names a field (V1.2_PLAN P3). The whole bank would
-    # let read_jd and the top-up reach the other fields' competencies and questions.
-    return bank_mod.installed(BANK, field=fields.SOFTWARE)
+def _bank(field: str = fields.SOFTWARE) -> bank_mod.Bank:
+    # The field's view: the whole bank would let read_jd and the top-up reach the other
+    # fields' competencies and questions.
+    return bank_mod.installed(BANK, field=field)
 
 
 def _draft() -> review.Draft:
     if not DRAFT.exists():
         raise HTTPException(404, "no draft in progress")
-    return review.read_draft(DRAFT, _bank())
+    return review.read_draft(DRAFT, _bank)
+
+
+def _field(field_id: str) -> str:
+    if field_id not in fields.FIELDS:
+        raise HTTPException(400, "no field %r; known: %s" % (field_id, ", ".join(fields.IDS)))
+    return field_id
 
 
 def _rubric_preview(plan: dict) -> list[dict]:
@@ -102,16 +109,39 @@ def _rubric_preview(plan: dict) -> list[dict]:
     } for name in order]
 
 
+WRITTEN = re.compile(r"(\d+ written|No question was written) from the description[^.]*\.")
+
+
+def _fields() -> list[dict]:
+    return [{"id": f.id, "label": f.label, "measured": f.measured_note,
+             "kinds": [{"id": k.id, "label": k.label, "note": k.note} for k in f.kinds]}
+            for f in fields.FIELDS.values()]
+
+
 def _state(d: review.Draft) -> dict:
     """What the UI needs to render a plan. `askable` is sent per question so the surface never
     has to work out for itself what may be asked."""
     review.write_draft(d, DRAFT)
     by_text = {q.text.lower(): q for q in d.bank.questions}
+    field_id = d.plan.get("field", fields.SOFTWARE)
+    editable = review.editable(d.plan)
+    rows = d.plan.get("generated") or []
+    slot = {r["text"]: n for n, r in enumerate(rows)}
     return {
         "id": d.plan.get("id"),
         "label": d.plan.get("label"),
         "notes": d.plan.get("notes"),
-        "editable": list(review.EDITABLE),
+        # The notes line planning wrote: how many were written and why any fell back.
+        "written": next((m.group(0) for m in [WRITTEN.search(d.plan.get("notes") or "")] if m),
+                        None),
+        "field": field_id,
+        "fields": _fields(),
+        "detected": d.detected,
+        "job_description": d.plan.get("job_description"),
+        "generated": [{"n": n, "phase": r["phase"], "text": r["text"], "duty": r["duty"],
+                       "competency": r["competency"], "kept": bool(r.get("kept"))}
+                      for n, r in enumerate(rows)],
+        "editable": list(editable),
         "gaps": list(d.gaps),
         "spec": None if d.spec is None else {
             "role": d.spec.role,
@@ -122,7 +152,7 @@ def _state(d: review.Draft) -> dict:
         },
         "phases": [{
             "id": ph["id"],
-            "editable": ph["id"] in review.EDITABLE,
+            "editable": ph["id"] in editable,
             "scored": bool(ph.get("scored")),
             # The planner's own per-question cost, not a second estimate. A running order
             # whose timings disagree with the arithmetic that trimmed the plan is worse than
@@ -132,13 +162,15 @@ def _state(d: review.Draft) -> dict:
             "questions": [{
                 "text": q,
                 "edited_from": d.edited_from.get(q),
-                "source": getattr(by_text.get(q.lower()), "source", "curated"),
+                "source": ("generated" if q in slot
+                           else getattr(by_text.get(q.lower()), "source", "curated")),
+                "generated": slot.get(q),
             } for q in ph.get("questions", [])],
         } for ph in d.plan["phases"]],
         "proposals": [{"id": q.id, "text": q.text, "competencies": list(q.competencies)}
                       for q in d.proposals],
         "competencies": d.bank.competencies,
-        "stock_kinds": sorted(planner.STOCK),
+        "stock_kinds": [k.id for k in fields.get(field_id).kinds],
         "rubric": _rubric_preview(d.plan),
     }
 
@@ -166,21 +198,77 @@ def get_plan() -> dict:
     return _state(_draft())
 
 
+@app.get("/api/fields")
+def get_fields() -> list[dict]:
+    """The standard plans' fields and kinds, for a page with no draft yet."""
+    return _fields()
+
+
+async def _plan_description(text: str, minutes: int | None, field_id: str | None,
+                            detected: dict | None) -> dict:
+    """D13, FR-1, D16 and D10: detection unless a field is named, then the field's read, the
+    bank plan and its generated slots. The switch keeps what detection first read."""
+    p = _guard(prov.current)
+    detection = None if detected is None else planner.Detection(
+        detected.get("field"), detected.get("evidence", ""), detected.get("reason", ""))
+    done = await _guard_async(planner.plan_description, p, bank_mod.installed(BANK), text,
+                              field_id=field_id, detection=detection, minutes=minutes,
+                              similarity=embed.similarity, recent=sess.recently_asked(),
+                              model=prov.describe(p).get("model"))
+    d = done.detection
+    seen = None if d is None else {"field": d.field, "evidence": d.evidence, "reason": d.reason}
+    return _state(review.from_assembled(done.assembled, _bank(done.field), done.spec, seen))
+
+
 @app.post("/api/plan/from-description")
 async def from_description(text: str = Body(..., embed=True),
-                           minutes: int | None = Body(None, embed=True)) -> dict:
-    b = _bank()
-    spec = await _guard_async(planner.read_jd, _guard(prov.current), b, text)
-    a = _guard(planner.assemble, spec, b, minutes=minutes)
-    return _state(review.from_assembled(a, b, spec))
+                           minutes: int | None = Body(None, embed=True),
+                           field: str | None = Body(None, embed=True)) -> dict:
+    return await _plan_description(text, minutes, field and _field(field), None)
+
+
+@app.post("/api/plan/field")
+async def switch_field(field: str = Body(..., embed=True),
+                       minutes: int | None = Body(None, embed=True)) -> dict:
+    """Re-read the draft's stored description as another field."""
+    d = _draft()
+    jd = d.plan.get("job_description")
+    if not jd:
+        raise HTTPException(400, "this plan has no description to re-read: a standard plan is "
+                                 "chosen by field instead")
+    return await _plan_description(jd["text"], minutes, _field(field), d.detected)
 
 
 @app.post("/api/plan/from-stock")
 def from_stock(kind: str = Body(..., embed=True),
-               minutes: int | None = Body(None, embed=True)) -> dict:
-    b = _bank()
-    a = _guard(planner.stock_plan, kind, b, minutes=minutes)
+               minutes: int | None = Body(None, embed=True),
+               field: str = Body(fields.SOFTWARE, embed=True)) -> dict:
+    b = _bank(_field(field))
+    a = _guard(planner.stock_plan, kind, b, minutes=minutes, field=field,
+               recent=sess.recently_asked())
     return _state(review.from_assembled(a, b, None))
+
+
+@app.post("/api/plan/generated/{n}/replace")
+async def replace_generated(n: int) -> dict:
+    """Another question for slot `n`'s duty, through the same checks; the slot keeps its own
+    when the new one fails."""
+    d = _draft()
+    row = _guard(review.slot_row, d, n)
+    p = _guard(prov.current)
+    g = await _guard_async(planner.regenerate, p, d.bank, d.plan, row,
+                           similarity=embed.similarity)
+    return _state(_guard(review.replace_generated, d, n, g, prov.describe(p).get("model")))
+
+
+@app.post("/api/plan/generated/{n}/bank")
+def bank_generated(n: int) -> dict:
+    return _state(_guard(review.use_bank, _draft(), n))
+
+
+@app.post("/api/plan/generated/{n}/keep")
+def keep_generated(n: int) -> dict:
+    return _state(_guard(review.keep_generated, _draft(), n, bank_mod.LOCAL))
 
 
 @app.post("/api/plan/{phase_id}/questions")
@@ -205,11 +293,15 @@ def move_question(phase_id: str, index: int, to: int = Body(..., embed=True)) ->
 
 @app.post("/api/proposals")
 async def propose(competency: str = Body(..., embed=True)) -> dict:
+    """D17: drafted through the generator and its checks, and still waits for approval."""
     d = _draft()
     evidence = next((r.evidence for r in (d.spec.requirements if d.spec else ())
-                     if r.name == competency), competency)
+                     if r.name == competency), "")
+    jd = d.plan.get("job_description") or {}
     q = await _guard_async(planner.propose_question, _guard(prov.current), d.bank, competency,
-                           evidence, similarity=embed.similarity)
+                           evidence, jd=jd.get("text", ""),
+                           level=d.spec.seniority if d.spec else "mid",
+                           asked=list(d.all_questions), similarity=embed.similarity)
     return _state(review.propose_into_bank(d, q))
 
 
@@ -380,7 +472,7 @@ def _warm(p, plan: dict) -> None:
     """
     async def go() -> None:
         try:
-            await p.warmup(contract.SYSTEM,
+            await p.warmup(contract.for_plan(plan)[0],
                            contract.render(next(sess.iter_questions(plan))["question"], "", ""))
         except Exception:
             pass
@@ -402,7 +494,7 @@ async def session_start(plan_path: str = Body(..., embed=True)) -> dict:
             raise HTTPException(
                 503, "the model server is not serving %s from %s. %s"
                 % (prov.MODEL, prov.MODEL_FILE, prov.START_HINT))
-    snap = provenance.snapshot(model, prov.describe(p))
+    snap = provenance.snapshot(model, prov.describe(p), plan)
     # FR-44: the voice the interview will speak in, fixed now because Settings lock until it ends.
     try:
         snap["voice"] = speech.describe()
@@ -901,11 +993,13 @@ def sessions(limit: int = SESSIONS_SHOWN) -> list[dict]:
             raw = json.loads(d.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        snap = raw.get("plan_snapshot") or {}
         out.append({
             "session_id": raw.get("session_id"),
             "started_at": raw.get("started_at"),
             "status": raw.get("status"),
-            "label": (raw.get("plan_snapshot") or {}).get("label") or raw.get("plan_id"),
+            "label": snap.get("label") or raw.get("plan_id"),
+            "field": snap.get("field", fields.SOFTWARE),
             "questions": len(raw.get("questions") or []),
             "turns": raw.get("turn_count") or 0,
         })
@@ -1045,6 +1139,17 @@ def _session_dir(session_id: str) -> Path:
     return d
 
 
+@app.get("/api/sessions/{session_id}/job-description")
+def session_job_description(session_id: str) -> dict:
+    """The description from the interview's own snapshot, so a later edit to the saved plan
+    never changes it."""
+    raw = json.loads((_session_dir(session_id) / "session.json").read_text(encoding="utf-8"))
+    jd = (raw.get("plan_snapshot") or {}).get("job_description")
+    if not jd:
+        raise HTTPException(404, "interview %r was not planned from a description" % session_id)
+    return jd
+
+
 @app.get("/api/sessions/{session_id}/report")
 async def session_report(session_id: str, refresh: bool = False, provider: str = "recorded",
                          ack: bool = False) -> dict:
@@ -1094,6 +1199,11 @@ async def session_report(session_id: str, refresh: bool = False, provider: str =
         p = _guard(prov.for_session, recorded)
     p = prov.Metered(p)
 
+    # Without the phase's shape a design answer was read with the S/A/R prompt, so
+    # `report.design_note` never found one and no report carried it (both stored reports with an
+    # answered design question, 15/11).
+    design = {ph.get("id") for ph in plan.get("phases", [])
+              if ph.get("observation_shape") == "design"}
     observations = []
     for qs in states:
         if not qs.answers:
@@ -1103,7 +1213,8 @@ async def session_report(session_id: str, refresh: bool = False, provider: str =
         # `/api/session/start` was already fixed for, and the provider's own sentence names the
         # host it tried and how to start it.
         observations.append(await _guard_async(
-            observe.observe, p, qs.question_id, qs.question, qs.answers))
+            observe.observe, p, qs.question_id, qs.question, qs.answers,
+            shape="design" if qs.phase in design else "star"))
 
     rep = score_mod.build(raw.get("session_id", session_id), observations, criteria_for)
     spoken = _delivery(d)

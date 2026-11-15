@@ -140,6 +140,27 @@ def test_a_repeated_competency_keeps_its_highest_ranked_mention():
     assert "lead the response" in s.requirements[0].evidence
 
 
+def test_a_competency_one_mention_grounded_is_not_also_listed_as_not_used():
+    """15/11: the plan page showed data_quality as asked for, then twice as not used."""
+    s = spec(competencies=[
+        {"name": "incident_response", "evidence": "no such words appear here at all"},
+        {"name": "incident_response",
+         "evidence": "expected to lead the response when payments break in production"},
+        {"name": "incident_response", "evidence": "nor do these words appear anywhere"},
+    ])
+    assert s.competencies == ("incident_response",)
+    assert not s.dropped
+
+
+def test_a_competency_dropped_twice_is_listed_once_with_its_first_quote():
+    s = spec(competencies=[
+        {"name": "mentoring", "evidence": "no such words appear here at all"},
+        {"name": "mentoring", "evidence": "nor do these words appear anywhere"},
+    ])
+    assert [(r.name, r.evidence) for r in s.dropped] == [
+        ("mentoring", "no such words appear here at all")]
+
+
 def test_a_name_outside_the_vocabulary_is_dropped_not_trusted():
     """Only reachable if the server ignores the enum, which is exactly when trusting it is
     worst."""
@@ -177,25 +198,33 @@ def test_every_extracted_competency_has_a_question_in_the_bank():
         assert BANK.for_competency(name)
 
 
+EVIDENCE = "profiling and reducing latency"
+
+
 class Writer:
-    def __init__(self, question):
-        self.question = question
+    """Replies as D18's generator does, writing from the evidence it was given."""
+
+    def __init__(self, question, min_level="junior"):
+        self.question, self.min_level = question, min_level
 
     async def complete(self, system, user, schema=None, max_tokens=400,
                        enum_field=None, enum_values=None):
-        self.user = user
-        return Completion(text=json.dumps({"question": self.question}))
+        self.system, self.user = system, user
+        competency = schema["properties"]["competency"]["enum"][0]
+        return Completion(text=json.dumps({"duty": EVIDENCE, "question": self.question,
+                                           "competency": competency,
+                                           "min_level": self.min_level}))
 
 
 def propose(text, **kw):
     return run(planner.propose_question(Writer(text), BANK, kw.pop("competency", "performance"),
-                                        "profiling and reducing latency", **kw))
+                                        EVIDENCE, **kw))
 
 
 def test_a_generated_question_comes_back_proposed_not_askable():
     """FR-2 allows generation and FR-6 promises every scripted question is asked verbatim.
     Both hold only if a person reads the text before a candidate hears it."""
-    q = propose("Tell me about a latency problem you traced to its cause?")
+    q = propose("Tell me about a latency problem you traced to its cause.")
     assert q.source == "generated"
     assert q.status == "proposed"
     assert not q.askable
@@ -204,25 +233,37 @@ def test_a_generated_question_comes_back_proposed_not_askable():
 
 def test_nothing_in_this_path_can_produce_an_askable_question():
     """Belt and braces: the guarantee should not depend on a caller remembering it."""
-    for text in ("Tell me about a slow endpoint you fixed?",
-                 "Describe a time you profiled something in anger?"):
+    for text in ("Tell me about a slow endpoint you fixed.",
+                 "Describe a time you profiled something under pressure."):
         assert not propose(text).askable
 
 
-def test_a_proposal_that_is_not_a_question_is_refused():
-    with pytest.raises(ValueError, match="not a question"):
-        propose("Tell me about a latency problem.")
+def test_the_gap_path_drafts_through_the_generator():
+    """D17: the same prompt and checks as a generated slot."""
+    w = Writer("Tell me about a slow endpoint you fixed.")
+    run(planner.propose_question(w, BANK, "performance", EVIDENCE))
+    assert w.system == planner.GENERATE_SYSTEM
+
+
+def test_a_proposal_that_does_not_open_as_an_interview_question_is_refused():
+    with pytest.raises(ValueError, match="must begin with"):
+        propose("What did you profile when latency mattered?")
 
 
 def test_an_overlong_proposal_is_refused():
-    with pytest.raises(ValueError, match="word cap"):
-        propose(" ".join(["word"] * 40) + "?")
+    with pytest.raises(ValueError, match="the limit is 24 words"):
+        propose("Tell me about " + " ".join(["word"] * 40) + ".")
+
+
+def test_a_hypothetical_proposal_is_refused():
+    with pytest.raises(ValueError, match="hypothetical"):
+        propose("Tell me how you would profile a slow service.")
 
 
 def test_a_proposal_that_repeats_a_bank_question_verbatim_is_refused():
     existing = BANK.for_competency("performance")[0].text
-    with pytest.raises(ValueError, match="verbatim"):
-        propose(existing if existing.endswith("?") else existing.rstrip(".") + "?")
+    with pytest.raises(ValueError, match="restates"):
+        propose(existing)
 
 
 def test_a_near_duplicate_is_refused_when_similarity_is_available():
@@ -231,19 +272,30 @@ def test_a_near_duplicate_is_refused_when_similarity_is_available():
     banked = BANK.for_competency("performance")[0]
     hits = lambda a, b: 0.99 if b == banked.text else 0.0  # noqa: E731
     with pytest.raises(ValueError, match="restates"):
-        propose("An entirely different sentence about speed?", similarity=hits)
+        propose("Tell me about an entirely different thing about speed.", similarity=hits)
 
 
 def test_the_near_duplicate_check_is_skipped_without_an_embedding():
-    q = propose("An entirely different sentence about speed?", similarity=None)
-    assert q.text == "An entirely different sentence about speed?"
+    q = propose("Tell me about an entirely different thing about speed.", similarity=None)
+    assert q.text == "Tell me about an entirely different thing about speed."
+
+
+def test_a_proposal_above_the_plans_level_is_refused():
+    w = Writer("Tell me about a latency problem you traced.", min_level="senior")
+    with pytest.raises(ValueError, match="pitched at junior"):
+        run(planner.propose_question(w, BANK, "performance", EVIDENCE, level="junior"))
 
 
 def test_the_employer_wording_reaches_the_model():
     """The reason to generate at all: a bank question is generic, and this one is not."""
-    w = Writer("What did you profile when latency mattered most?")
-    run(planner.propose_question(w, BANK, "performance", "reducing p99 latency in the ledger"))
-    assert "reducing p99 latency in the ledger" in w.user
+    w = Writer("Tell me about a slow endpoint you fixed.")
+    run(planner.propose_question(w, BANK, "performance", EVIDENCE))
+    assert EVIDENCE in w.user
+
+
+def test_a_design_or_case_competency_stays_curated():
+    with pytest.raises(ValueError, match="stay curated"):
+        propose("Tell me about a system you designed.", competency="system_design")
 
 
 def test_an_unknown_competency_cannot_be_proposed_for():
@@ -406,6 +458,28 @@ def test_a_duration_the_plan_cannot_reach_is_refused_not_silently_overshot():
     same reason."""
     with pytest.raises(ValueError, match="shorter than this plan can be"):
         planner.stock_plan("mixed", BANK, template=TEMPLATE, minutes=12)
+
+
+@pytest.mark.parametrize("field_id", fields.IDS)
+def test_no_stock_plan_runs_past_its_length(field_id):
+    """15/11: rounding and the one-question floor never shrank a case phase, so 30-minute plans
+    with one ran 35 to 37 minutes."""
+    view = bank.load(bank.SHIPPED, templates=fields.templates()).view(field_id)
+    for k in fields.get(field_id).kinds:
+        for minutes in range(15, 66, 5):
+            try:
+                a = planner.stock_plan(k.id, view, minutes=minutes, field=field_id)
+            except ValueError:
+                continue
+            assert a.estimated_secs <= minutes * 60 * planner.OVERRUN, (k.id, minutes)
+
+
+def test_a_short_technical_plan_stays_technical():
+    """Held to the length exactly, the trim cut this to one technical question."""
+    a = planner.stock_plan("technical", BANK, template=TEMPLATE, minutes=30)
+    tech = next(ph for ph in a.plan["phases"] if ph["id"] == "technical_experience")
+    assert len(tech["questions"]) >= 2
+    assert a.estimated_secs > 30 * 60 * 0.95
 
 
 def test_an_unknown_stock_kind_names_the_known_ones():

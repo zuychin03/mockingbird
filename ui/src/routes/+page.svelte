@@ -10,13 +10,10 @@
   import Problem from '$lib/Problem.svelte';
   import { refused, unreachable } from '$lib/problem.js';
 
-  const STOCK = {
-    behavioural: 'How you have worked, told as stories about real situations.',
-    mixed: 'Behavioural and technical in one sitting. The usual first round.',
-    technical: 'What you have built, changed and measured.'
-  };
-
   let plan = $state(null);
+  // Fields and their standard plans, from config/fields.json through the API.
+  let fieldList = $state([]);
+  let stockField = $state('software');
   let problem = $state(null);
   let busy = $state(false);
   // Only "nothing here yet" is an expected refusal; everything else is worth showing.
@@ -55,21 +52,83 @@
   const send = (path, body, method = 'POST') =>
     call(path, { method, body: JSON.stringify(body) });
 
+  function show(got) {
+    plan = got;
+    fieldList = got.fields;
+    stockField = got.field;
+  }
+
   async function load() {
     const got = await call('/api/plan');
-    if (got) plan = got;
-    else if (lastStatus === 404) problem = null;
+    if (got) show(got);
+    else if (lastStatus === 404) {
+      problem = null;
+      const fields = await call('/api/fields');
+      if (fields) fieldList = fields;
+    }
   }
 
   async function apply(promise) {
     leaving = null;
     const got = await promise;
     if (got) {
-      plan = got;
+      show(got);
       saved = false;
       sourceOpen = false;
     }
   }
+
+  const fieldLabel = (id) => fieldList.find((f) => f.id === id)?.label ?? id;
+  const kinds = $derived(fieldList.find((f) => f.id === stockField)?.kinds ?? []);
+
+  // Detection failed and nobody has chosen since: the switch shows no field chosen.
+  const undecided = $derived(
+    plan?.job_description && !plan.detected?.field && plan.field === 'general'
+  );
+
+  function switchField(e) {
+    const field = e.currentTarget.value;
+    if (field) apply(send('/api/plan/field', { field, minutes: nMinutes() }));
+  }
+
+  const slot = (q) => (q.generated == null ? null : plan.generated[q.generated]);
+
+  // The description as pasted, with the evidence of each kept competency and the duty of each
+  // generated slot marked. Quotes are grounded, so a whitespace-tolerant exact match is the
+  // common case; anything that still does not match is listed under the text instead.
+  const escape = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const description = $derived.by(() => {
+    const jd = plan?.job_description;
+    if (!jd) return null;
+    const used = new Set((plan.generated ?? []).map((g) => g.duty));
+    const wanted = [
+      ...jd.requirements.map((r) => ({ quote: r.evidence, why: r.name.replace(/_/g, ' ') })),
+      ...jd.duties
+        .filter((d) => used.has(d.quote))
+        .map((d) => ({ quote: d.quote, why: 'a generated question' }))
+    ];
+    const spans = [];
+    const loose = [];
+    for (const w of wanted) {
+      const words = w.quote.trim().split(/\s+/).filter(Boolean);
+      if (!words.length) continue;
+      const m = new RegExp(words.map(escape).join('\\s+'), 'i').exec(jd.text);
+      if (m) spans.push([m.index, m.index + m[0].length, w.why]);
+      else loose.push(w);
+    }
+    spans.sort((a, b) => a[0] - b[0]);
+    const parts = [];
+    let at = 0;
+    for (const [start, end, why] of spans) {
+      if (end <= at) continue;
+      const from = Math.max(start, at);
+      if (from > at) parts.push({ text: jd.text.slice(at, from) });
+      parts.push({ text: jd.text.slice(from, end), why });
+      at = end;
+    }
+    if (at < jd.text.length) parts.push({ text: jd.text.slice(at) });
+    return { parts, loose };
+  });
 
   const nMinutes = () => (minutes.trim() === '' ? null : Number(minutes));
 
@@ -241,16 +300,22 @@
       </div>
 
       <div class="col">
-        <span class="label">From a standard plan</span>
+        <label for="stock-field">From a standard plan</label>
+        <select id="stock-field" class="field-select" bind:value={stockField} disabled={busy}>
+          {#each fieldList as f}
+            <option value={f.id}>{f.label}</option>
+          {/each}
+        </select>
         <div class="kinds">
-          {#each plan?.stock_kinds ?? Object.keys(STOCK) as kind}
+          {#each kinds as k}
             <button
               class="kind"
               disabled={busy}
-              onclick={() => apply(send('/api/plan/from-stock', { kind, minutes: nMinutes() }))}
+              onclick={() =>
+                apply(send('/api/plan/from-stock', { kind: k.id, field: stockField, minutes: nMinutes() }))}
             >
-              <span class="kind-name">{kind[0].toUpperCase() + kind.slice(1)}</span>
-              <span class="kind-note">{STOCK[kind] ?? ''}</span>
+              <span class="kind-name">{k.label}</span>
+              <span class="kind-note">{k.note}</span>
             </button>
           {/each}
         </div>
@@ -268,6 +333,40 @@
   {#if plan}
     <header class="masthead">
       <div>
+        {#if plan.job_description}
+          <div class="read-as">
+            <p class="read-line">
+              {#if undecided}
+                Could not tell which field this is, so it is planned as {fieldLabel(plan.field)}.
+              {:else if !plan.detected?.field}
+                Read as {fieldLabel(plan.field)}, as you chose. It could not tell which field this is.
+              {:else if plan.detected.field === plan.field}
+                Read as {fieldLabel(plan.field)}, because:
+                <span class="evidence">{plan.detected.evidence}</span>
+              {:else}
+                Read as {fieldLabel(plan.field)}, as you chose. It read
+                {fieldLabel(plan.detected.field)} first, because:
+                <span class="evidence">{plan.detected.evidence}</span>
+              {/if}
+            </p>
+            <label class="switch">
+              <span>Read it as another field</span>
+              <select
+                class="field-select"
+                value={undecided ? '' : plan.field}
+                disabled={busy}
+                onchange={switchField}
+              >
+                {#if undecided}
+                  <option value="" disabled>Choose a field</option>
+                {/if}
+                {#each fieldList as f}
+                  <option value={f.id}>{f.label}</option>
+                {/each}
+              </select>
+            </label>
+          </div>
+        {/if}
         <h1>{plan.label}</h1>
         <p class="meta">
           <span class="num">{rows.length}</span> questions
@@ -277,6 +376,9 @@
             <span class="sep">·</span> from a job description
           {/if}
         </p>
+        {#if plan.written}
+          <p class="meta">{plan.written}</p>
+        {/if}
       </div>
       <button class="ghost" onclick={() => (sourceOpen = !sourceOpen)}>
         {sourceOpen ? 'Close' : 'Start over'}
@@ -361,10 +463,29 @@
               {:else}
                 <p class="q">
                   {row.q.text}
-                  {#if row.q.source === 'generated'}<span class="mark gen" title="Written by the model, approved by you"></span>{/if}
+                  {#if slot(row.q)}<span class="mark gen" title="Written by the model from the description. Saving the plan approves it"></span>{:else if row.q.source === 'generated'}<span class="mark gen" title="Written by the model, approved by you"></span>{/if}
                 </p>
                 {#if row.q.edited_from}
                   <p class="was">Edited. Was: {row.q.edited_from}</p>
+                {/if}
+                {#if slot(row.q)}
+                  {@const g = slot(row.q)}
+                  <p class="from">From the description: <span class="evidence">{g.duty}</span></p>
+                  <div class="slot-ops">
+                    <button class="op text" disabled={busy} onclick={() => apply(send(`/api/plan/generated/${g.n}/replace`, {}))}>
+                      Replace
+                    </button>
+                    <button class="op text" disabled={busy} onclick={() => apply(send(`/api/plan/generated/${g.n}/bank`, {}))}>
+                      Use a bank question
+                    </button>
+                    {#if g.kept}
+                      <span class="kept">Kept</span>
+                    {:else}
+                      <button class="op text" disabled={busy} onclick={() => apply(send(`/api/plan/generated/${g.n}/keep`, {}))}>
+                        Keep for future plans
+                      </button>
+                    {/if}
+                  </div>
                 {/if}
               {/if}
             </div>
@@ -428,6 +549,28 @@
         {/each}
       </ol>
     </section>
+
+    {#if description}
+      <section class="block">
+        <details class="jd">
+          <summary>Job description</summary>
+          <p class="jd-text">
+            {#each description.parts as part}{#if part.why}<mark title={part.why}>{part.text}</mark>{:else}{part.text}{/if}{/each}
+          </p>
+          {#if description.loose.length}
+            <p class="note">Not found word for word in the text:</p>
+            <ul class="reqs">
+              {#each description.loose as w}
+                <li>
+                  <span class="req-name">{w.why}</span>
+                  <span class="evidence">{w.quote}</span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </details>
+      </section>
+    {/if}
 
     {#if proposals.length}
       <section class="block proposals">
@@ -600,6 +743,15 @@
     gap: var(--s-2);
     width: 100%;
   }
+  /* Settings' select, so the two pages' selects match. */
+  .field-select {
+    background: var(--bg-raised);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-1);
+    padding: 10px 12px;
+    min-height: 44px;
+    margin-bottom: var(--s-2);
+  }
   .kind {
     display: grid;
     gap: 2px;
@@ -732,6 +884,12 @@
   .masthead h1 {
     font-size: var(--step-4);
   }
+  .masthead > div {
+    min-width: 0;
+  }
+  .masthead > button {
+    flex: none;
+  }
   .meta {
     color: var(--fg-quiet);
     font-size: var(--step--1);
@@ -740,6 +898,95 @@
   .meta .num {
     color: var(--fg);
     font-weight: 500;
+  }
+
+  .read-as {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-2) var(--s-5);
+    margin-bottom: var(--s-4);
+  }
+  .read-line {
+    color: var(--fg-quiet);
+    font-size: var(--step--1);
+    max-width: var(--measure);
+  }
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s-3);
+    margin: 0;
+  }
+  .switch .field-select {
+    margin: 0;
+    text-transform: none;
+    letter-spacing: normal;
+    font-weight: 400;
+  }
+
+  .from {
+    color: var(--fg-faint);
+    font-size: var(--step--1);
+    margin-top: var(--s-2);
+  }
+  .slot-ops {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s-1) var(--s-3);
+  }
+  .op.text {
+    padding: 0 var(--s-2);
+    font-size: var(--step--1);
+  }
+  .kept {
+    color: var(--pending);
+    font-family: var(--font-structure);
+    font-size: var(--step--1);
+    font-weight: 600;
+    padding: 0 var(--s-2);
+  }
+
+  .jd summary {
+    cursor: pointer;
+    font-family: var(--font-structure);
+    font-size: var(--step--2);
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--review-blue-deep);
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    gap: var(--s-2);
+    list-style: none;
+  }
+  .jd summary::-webkit-details-marker {
+    display: none;
+  }
+  .jd summary::before {
+    content: '';
+    border-left: 5px solid currentColor;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+    transition: transform 140ms var(--ease);
+  }
+  .jd[open] summary::before {
+    transform: rotate(90deg);
+  }
+  .jd-text {
+    white-space: pre-wrap;
+    max-width: var(--measure);
+    font-size: var(--step--1);
+    line-height: 1.6;
+    color: var(--fg-quiet);
+    margin-top: var(--s-3);
+  }
+  .jd-text mark {
+    background: color-mix(in srgb, var(--cue) 30%, transparent);
+    color: var(--fg);
+    padding: 0 1px;
   }
   .sep {
     padding: 0 var(--s-1);

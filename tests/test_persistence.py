@@ -155,9 +155,11 @@ def test_the_snapshot_saves_every_field_the_runner_carries():
     # `detour` is the stage 5 corpus, rebuilt from the plan and a document on disk. Persisting
     # it would pin an edited policy page to whatever it said when the session started, and an
     # absent one is also FR-32's kill switch, which a snapshot must not be able to re-arm.
+    # `system`, `speech_system`, `case_line` and `case_covered` are the plan field's, derived
+    # from the plan.
     rebuilt = {"provider", "plan", "state", "questions", "history", "pace",
                "observe_fn", "_pending", "max_say_words", "similarity", "_audio", "_heard",
-               "detour"}
+               "detour", "system", "speech_system", "case_line", "case_covered"}
     missing = attrs - rebuilt - saved
     assert not missing, "app/resume.py does not persist: %s" % sorted(missing)
 

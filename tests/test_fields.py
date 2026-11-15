@@ -11,12 +11,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import bank, contract, fields, planner, provenance  # noqa: E402
+from app import bank, contract, fields, focus, planner, provenance  # noqa: E402
 
 NEW = [f for f in fields.IDS if f != fields.SOFTWARE]
 
 # 1.1.0's value (4f9b7f6). Every measured turn result rests on these prompts.
 SOFTWARE_HASH = "a94730b75622"
+# Software's failure words, unchanged since they were measured (log 9.7).
+FAILURE_HASH = "00e9139a611a"
 
 
 def _sha(text: str) -> str:
@@ -99,9 +101,11 @@ def test_an_unresolvable_hash_records_unknown_rather_than_raising():
 
 
 def test_the_software_planner_prompts_are_pinned():
-    """V1.2_PLAN D5: SWE planning changes only through the vocabulary, never its prompts."""
+    """V1.2_PLAN D5: SWE planning changes only through the vocabulary, never its prompts. The
+    gap path's 1.1 prompt gave way to D18's generator (D17), pinned at the prompt the
+    generation gate measured."""
     assert _sha(planner.SYSTEM) == "9387534e96c3"
-    assert _sha(planner.PROPOSE_SYSTEM) == "b15293508977"
+    assert _sha(planner.GENERATE_SYSTEM) == "4979f02ec6e2"
 
 
 # --- config/fields.json (V1.2_PLAN P2) -------------------------------------------------------
@@ -154,6 +158,40 @@ def test_every_field_runs_on_arm_a_unlabelled():
     """P1's decision 11/11: all five ship on arm A with no "not measured" label."""
     for f in fields.FIELDS.values():
         assert f.prompt_arm == "A" and f.measured_note is None, f.id
+
+
+def test_the_case_lines_are_duys_and_software_keeps_its_own():
+    """Approved 14/11 as references the model rewords. Software and general have none:
+    software keeps `focus.DESIGN_FOLLOW_UP` and `_FAILURE`, general has no case phase."""
+    assert {f.id: f.case_follow_up.line for f in fields.FIELDS.values() if f.case_follow_up} == {
+        "data_analytics": "What could make that analysis give you the wrong answer?",
+        "product_management": "How would you know if that turned out to be the wrong thing "
+                              "to build?",
+        "ux_design": "Where are people most likely to get stuck with that design?",
+        "project_management": "What's most likely to go wrong with that plan?",
+    }
+    assert focus.DESIGN_FOLLOW_UP == "What breaks first when this is under real load?"
+    assert hashlib.sha256(focus._FAILURE.pattern.encode()).hexdigest()[:12] == FAILURE_HASH
+
+
+@pytest.mark.parametrize("field", ["data_analytics", "product_management", "ux_design",
+                                   "project_management"])
+def test_each_case_line_asks_for_what_its_words_cover_and_no_case_question_trips_them(field):
+    """A line that contained none of its words could never count as asking for the gap, and a
+    question that contained them would make every answer look covered."""
+    f = fields.get(field)
+    assert focus.asks_for_gap(f.case_follow_up.line, f.case_follow_up.covered)
+    view = bank.load(bank.SHIPPED, templates=fields.templates()).view(field)
+    for q in view.questions:
+        if q.shape == "design":
+            assert not f.case_follow_up.covered.search(q.text), q.id
+
+
+def test_a_ux_rewording_that_says_stumble_still_asks_for_the_gap():
+    """15/11, Gemini: refused as off-request when "stumble" was not a covered word (Duy added it)."""
+    covered = fields.get("ux_design").case_follow_up.covered
+    assert focus.asks_for_gap("Where would users likely stumble in your pothole reporting flow?",
+                              covered)
 
 
 @pytest.mark.parametrize("field", NEW)

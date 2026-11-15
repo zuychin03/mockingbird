@@ -25,13 +25,15 @@ shows the answer behind every judgement so you can disagree with it. There is no
 and no mark out of ten, because a number tells you how you did and not what to change.
 
 Scoring runs when you open the report, which is why it takes a minute. The interview itself
-never shows a judgement while it is happening.
+never shows a judgement while it is happening. Feedback on how the interview went comes in the
+report, not during the interview.
 
 # Where the recordings and transcripts are
 
 In a folder on the machine running this, one directory per interview, holding the transcript
-and any audio. The history page names the exact path, says how much space it is using, and
-states whether anything is sent off the machine, to a cloud model or for hosting - read it
+and any audio. A recording stays on the machine running this after the interview ends, in the
+interview's own folder. The history page names the exact path, says how much space it is using,
+and states whether anything is sent off the machine, to a cloud model or for hosting - read it
 there rather than here, because that answer depends on how this copy is configured and this page
 cannot know.
 

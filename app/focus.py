@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 
-from .depth_signals import signals
+from .depth_signals import FIRST_SG, signals
 
 # The closed set. Each is a distinct thing an interviewer wants, phrased as the instruction
 # that goes into the prompt.
@@ -40,6 +40,22 @@ FOCUS = {
     "LESSON": "what they took from it that changed how they work",
     "CONTEXT": "the situation around it -- scale, constraints, who was involved",
     "DURATION": "how long it took, and how much of that was which part",
+}
+
+# Design and case questions are hypothetical, and the model speaks the focus as written: "what
+# went wrong along the way" became "What went wrong along the way?" about an office move nobody
+# had made (15/11). The same requests in the conditional.
+DESIGN_FOCUS = {
+    "STEPS": "what they would do, step by step",
+    "REASON": "why they would choose that, and what they would weigh against it",
+    "MEASURE": "how they would know it works -- what they would measure, and how",
+    "OUTCOME": "what outcome they would expect, and how they would tell if it works",
+    "ROLE": "which parts they would own personally, as opposed to the team's",
+    "CHALLENGE": "what would be hardest, or what could go wrong",
+    "ALTERNATIVE": "what else they would consider instead",
+    "LESSON": "what they would expect to learn from it",
+    "CONTEXT": "the constraints that would shape it -- scale, limits, who is involved",
+    "DURATION": "how long it would take, and which part would take longest",
 }
 
 # Signals map to the request that answers them. Ordered: the first firing signal wins.
@@ -138,7 +154,7 @@ _PATTERNS = {
             r"which parts (?:of (?:that|it|this) )?were you|"
             r"what did you do|were you the",
     "OUTCOME": r"outcome|what happened|end (up|result)|"
-               r"how did (it|that) (?:\w+ ){0,2}?(go|land|turn out)|"
+               r"how (?:did|would) (it|that|this) (?:\w+ ){0,2}?(go|land|turn out)|"
                r"result|in the end|was it successful|what (?:was|is) the impact",
     "STEPS": r"step|walk (me )?through|"
              r"how did you (do|approach|go about|handle|address|resolve|fix)|"
@@ -150,7 +166,7 @@ _PATTERNS = {
     "REASON": r"\bwhy\b|reason|what made you|rationale|weigh|trade.?off|instead of|"
               r"what led you|what made (?:the|this|that) [^?]{1,120} important to you\b|"
               r"thinking behind",
-    "CHALLENGE": r"hard(est)?|difficult|challeng|went wrong|problem|obstacle|struggl|"
+    "CHALLENGE": r"hard(est)?|difficult|challeng|(?:went|go|goes) wrong|problem|obstacle|struggl|"
                  r"tricky|blocker|what (?:happens|would happen) (?:if|when)|"
                  r"how (?:would|do) you handle .*(?:unavailable|down|outage)|"
                  r"what breaks first|how (?:does|would) .* behave (?:if|when)|failure mode|"
@@ -355,9 +371,18 @@ SATISFIED_BY = {
 }
 
 
+def answered(text: str) -> set[str]:
+    """Requests `text` has already answered. ROLE asks which parts were theirs as opposed to the
+    team's, and is spent once they have spoken in the first person: 20 of 37 stored ROLE
+    follow-ups came after they had ("Which parts of that were yours?" after "I recorded short
+    videos", 15/11). The same check scores `first_person`."""
+    return {"ROLE"} if FIRST_SG.search(text) else set()
+
+
 def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None,
                ladder: list[str] | None = None,
-               seen: set[str] | None = None) -> str | None:
+               seen: set[str] | None = None,
+               earlier: list[str] | None = None) -> str | None:
     """The request type to ask for next. Never returns one already used on this question.
 
     `ladder` comes from the phase (`focus_ladder` in the plan), because a generic order does
@@ -365,13 +390,20 @@ def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None
     design has no team, so CONTEXT and ROLE are nonsense on both (log 8.20). It falls through
     to the global ladder rather than returning None -- there are ten types and no question can
     spend them all, so there is always one left.
+
+    `earlier` is this question's answers before `utterance`; what they and `utterance` have
+    already answered (`answered`) is skipped like a used request. For the "we" signal this
+    means their own part, once stated on the question, is not unstated because a later answer
+    about the outcome says "we" (4 of the 20).
     """
     # None means "do not steer this turn": there is nothing in the answer to ask about, and
     # the right move is to put the question a different way, which is `reask`'s job.
     if is_contentless(utterance):
         return None
+    earlier = earlier or []
     criteria = criteria or []
     ladder = ladder or (UNSCORED_LADDER if not criteria else [])
+    used = used | answered(" ".join(earlier + [utterance]))
     if criteria:
         for name, focus in FROM_SIGNAL:
             if signals(utterance).get(name) and focus not in used:
@@ -386,7 +418,7 @@ def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None
         #
         # Same set of criteria, asked in the order the ladder already specifies.
         # A criterion with no observation part maps to None, which is never in `seen`, so
-        # the deterministic text checks stay askable.
+        # the deterministic text checks are not skipped by it; `answered` spends ROLE above.
         wanted = {FROM_CRITERION[c] for c in criteria
                   if FROM_CRITERION.get(c) and FROM_CRITERION[c] not in used
                   and SATISFIED_BY.get(c) not in (seen or set())}
@@ -424,7 +456,7 @@ _FAILURE = re.compile(
     r"|retry storm|back ?pressure|cascad(?:e|es|ing)|corrupt(?:ed|ion)?)\b", re.I)
 
 
-def design_gap(answers: list[str]) -> str | None:
+def design_gap(answers: list[str], covered: re.Pattern | None = None) -> str | None:
     """Which design part is missing and worth one deterministic follow-up? None if none is.
 
     Only failure. The other three parts (approach, alternative, tradeoff) are either
@@ -435,11 +467,37 @@ def design_gap(answers: list[str]) -> str | None:
     Returning None when the language is already there is the point, not a safeguard: asking
     what breaks after they have said what breaks is the redundancy that 9.7 measured on five
     of twenty-three lines.
+
+    `covered` is a field's own words for the same thing; software's are `_FAILURE`.
     """
-    return None if _FAILURE.search(" ".join(answers)) else "FAILURE"
+    return None if (covered or _FAILURE).search(" ".join(answers)) else "FAILURE"
+
+
+def asks_for_gap(say: str, covered: re.Pattern | None = None) -> bool:
+    """Does a reworded case line still use the words for what `design_gap` found missing?
+    Recorded on each rewording, not enforced: a paraphrase can ask the same thing in other
+    words. MiniLM similarity could not tell a specific rewording (0.28) from an off-request
+    question (0.54) on 14/11's calibration."""
+    return bool((covered or _FAILURE).search(say))
 
 
 DESIGN_FOLLOW_UP = "What breaks first when this is under real load?"
+
+# Duy 14/11: the case line is a reference the model rewords for the case at hand. Its own
+# prompt, not the speech prompt: arm A's speech prompt names a software-engineering interview.
+CASE_REWORD_SYSTEM = """You are an interviewer rewording one follow-up question for the case the candidate is answering.
+
+Return only the question in "say".
+- Ask for exactly what the follow-up below asks for. Change the wording, not the request.
+- Fit it to this case by naming what the candidate described, in a few words.
+- Write it in your own words: do not repeat the follow-up word for word.
+- The case is hypothetical. Ask what would happen, not what did happen.
+- One direct question, no preamble or acknowledgement, at most %d words.
+
+FOLLOW-UP: %s"""
+CASE_REWORD_WORDS = 20
+# Local Qwen ran to 22 words naming a five-clinic rollout; past 25 it is a speech, not a line.
+CASE_REWORD_MAX = 25
 
 
 # These expressions recognise grammar rather than phase. Runner owns the phase gate; keeping
@@ -477,9 +535,21 @@ _DESIGN_PAST_PREMISE = re.compile(
     # future-tense design template, which is safe, while failing to DETECT speaks the
     # premise.
     r"What (?:was|were)\b[^?]*\b(?:implementing|building|deploying|shipping|"
-    r"launching|rolling out|running)\b)",
+    r"launching|rolling out|running)\b|"
+    # Past tense with the case as subject (15/11 field scripts, local and Gemini): "What went
+    # wrong along the way?", "How long did that take to implement?", "How did that land with
+    # the teams?". The focus wording is past tense and the model renders it as is.
+    r"What went (?:wrong|well|badly|right)\b|What happened\b|"
+    r"How (?:long )?did (?:it|that|this|they|the)\b|Did (?:it|that|this|they|the)\b|"
+    r"What (?:was|were) the (?:outcome|result|impact|reaction)s?\b)",
     re.I,
 )
+_DESIGN_HOW_LONG_DID = re.compile(
+    r"^How long did (?P<subject>it|that|this) take(?P<rest>[^?]*)\?$", re.I)
+_DESIGN_HOW_DID_IT = re.compile(
+    r"^How did (?P<subject>it|that|this) (?P<verb>land|go|work out|turn out)\b"
+    r"(?P<rest>[^?]*)\?$", re.I)
+_DESIGN_WENT_WRONG = re.compile(r"^What went wrong(?P<rest>[^?]*)\?$", re.I)
 
 
 def design_past_premise(say: str) -> bool:
@@ -503,13 +573,28 @@ def rewrite_design_past_premise(say: str) -> str | None:
         return "What would be the %schallenge%s?" % (modifier, match.group("rest"))
     if match := _DESIGN_DID_CHALLENGE.fullmatch(line):
         return "What challenge would you expect%s?" % match.group("rest")
+    if match := _DESIGN_HOW_LONG_DID.fullmatch(line):
+        return "How long would %s take%s?" % (
+            match.group("subject").lower(), match.group("rest"))
+    if match := _DESIGN_HOW_DID_IT.fullmatch(line):
+        return "How would %s %s%s?" % (
+            match.group("subject").lower(), match.group("verb").lower(), match.group("rest"))
+    if match := _DESIGN_WENT_WRONG.fullmatch(line):
+        return "What could go wrong%s?" % match.group("rest")
     return None
 
 
-def instruction(focus: str) -> str:
+def wording(focus: str, design: bool = False) -> str:
+    return (DESIGN_FOCUS if design else FOCUS)[focus]
+
+
+def instruction(focus: str, design: bool = False) -> str:
     """The one line appended to the system prompt for this turn."""
-    return ("\n\nFor THIS turn, if you probe or reask, ask about %s. Ask only that, in one "
-            "short question." % FOCUS[focus])
+    line = ("\n\nFor THIS turn, if you probe or reask, ask about %s. Ask only that, in one "
+            "short question." % wording(focus, design))
+    if design:
+        line += " The case is hypothetical: ask what would happen, not what did happen."
+    return line
 
 
 # Focus pairs this model renders alike. MEASURE comes out as "how did you know X" and REASON

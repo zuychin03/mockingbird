@@ -50,7 +50,7 @@ def save_state(d: review.Draft) -> None:
 def load_state() -> review.Draft:
     if not STATE.exists():
         raise SystemExit("no draft in progress. Start one with --jd <file> or --stock <kind>")
-    return review.read_draft(STATE, bank_mod.installed(BANK, field=fields.SOFTWARE))
+    return review.read_draft(STATE, lambda f: bank_mod.installed(BANK, field=f))
 
 
 def show(d: review.Draft) -> None:
@@ -68,7 +68,7 @@ def show(d: review.Draft) -> None:
         print("    --propose <competency> writes one for review")
     print()
     for ph in d.plan["phases"]:
-        mark = "" if ph["id"] in review.EDITABLE else "   (structural, not editable)"
+        mark = "" if ph["id"] in review.editable(d.plan) else "   (structural, not editable)"
         print("  [%s]%s" % (ph["id"], mark))
         for i, q in enumerate(ph.get("questions", [])):
             was = d.edited_from.get(q)

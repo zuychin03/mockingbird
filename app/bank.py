@@ -71,6 +71,8 @@ class Question:
     # Required in a format 2 file; the default is what a version 1 file and the pre-1.2
     # constructors mean.
     field: str = fields.SOFTWARE
+    # The description's words a kept generated slot was written from (D17).
+    duty: str = ""
 
     @property
     def generated(self) -> bool:
@@ -143,11 +145,14 @@ class Bank:
             view_of=field_id)
 
 
-def template_shapes(path: str | Path) -> dict[str, str]:
-    """Each selectable phase of a template and the question shape it holds."""
-    plan = json.loads(Path(path).read_text(encoding="utf-8"))
+def plan_shapes(plan: dict) -> dict[str, str]:
+    """Each selectable phase of a plan or template and the question shape it holds."""
     return {ph["id"]: "design" if ph.get("observation_shape") == "design" else "star"
             for ph in plan["phases"] if ph.get("type") in _SELECTABLE_TYPES}
+
+
+def template_shapes(path: str | Path) -> dict[str, str]:
+    return plan_shapes(json.loads(Path(path).read_text(encoding="utf-8")))
 
 
 def _question(item: dict, competencies: dict[str, str], owners: dict[str, str],
@@ -204,7 +209,8 @@ def _question(item: dict, competencies: dict[str, str], owners: dict[str, str],
                          "another field" % (qid, owner, ", ".join(foreign)))
 
     return Question(id=qid, text=text, competencies=tags, shape=shape, source=source,
-                    status=status, min_level=min_level, field=owner)
+                    status=status, min_level=min_level, field=owner,
+                    duty=" ".join((item.get("duty") or "").split()))
 
 
 def _parse(raw: dict, where: str) -> Bank:
@@ -395,6 +401,8 @@ def _row(q: Question) -> dict:
            "shape": q.shape, "source": q.source, "status": q.status}
     if q.min_level != "junior":
         row["min_level"] = q.min_level
+    if q.duty:
+        row["duty"] = q.duty
     return row
 
 

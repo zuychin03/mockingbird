@@ -81,10 +81,11 @@ async def run(plan_path: Path, skip_canary: bool) -> int:
 
     plan = session.load_plan(plan_path)
     # Before the first question, not after: this is what keeps turn 0 off the cold path.
-    ms = await p.warmup(contract.SYSTEM, contract.render(
+    ms = await p.warmup(contract.for_plan(plan)[0], contract.render(
         next(session.iter_questions(plan))["question"], "", ""))
     print("warmed the prompt cache in %.0f ms" % ms)
-    state = session.new_session(plan, provenance.snapshot(model or None, prov.describe(p)))
+    state = session.new_session(plan, provenance.snapshot(model or None, prov.describe(p),
+                                                          plan))
 
     async def observe_answer(question_id, question, utterance):
         """Plan 1c.5's per-answer extraction. Runs between turns, never inside one."""

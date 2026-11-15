@@ -7,6 +7,7 @@ bank view and no template, so it is refused rather than quietly run as software.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +29,14 @@ class Kind:
 
 
 @dataclass(frozen=True)
+class CaseFollowUp:
+    """The case phase's follow-up (Duy 14/11): a reference line the model rewords for the case,
+    and the words that mean the answer already covered it."""
+    line: str
+    covered: re.Pattern
+
+
+@dataclass(frozen=True)
 class Field:
     id: str
     label: str
@@ -39,6 +48,8 @@ class Field:
     kinds: tuple[Kind, ...]
     # Shown where the interviewer was not measured on this field; None where it was.
     measured_note: str | None = None
+    # None keeps software's line and failure words in `focus`.
+    case_follow_up: CaseFollowUp | None = None
 
     def kind(self, kind_id: str) -> Kind:
         for k in self.kinds:
@@ -54,8 +65,12 @@ def _load(path: Path) -> dict[str, Field]:
     for f in raw["fields"]:
         kinds = tuple(Kind(k["id"], k["label"], k["note"], tuple(k["ranked"]), dict(k["shape"]))
                       for k in f["kinds"])
+        case = f.get("case_follow_up")
         out[f["id"]] = Field(f["id"], f["label"], f["interview"], ROOT / f["template"],
-                             f["prompt_arm"], kinds, f.get("measured_note"))
+                             f["prompt_arm"], kinds, f.get("measured_note"),
+                             CaseFollowUp(case["line"], re.compile(
+                                 r"\b(?:%s)\b" % "|".join(case["covered"]), re.I))
+                             if case else None)
     return out
 
 

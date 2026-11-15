@@ -18,19 +18,25 @@ Editing is the same act: an edited question is the reviewer's words now, not the
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Callable
 
 from . import bank as bank_mod
 from . import fields
+from . import planner
 from . import session as sess
 from .bank import Bank, Question
-from .planner import Assembled, JobSpec
+from .planner import Assembled, Generated, JobSpec
 
-# Phases whose questions a reviewer may touch. Warmup and closing carry the AI disclosure and
-# the sign-off; editing those is a different decision from planning an interview.
-EDITABLE = ("behavioural_core", "technical_experience", "design", "collaboration")
+
+def editable(plan: dict) -> tuple[str, ...]:
+    """Phases whose questions a reviewer may touch: the ones assembly selects into. Warmup
+    and closing carry the AI disclosure and the sign-off; editing those is a different decision
+    from planning an interview."""
+    return tuple(bank_mod.plan_shapes(plan))
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,9 @@ class Draft:
     # Text that was changed in review, as {new: old}. Kept so a reviewer can see what they
     # altered, and so a saved plan carries the provenance rather than looking hand-written.
     edited_from: dict[str, str] = field(default_factory=dict)
+    # What detection read, {field, evidence, reason}; None for a stock plan. The plan's own
+    # `field` is what was planned, which the switch can change.
+    detected: dict | None = None
 
     def questions(self, phase_id: str) -> tuple[str, ...]:
         return tuple(self._phase(phase_id).get("questions", []))
@@ -61,15 +70,24 @@ class Draft:
         return tuple(q for ph in self.plan["phases"] for q in ph.get("questions", []))
 
 
-def from_assembled(a: Assembled, bank: Bank, spec: JobSpec | None = None) -> Draft:
-    return Draft(plan=json.loads(json.dumps(a.plan)), bank=bank, spec=spec, gaps=a.gaps)
+def from_assembled(a: Assembled, bank: Bank, spec: JobSpec | None = None,
+                   detected: dict | None = None) -> Draft:
+    return Draft(plan=json.loads(json.dumps(a.plan)), bank=bank, spec=spec, gaps=a.gaps,
+                 detected=detected)
 
 
-def _editable(phase_id: str) -> None:
-    if phase_id not in EDITABLE:
+def _editable(draft: Draft, phase_id: str) -> None:
+    allowed = editable(draft.plan)
+    if phase_id not in allowed:
         raise ValueError("%r is structural: it carries the disclosure or the sign-off, and "
                          "changing it is a different decision from planning an interview. "
-                         "Editable phases: %s" % (phase_id, ", ".join(EDITABLE)))
+                         "Editable phases: %s" % (phase_id, ", ".join(allowed)))
+
+
+def _drop_generated(plan: dict, text: str) -> None:
+    """A slot changed by hand is the reviewer's words now, not the model's."""
+    if "generated" in plan:
+        plan["generated"] = [r for r in plan["generated"] if r["text"] != text]
 
 
 def _revalidated(draft: Draft, plan: dict, **changes) -> Draft:
@@ -89,7 +107,7 @@ def _copy(draft: Draft) -> dict:
 
 
 def delete(draft: Draft, phase_id: str, index: int) -> Draft:
-    _editable(phase_id)
+    _editable(draft, phase_id)
     plan = _copy(draft)
     questions = [ph for ph in plan["phases"] if ph["id"] == phase_id][0]["questions"]
     if not 0 <= index < len(questions):
@@ -97,12 +115,12 @@ def delete(draft: Draft, phase_id: str, index: int) -> Draft:
     if len(questions) == 1:
         raise ValueError("%r would be left with no questions, and a scored phase with none "
                          "produces a rubric denominator of zero" % phase_id)
-    questions.pop(index)
+    _drop_generated(plan, questions.pop(index))
     return _revalidated(draft, plan)
 
 
 def move(draft: Draft, phase_id: str, index: int, to: int) -> Draft:
-    _editable(phase_id)
+    _editable(draft, phase_id)
     plan = _copy(draft)
     questions = [ph for ph in plan["phases"] if ph["id"] == phase_id][0]["questions"]
     if not 0 <= index < len(questions) or not 0 <= to < len(questions):
@@ -114,7 +132,7 @@ def move(draft: Draft, phase_id: str, index: int, to: int) -> Draft:
 def edit(draft: Draft, phase_id: str, index: int, text: str) -> Draft:
     """Replace a question with the reviewer's own words. The result is theirs, not the
     model's, which is why no approval is involved."""
-    _editable(phase_id)
+    _editable(draft, phase_id)
     new = " ".join((text or "").split())
     if not new:
         raise ValueError("a question cannot be empty")
@@ -127,6 +145,7 @@ def edit(draft: Draft, phase_id: str, index: int, text: str) -> Draft:
     if new.lower() in {q.lower() for q in draft.all_questions}:
         raise ValueError("this plan already asks that")
     old, questions[index] = questions[index], new
+    _drop_generated(plan, old)
     edited = dict(draft.edited_from)
     edited[new] = edited.pop(old, old)
     return _revalidated(draft, plan, edited_from=edited)
@@ -134,7 +153,7 @@ def edit(draft: Draft, phase_id: str, index: int, text: str) -> Draft:
 
 def add(draft: Draft, phase_id: str, text: str) -> Draft:
     """Add a question the reviewer wrote. Curated by definition: a person typed it."""
-    _editable(phase_id)
+    _editable(draft, phase_id)
     new = " ".join((text or "").split())
     if not new:
         raise ValueError("a question cannot be empty")
@@ -148,7 +167,7 @@ def add(draft: Draft, phase_id: str, text: str) -> Draft:
 def add_from_bank(draft: Draft, phase_id: str, question_id: str) -> Draft:
     """Put an existing bank question into the plan. Refused unless it is askable, which is the
     same gate `assemble` applies -- a reviewer should not be able to reach past it by hand."""
-    _editable(phase_id)
+    _editable(draft, phase_id)
     found = [q for q in draft.bank.questions if q.id == question_id]
     if not found:
         raise KeyError("no bank question %r" % question_id)
@@ -167,6 +186,71 @@ def approve(draft: Draft, question_id: str) -> Draft:
 
 def propose_into_bank(draft: Draft, question: Question) -> Draft:
     return replace(draft, bank=bank_mod.with_question(draft.bank, question))
+
+
+# --- generated slots (V1.2_PLAN D17) ---------------------------------------------------------
+
+def slot_row(draft: Draft, n: int) -> dict:
+    rows = draft.plan.get("generated") or []
+    if not 0 <= n < len(rows):
+        raise IndexError("this plan has %d generated slot(s)" % len(rows))
+    return rows[n]
+
+
+def _slot(plan: dict, row: dict) -> tuple[list[str], int]:
+    for ph in plan["phases"]:
+        if ph["id"] == row["phase"] and row["text"] in ph.get("questions", []):
+            return ph["questions"], ph["questions"].index(row["text"])
+    raise ValueError("the generated question is no longer in its phase")
+
+
+def use_bank(draft: Draft, n: int) -> Draft:
+    """Put slot `n`'s bank question back, and the slot is no longer generated."""
+    slot_row(draft, n)
+    plan = _copy(draft)
+    row = plan["generated"][n]
+    questions, i = _slot(plan, row)
+    if row["fallback"].lower() in {q.lower() for q in draft.all_questions}:
+        raise ValueError("this plan already asks the slot's bank question")
+    questions[i] = row["fallback"]
+    plan["generated"].pop(n)
+    return _revalidated(draft, plan)
+
+
+def replace_generated(draft: Draft, n: int, g: Generated, model: str | None) -> Draft:
+    """Slot `n` takes another question for its duty, or keeps its own when none passed."""
+    slot_row(draft, n)
+    if not g.kept:
+        raise ValueError("no new question passed the checks (%s), so the slot keeps its "
+                         "question" % planner.fell_back_because(g))
+    plan = _copy(draft)
+    row = plan["generated"][n]
+    questions, i = _slot(plan, row)
+    if g.text.lower() in {q.lower() for q in draft.all_questions}:
+        raise ValueError("this plan already asks that")
+    questions[i] = g.text
+    plan["generated"][n] = planner.generated_row(replace(g, fallback=row["fallback"]), model)
+    return _revalidated(draft, plan)
+
+
+def keep_generated(draft: Draft, n: int, local_path: str | Path | None = None) -> Draft:
+    """Write slot `n`'s question to the local bank, approved, with its duty, so later plans
+    may pick it (D12, D17). Keeping it twice changes nothing."""
+    row = slot_row(draft, n)
+    if row.get("kept"):
+        return draft
+    b = draft.bank
+    if not any(q.text.lower() == row["text"].lower() for q in b.questions):
+        digest = hashlib.sha256(row["text"].lower().encode("utf-8")).hexdigest()[:8]
+        b = bank_mod.with_question(b, Question(
+            id="gen.%s.%s" % (row["competency"], digest), text=row["text"],
+            competencies=(row["competency"],), shape="star", source="generated",
+            status="approved", min_level=row.get("min_level") or "junior",
+            field=b.view_of or draft.plan.get("field", fields.SOFTWARE), duty=row["duty"]))
+    bank_mod.save_local(b, local_path)
+    plan = _copy(draft)
+    plan["generated"][n]["kept"] = True
+    return _revalidated(draft, plan, bank=b)
 
 
 def save(draft: Draft, plan_path: str | Path, local_path: str | Path | None = None) -> None:
@@ -195,6 +279,7 @@ def to_json(draft: Draft) -> dict:
         "plan": draft.plan,
         "gaps": list(draft.gaps),
         "edited_from": draft.edited_from,
+        "detected": draft.detected,
         "spec": None if draft.spec is None else {
             "role": draft.spec.role, "seniority": draft.spec.seniority,
             "requirements": [[r.name, r.evidence] for r in draft.spec.requirements],
@@ -207,7 +292,7 @@ def to_json(draft: Draft) -> dict:
         "draft_questions": [{"id": q.id, "text": q.text, "field": q.field,
                              "competencies": list(q.competencies), "shape": q.shape,
                              "source": q.source, "status": q.status,
-                             "min_level": q.min_level}
+                             "min_level": q.min_level, "duty": q.duty}
                             for q in draft.bank.questions if q.generated],
     }
 
@@ -224,7 +309,7 @@ def from_json(raw: dict, bank: Bank) -> Draft:
             id=item["id"], text=item["text"], competencies=tuple(item["competencies"]),
             shape=item["shape"], source=item["source"], status=item["status"],
             min_level=item.get("min_level", "junior"),
-            field=item.get("field", fields.SOFTWARE)))
+            field=item.get("field", fields.SOFTWARE), duty=item.get("duty", "")))
     spec = None
     if raw.get("spec"):
         s = raw["spec"]
@@ -233,7 +318,7 @@ def from_json(raw: dict, bank: Bank) -> Draft:
                        dropped=tuple(Requirement(n, e) for n, e in s["dropped"]))
     return Draft(plan=raw["plan"], bank=b, spec=spec,
                  gaps=tuple(raw.get("gaps", [])),
-                 edited_from=raw.get("edited_from", {}))
+                 edited_from=raw.get("edited_from", {}), detected=raw.get("detected"))
 
 
 def write_draft(draft: Draft, path: str | Path) -> None:
@@ -242,5 +327,10 @@ def write_draft(draft: Draft, path: str | Path) -> None:
     p.write_text(json.dumps(to_json(draft), indent=1), encoding="utf-8", newline="\n")
 
 
-def read_draft(path: str | Path, bank: Bank) -> Draft:
-    return from_json(json.loads(Path(path).read_text(encoding="utf-8")), bank)
+def read_draft(path: str | Path, bank: Bank | Callable[[str], Bank]) -> Draft:
+    """`bank` may be a function of the draft's field, which a caller cannot know before
+    reading it. A draft written before 1.2 is software."""
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if callable(bank):
+        bank = bank(raw["plan"].get("field", fields.SOFTWARE))
+    return from_json(raw, bank)

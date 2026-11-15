@@ -428,6 +428,11 @@ asking for evidence an earlier answer already supplied. Criteria with no extract
 `first_person`, are never skipped by it. Parts are extracted off the live path, so `seen` reflects
 the answers before the current one; the current utterance is covered by step 1, which runs first.
 
+ROLE is the exception that needs no extraction. Once the candidate has said "I", "my" or "me" on
+the question, in this answer or an earlier one, ROLE counts as used (`focus.answered`, the check
+that scores `first_person`). That covers all four steps, including the "we" signal in step 1: a
+later answer about the outcome that says "we" no longer asks which parts were theirs.
+
 ### 6.5 Ask the model for one constrained proposal
 
 The request combines the system contract, optional focus instruction, completed-question summary,

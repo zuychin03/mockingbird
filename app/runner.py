@@ -23,10 +23,10 @@ import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from . import (budget, contract, detour as detour_mod, direction, focus, guards, intent,
-               result_check, session)
+from . import (budget, contract, detour as detour_mod, direction, fields, focus, guards,
+               intent, result_check, session)
 from .history import History
-from .provider import Completion, Provider, ProviderError
+from .provider import Completion, Provider, ProviderError, is_local
 
 # `clarify` deliberately does not consume the follow-up budget (section 6.3), which leaves
 # the loop with no way to terminate if the model keeps choosing it. Observed live: two
@@ -197,6 +197,11 @@ MAX_SAY_WORDS = 35
 # generation finishes and its result is discarded. This bounds the candidate's wait, which is
 # what it is for, not the machine's work.
 REPAIR_GRACE_S = 1.3
+# A cloud call adds a network round trip that distribution never had: 1.3 s refused 6 of the 11
+# speech calls Gemini Flash-Lite made in the 15/11 runs. Timed on their own the same day (20,
+# the runner's prompts): median 1,155 ms, p90 1,742, max 2,190. Past this is the free service's
+# tail (8 to 28 s in its gate), which the template is for.
+CLOUD_REPAIR_GRACE_S = 2.5
 
 
 def _raw_say(raw: dict | None) -> str | None:
@@ -290,6 +295,10 @@ class Runner:
         self.observe_fn = observe_fn
         self.provider = provider
         self.plan = plan
+        self.system, self.speech_system = contract.for_plan(plan)
+        case = fields.get(plan.get("field", fields.SOFTWARE)).case_follow_up
+        self.case_line = case.line if case else focus.DESIGN_FOLLOW_UP
+        self.case_covered = case.covered if case else None
         self.state = state
         self.questions = list(session.iter_questions(plan))
         self.history = History()
@@ -397,9 +406,9 @@ class Runner:
                       want: str | None = None,
                       too_long: int | None = None) -> tuple[Completion, dict | None]:
         q = self.current
-        system = contract.SYSTEM
+        system = self.system
         if want:
-            system += focus.instruction(want)
+            system += focus.instruction(want, q.get("observation_shape") == "design")
         if too_long:
             # The second retry reason, and deliberately not folded into `retry_of`: that one
             # asks for a DIFFERENT line, this asks for the SAME request in fewer words, and a
@@ -436,6 +445,62 @@ class Runner:
                 return False
         return True
 
+    def _repair_grace(self) -> float:
+        return REPAIR_GRACE_S if is_local(self.provider) else CLOUD_REPAIR_GRACE_S
+
+    async def _reword_case_line(self, utterance: str) -> tuple[str, dict]:
+        """The case follow-up in the model's words for this case, or the reference as written
+        when the rewording fails a check. The decision to probe is already final.
+
+        Whether the rewording keeps the field's covered words is recorded, not enforced (Duy
+        15/11): the list refused Gemini's "Where would users likely stumble in your pothole
+        reporting flow?" and had caught no drift since the prompt was tightened.
+
+        No interview history: with it, both 15/11 junior runs put the candidate's earlier
+        project into the case ("...starts to fail in Mockingbird's API?")."""
+        reference = self.case_line
+        system = focus.CASE_REWORD_SYSTEM % (focus.CASE_REWORD_WORDS, reference)
+        user = contract.render(self.current["question"],
+                               " ".join(self.answers_this_question + [utterance]))
+        attempt: dict = {"trigger": "case_reword", "reference": reference, "say_raw": None,
+                         "say": reference, "similarity": None, "anchored": None,
+                         "accepted": False, "prompt_tokens": None, "decode_tokens": None,
+                         "wall_ms": None}
+        try:
+            out = await asyncio.wait_for(
+                self.provider.complete(system, user, schema=contract.SPEECH_SCHEMA,
+                                       max_tokens=100),
+                timeout=self._repair_grace())
+        except (asyncio.TimeoutError, TimeoutError, ProviderError) as e:
+            attempt["rejection"] = "provider-error" if isinstance(e, ProviderError) else "timeout"
+            return reference, attempt
+        raw_say = _raw_say(out.json())
+        say = " ".join(raw_say.split()) if isinstance(raw_say, str) else ""
+        score = self.similarity(reference, say) if self.similarity and say else None
+        rejection: str | None = None
+        if not isinstance(raw_say, str):
+            rejection = "invalid"
+        elif not say:
+            rejection = "empty"
+        elif say.count("?") != 1 or not say.endswith("?"):
+            rejection = "multi_request"
+        elif len(say.split()) > focus.CASE_REWORD_MAX:
+            rejection = "over_length"
+        elif focus.design_past_premise(say):
+            rejection = "past_premise"
+        elif say in self.said_this_session:
+            rejection = "repeated"
+        attempt.update({"say_raw": raw_say, "similarity": None if score is None
+                        else round(score, 3),
+                        "anchored": focus.asks_for_gap(say, self.case_covered) if say else None,
+                        "accepted": rejection is None,
+                        "rejection": rejection, "prompt_tokens": out.prompt_tokens,
+                        "decode_tokens": out.decode_tokens, "wall_ms": round(out.wall_ms, 1)})
+        if rejection is None:
+            attempt["say"] = say
+            return say, attempt
+        return reference, attempt
+
     async def _repair_speech(self, utterance: str, want: str, rejected: str,
                              trigger: str) -> tuple[str | None, dict, list[str]]:
         """Ask only for replacement speech, then accept it under the existing guards.
@@ -445,9 +510,9 @@ class Runner:
         boundary, even if a non-conforming provider returns extra JSON properties.
         """
         cap = self.max_say_words
-        system = contract.SPEECH_SYSTEM
+        system = self.speech_system
         system += ("\n\nRequired focus: %s. The question must ask only about that."
-                   % focus.FOCUS[want])
+                   % focus.wording(want, self.current.get("observation_shape") == "design"))
         if cap:
             system += "\nUse at most %d words." % cap
         # Do not quote negative examples here. In the first live run Llama copied the
@@ -456,18 +521,19 @@ class Runner:
 
         q = self.current
         user = contract.render(q["question"], utterance, self.history.render())
+        grace = self._repair_grace()
         try:
             out = await asyncio.wait_for(
                 self.provider.complete(system, user, schema=contract.SPEECH_SCHEMA,
                                        max_tokens=100),
-                timeout=REPAIR_GRACE_S)
+                timeout=grace)
         except (asyncio.TimeoutError, TimeoutError, ProviderError) as e:
             return None, {"trigger": trigger, "say_raw": None, "say": "", "focus": [],
                           "accepted": False,
                           "rejection": "provider-error" if isinstance(e, ProviderError)
                           else "timeout", "guards": [],
                           "prompt_tokens": None, "decode_tokens": None,
-                          "wall_ms": round(REPAIR_GRACE_S * 1000, 1)}, []
+                          "wall_ms": round(grace * 1000, 1)}, []
         raw = out.json()
         raw_say = _raw_say(raw)
         valid = isinstance(raw, dict) and isinstance(raw_say, str)
@@ -710,7 +776,7 @@ class Runner:
         want = focus.next_focus(utterance, self.focus_used,
                                 (self.current or {}).get("rubric_criteria") or [],
                                 (self.current or {}).get("focus_ladder") or [],
-                                self.seen)
+                                self.seen, self.answers_this_question)
         t0 = time.perf_counter()
         out, raw = await self._decide(utterance, [], want)
         say_raw = _raw_say(raw)
@@ -885,10 +951,10 @@ class Runner:
             g.applied.append("pool-draw(%d left)" % self.pool)
 
         # A design question that is about to advance with a part missing and budget unspent.
-        # Deterministic, like the focus rotation: the code decides that a follow-up is owed,
-        # the wording is fixed, and no model call is made. Live, the design question drew
-        # zero probes out of three because the answer was long and fluent and `ok` reads
-        # fluency as completeness (log 9.7).
+        # The code decides that a follow-up is owed, like the focus rotation. Live, the design
+        # question drew zero probes out of three because the answer was long and fluent and
+        # `ok` reads fluency as completeness (log 9.7). The field's line is a reference the
+        # model rewords for this case; a rewording that fails a check speaks the reference.
         #
         # Charged to the question's own cap and never to the pool: this is a question the
         # plan already budgeted for, not an overrun, and drawing on the shared reserve would
@@ -896,11 +962,14 @@ class Runner:
         if (self.pace and g.act == "advance" and not self.design_followed_up
                 and (q.get("observation_shape") == "design")
                 and self.follow_ups_used < allow.cap
-                and focus.design_gap(self.answers_this_question + [utterance])):
+                and focus.design_gap(self.answers_this_question + [utterance],
+                                     self.case_covered)):
             self.design_followed_up = True
             g.act = "probe"
-            g.say = focus.DESIGN_FOLLOW_UP
-            g.applied.append("design-gap->probe")
+            g.say, speech_attempt = await self._reword_case_line(utterance)
+            calls += 1
+            g.applied += ["design-gap->probe", "case-line->reworded"
+                          if speech_attempt["accepted"] else "case-line->reference"]
 
         # A system-design question is hypothetical. Llama sometimes writes a useful probe
         # with a past-experience premise ("How did you handle...?"), which changes what the

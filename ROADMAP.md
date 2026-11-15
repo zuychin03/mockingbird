@@ -14,6 +14,11 @@ What is planned after 1.1, and what is deliberately out of scope. Shipped work i
 
 ## Planned
 
+- A plan library, after 1.2. Browse every question in the bank for your field and add any of them
+  to the plan you are building. Save a plan as a named template (it suggests the job title and
+  the date), then revise, rename or reuse your templates from their own page. A template can
+  carry notes about the role, so when you ask the interviewer about the team or the job, it
+  answers by quoting what you wrote, or says it does not know.
 - A larger evaluation: 150 to 250 labelled fixtures with a held-out part and a confusion matrix,
   a decision rule on the model's action probabilities, a small classifier that runs on the
   processor, merging the clarify action into its neighbours, and closing the known gaps on the

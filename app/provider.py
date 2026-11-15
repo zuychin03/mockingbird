@@ -93,7 +93,8 @@ class Completion:
 class Provider(Protocol):
     async def complete(self, system: str, user: str, schema: dict | None = None,
                        max_tokens: int = 400, enum_field: str | None = None,
-                       enum_values: list[str] | None = None) -> Completion: ...
+                       enum_values: list[str] | None = None,
+                       temperature: float = 0.0) -> Completion: ...
 
 
 def _post(path: str, body: dict, timeout: float) -> dict:
@@ -159,12 +160,14 @@ class LlamaServer:
         return {"mode": "local", "vendor": None, "label": "llama-server", "host": BASE,
                 "model": self.model, "measured": self.model == MODEL}
 
-    def _call(self, system, user, schema, max_tokens, enum_field, enum_values) -> Completion:
+    def _call(self, system, user, schema, max_tokens, enum_field, enum_values,
+              temperature: float = 0.0) -> Completion:
         body: dict[str, Any] = {
             "model": self.model,
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
-            "max_tokens": max_tokens, "temperature": 0.0, "seed": self.seed, "stream": False,
+            "max_tokens": max_tokens, "temperature": temperature, "seed": self.seed,
+            "stream": False,
             "repeat_penalty": REPEAT_PENALTY,
         }
         if schema:
@@ -195,9 +198,10 @@ class LlamaServer:
 
     async def complete(self, system: str, user: str, schema: dict | None = None,
                        max_tokens: int = 400, enum_field: str | None = None,
-                       enum_values: list[str] | None = None) -> Completion:
+                       enum_values: list[str] | None = None,
+                       temperature: float = 0.0) -> Completion:
         return await asyncio.to_thread(self._call, system, user, schema, max_tokens,
-                                       enum_field, enum_values)
+                                       enum_field, enum_values, temperature)
 
     async def warmup(self, system: str, user: str) -> float:
         """Put the real system prompt in llama.cpp's prefix cache before the session starts.
@@ -343,6 +347,11 @@ USER_AGENT = "Mockingbird (+https://github.com/zuychin03/mockingbird)"
 # burst. A wait the vendor names is honoured up to this cap, twice, before the turn degrades.
 RETRY_WAIT_CAP_S = 20.0
 RATE_RETRIES = 2
+# Gemini's free tier answers 503 "experiencing high demand ... usually temporary" (3 of 177
+# calls in its 15/11 gate, each after about 1.3 s), and the next call 4.2 s later answered every
+# time. One retry, short: a turn is waiting, and the runner re-asks once more after this.
+OVERLOAD_RETRIES = 1
+OVERLOAD_WAIT_S = 2.0
 _sleep = time.sleep
 
 
@@ -358,20 +367,30 @@ def _retry_after(headers) -> float:
 
 
 def _send(vendor: Vendor, body: dict, key: str | None, timeout: float) -> dict:
-    for attempt in range(RATE_RETRIES + 1):
+    rate_left, overload_left = RATE_RETRIES, OVERLOAD_RETRIES
+    while True:
         try:
             return _send_once(vendor, body, key, timeout)
         except _RateLimited as e:
-            if attempt == RATE_RETRIES:
+            if not rate_left:
                 raise ProviderError(str(e)) from None
+            rate_left -= 1
             _sleep(min(e.wait_s, RETRY_WAIT_CAP_S))
-    raise AssertionError("unreachable")
+        except _Overloaded as e:
+            if not overload_left:
+                raise ProviderError(str(e)) from None
+            overload_left -= 1
+            _sleep(OVERLOAD_WAIT_S)
 
 
 class _RateLimited(Exception):
     def __init__(self, message: str, wait_s: float):
         super().__init__(message)
         self.wait_s = wait_s
+
+
+class _Overloaded(Exception):
+    pass
 
 
 def _send_once(vendor: Vendor, body: dict, key: str | None, timeout: float) -> dict:
@@ -399,6 +418,8 @@ def _send_once(vendor: Vendor, body: dict, key: str | None, timeout: float) -> d
         elif e.code == 429:
             raise _RateLimited("%s is rate limiting this key: %s" % (vendor.label, detail),
                                _retry_after(e.headers))
+        elif e.code == 503:
+            raise _Overloaded("%s rejected the request (HTTP 503): %s" % (vendor.label, detail))
         else:
             why = "rejected the request (HTTP %d)" % e.code
         raise ProviderError("%s %s: %s" % (vendor.label, why, detail))
@@ -432,7 +453,7 @@ class CloudClient:
                 "measured": self.profile.measured}
 
     def body(self, system: str, user: str, schema: dict | None, max_tokens: int,
-             enum_field: str | None) -> dict[str, Any]:
+             enum_field: str | None, temperature: float = 0.0) -> dict[str, Any]:
         p = self.profile
         b: dict[str, Any] = {
             "model": p.model,
@@ -441,7 +462,7 @@ class CloudClient:
             self.vendor.token_field: max_tokens, "stream": False,
         }
         if p.temperature:
-            b["temperature"] = 0.0
+            b["temperature"] = temperature
         if p.seed:
             b["seed"] = self.seed
         if schema:
@@ -468,9 +489,11 @@ class CloudClient:
                 b["reasoning_format"] = "hidden"
         return b
 
-    def _call(self, system, user, schema, max_tokens, enum_field, enum_values) -> Completion:
+    def _call(self, system, user, schema, max_tokens, enum_field, enum_values,
+              temperature: float = 0.0) -> Completion:
         t0 = time.perf_counter()
-        d = _send(self.vendor, self.body(system, user, schema, max_tokens, enum_field),
+        d = _send(self.vendor, self.body(system, user, schema, max_tokens, enum_field,
+                                         temperature),
                   self._key, self.timeout)
         wall = (time.perf_counter() - t0) * 1000
         try:
@@ -502,9 +525,10 @@ class CloudClient:
 
     async def complete(self, system: str, user: str, schema: dict | None = None,
                        max_tokens: int = 400, enum_field: str | None = None,
-                       enum_values: list[str] | None = None) -> Completion:
+                       enum_values: list[str] | None = None,
+                       temperature: float = 0.0) -> Completion:
         return await asyncio.to_thread(self._call, system, user, schema, max_tokens,
-                                       enum_field, enum_values)
+                                       enum_field, enum_values, temperature)
 
     async def warmup(self, system: str, user: str) -> float:
         """Nothing to warm: no prefix cache we control, and a call here would cost money."""
@@ -580,6 +604,9 @@ KNOWN = {
                                             reasoning="low"),
     ("groq", "openai/gpt-oss-120b"): Profile("groq", "openai/gpt-oss-120b", seed=True,
                                              reasoning="low"),
+    # Probed 15/11/2026: `none`, `seed` and `logprobs` are 400s, so `minimal` is the floor.
+    ("gemini", "gemini-3.5-flash-lite"): Profile("gemini", "gemini-3.5-flash-lite",
+                                                 reasoning="minimal"),
 }
 
 

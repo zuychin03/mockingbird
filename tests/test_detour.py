@@ -204,10 +204,29 @@ def test_a_phrase_decides_a_tie_that_corpus_order_would_get_wrong(real_corpus):
     ("Does anyone else see how I did?", "What this is"),
     # "any" answered this with where the recordings are stored
     ("Do you have any tips for me?", None),
+    # "feedback" was in no paragraph, so "how it went" put this on What this is, where it was
+    # answered with "nobody else sees how it went"
+    ("And how will I get feedback on how this interview went?", "How answers are scored"),
 ])
 def test_a_generic_word_does_not_steer_retrieval(real_corpus, asked, want):
     hit = detour.find(real_corpus, asked)
     assert (hit[1].title if hit else None) == want, (asked, hit and hit[1].title)
+
+
+@pytest.mark.parametrize("asked,quote", [
+    ("What happens to my recording after this?",
+     "A recording stays on the machine running this after the interview ends, in the "
+     "interview's own folder."),
+    ("And how will I get feedback on how this interview went?",
+     "Feedback on how the interview went comes in the report, not during the interview."),
+])
+def test_the_document_has_a_sentence_that_answers_each_closing_question(real_corpus, asked,
+                                                                         quote):
+    """Without one, Groq and Gemini quoted nothing and the candidate heard "I can't answer", and
+    the local model quoted the nearest sentence, once wrongly (16/11). Each is spoken alone, so it
+    must not lean on the sentence before it."""
+    said, _ = run(detour.answer(Said(quote), asked, real_corpus))
+    assert said == quote
 
 
 def test_different_forms_of_a_word_still_match(real_corpus):
