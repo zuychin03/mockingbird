@@ -79,11 +79,20 @@ def test_groq_hides_reasoning_beside_a_schema_in_the_way_each_model_accepts():
     qwen = CloudClient(provider.profile_for("groq", "qwen/qwen3.8-27b"), KEY).body(
         "s", "u", contract.TURN_SCHEMA, 400, "act")
     assert qwen["reasoning_effort"] == "none" and qwen["reasoning_format"] == "hidden"
-    assert "logprobs" not in qwen and qwen["max_completion_tokens"] == 400
+    assert "logprobs" not in qwen
     oss = CloudClient(provider.profile_for("groq", "openai/gpt-oss-20b"), KEY).body(
         "s", "u", contract.TURN_SCHEMA, 400, "act")
     assert oss["reasoning_effort"] == "low" and oss["include_reasoning"] is False
     assert "reasoning_format" not in oss
+
+
+def test_groq_gets_a_larger_budget_beside_a_schema_so_its_strings_are_not_cut():
+    groq = CloudClient(provider.profile_for("groq", "qwen/qwen3.8-27b"), KEY)
+    assert groq.body("s", "u", contract.SPEECH_SCHEMA, 100, None)["max_completion_tokens"] == 800
+    assert groq.body("s", "u", contract.TURN_SCHEMA, 400, "act")["max_completion_tokens"] == 1600
+    assert groq.body("s", "u", None, 250, None)["max_completion_tokens"] == 250
+    gemini = CloudClient(provider.profile_for("gemini", "gemini-3.5-flash-lite"), KEY)
+    assert gemini.body("s", "u", contract.SPEECH_SCHEMA, 100, None)["max_tokens"] == 100
 
 
 def test_gemini_flash_lite_sends_only_what_its_endpoint_accepts():

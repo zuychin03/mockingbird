@@ -199,7 +199,6 @@ def _plan_passages(plan: dict) -> list[Passage]:
     sentences in the corpus and is a schema change, not a line in this function.
     """
     out: list[Passage] = []
-    label = plan.get("label") or "this interview"
     phases = plan.get("phases") or []
     scored = [ph for ph in phases if ph.get("rubric_criteria")]
 
@@ -209,10 +208,12 @@ def _plan_passages(plan: dict) -> list[Passage]:
 
     counts = ", ".join(_count(ph) for ph in phases if ph.get("questions"))
     if counts:
+        # Not the plan's label: it is the job title, so "What support do graduate nurses get on
+        # this ward?" matched it on "nurse" and "ward" and was answered with this paragraph.
         out.append(Passage("the plan for this interview", "Sections and length",
-                           "%s covers %s. The questions were reviewed and approved before the "
-                           "interview started; nothing is asked that was not on the sheet."
-                           % (label, counts)))
+                           "This interview covers %s. The questions were reviewed and approved "
+                           "before the interview started; nothing is asked that was not on the "
+                           "sheet." % counts))
 
     if scored:
         rubric = plan.get("rubric") or {}

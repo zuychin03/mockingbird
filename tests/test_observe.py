@@ -13,6 +13,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import observe, score  # noqa: E402
@@ -155,6 +157,33 @@ def test_a_fragment_is_not_evidence():
     o = obs(situation="rows", action="I", result="live")
     assert o.addresses_question == "no"
     assert len(o.dropped_quotes) == 3
+
+
+SHORT = ("The vendor wanted the reporting feature first. We fixed the billing bugs instead. "
+         "Finance agreed eventually. It went fine. It worked well. Mostly the team.")
+
+
+@pytest.mark.parametrize("result,kept", [
+    ("Finance agreed eventually.", True),
+    ("finance agreed eventually", True),
+    # a claim, not a change
+    ("It went fine.", False),
+    ("It worked well.", False),
+    # their sentence, but no change in it
+    ("Mostly the team.", False),
+    # a change, but cut from a longer sentence
+    ("fixed the billing", False),
+])
+def test_a_short_result_is_kept_only_as_a_whole_sentence_stating_a_change(result, kept):
+    o = run(observe.observe(Quoter(result=result), "q.1", "Tell me about a trade-off.",
+                            [SHORT]))
+    assert bool(o.result) is kept, o.dropped_quotes
+
+
+def test_a_short_quote_for_another_part_is_still_a_fragment():
+    o = run(observe.observe(Quoter(action="Finance agreed eventually."), "q.1",
+                            "Tell me about a trade-off.", [SHORT]))
+    assert not o.action
 
 
 # --------------------------------------------------- the candidate-facing report

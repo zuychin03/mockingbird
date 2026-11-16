@@ -70,6 +70,25 @@ def _is_question(s: str) -> bool:
     return s.rstrip().endswith("?")
 
 
+# A sentence that asks for something without a question mark.
+_REQUEST_OPENER = re.compile(
+    r"^(?:please\s+|so,?\s+|now,?\s+)?(?:tell|walk|talk|take|describe|explain|give|share|"
+    r"list|name|think|imagine|consider|let'?s|let us|could you|can you|would you)\b", re.I)
+
+
+def lead_in_only(text: str) -> bool:
+    """One question, last, after sentences that only state something.
+
+    "You mentioned the extracts kept failing. What did you measure?" asks once, and the
+    extra-sentence guard speaks the question alone. A request before it ("Walk me through the
+    numbers.") or anything after it is a second request.
+    """
+    parts = _sentences(text)
+    if len(parts) < 2 or not _is_question(parts[-1]):
+        return False
+    return not any(_is_question(p) or _REQUEST_OPENER.match(p) for p in parts[:-1])
+
+
 def _one_request(text: str) -> tuple[str, bool]:
     """Keep the first of two explicitly coordinated interrogative clauses."""
     match = _COORDINATED_REQUEST.search(text or "")

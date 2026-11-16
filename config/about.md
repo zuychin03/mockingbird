@@ -26,7 +26,8 @@ and no mark out of ten, because a number tells you how you did and not what to c
 
 Scoring runs when you open the report, which is why it takes a minute. The interview itself
 never shows a judgement while it is happening. Feedback on how the interview went comes in the
-report, not during the interview.
+report, not during the interview. You get your results, and know how you did, when you open the
+report after the interview.
 
 # Where the recordings and transcripts are
 

@@ -9,6 +9,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import guards  # noqa: E402
@@ -246,6 +248,19 @@ def test_a_single_sentence_is_untouched():
     r = guards.apply(g("probe", "What did you measure?"), "...", [])
     assert r.say == "What did you measure?"
     assert "extra-sentences-dropped" not in r.applied
+
+
+@pytest.mark.parametrize("text, lead_in", [
+    ("You mentioned the deploys kept failing. What did you measure?", True),
+    ("You said it went faster, e.g. on the nightly job. What did you measure?", True),
+    ("Walk me through the numbers. Why did that matter?", False),
+    ("Could you expand on that. Why did that matter?", False),
+    ("What did you measure? Tell me more.", False),
+    ("What did you measure? And how did that land?", False),
+    ("What did you measure?", False),
+])
+def test_a_lead_in_is_a_statement_before_the_one_question(text, lead_in):
+    assert guards.lead_in_only(text) is lead_in
 
 
 def test_a_coordinated_question_is_kept_whole():

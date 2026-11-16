@@ -207,6 +207,10 @@ def test_a_phrase_decides_a_tie_that_corpus_order_would_get_wrong(real_corpus):
     # "feedback" was in no paragraph, so "how it went" put this on What this is, where it was
     # answered with "nobody else sees how it went"
     ("And how will I get feedback on how this interview went?", "How answers are scored"),
+    # "know" put this on the refusal paragraph ("what it knows about the role")
+    ("How will I know how I did?", "How answers are scored"),
+    # no paragraph said "results"
+    ("When do I see my results?", "How answers are scored"),
 ])
 def test_a_generic_word_does_not_steer_retrieval(real_corpus, asked, want):
     hit = detour.find(real_corpus, asked)
@@ -219,6 +223,12 @@ def test_a_generic_word_does_not_steer_retrieval(real_corpus, asked, want):
      "interview's own folder."),
     ("And how will I get feedback on how this interview went?",
      "Feedback on how the interview went comes in the report, not during the interview."),
+    ("How will I know how I did?",
+     "You get your results, and know how you did, when you open the report after the "
+     "interview."),
+    ("When do I see my results?",
+     "You get your results, and know how you did, when you open the report after the "
+     "interview."),
 ])
 def test_the_document_has_a_sentence_that_answers_each_closing_question(real_corpus, asked,
                                                                          quote):
@@ -234,6 +244,18 @@ def test_different_forms_of_a_word_still_match(real_corpus):
     about exporting matched nothing the question said and lost a tie to SCORING."""
     hit = detour.find(real_corpus, "Can I export the report?")
     assert hit and hit[1].title == "Taking a report with you"
+
+
+def test_a_question_about_the_job_does_not_match_the_plan_on_its_title():
+    """The plan's label is the job title. In the Sections paragraph it answered "What support do
+    graduate nurses get in their first few months on this ward?" with how many questions the
+    interview has (16/11)."""
+    plan = dict(PLAN, label="Registered Nurse, Surgical Ward (junior)")
+    got = detour.corpus(plan)
+    assert not any("Surgical Ward" in p.text for p in got)
+    hit = detour.find(got, "What support do graduate nurses get in their first few months on "
+                           "this ward?")
+    assert hit is None or hit[1].decline, hit and hit[1].title
 
 
 def test_a_common_word_decides_nothing(passages):

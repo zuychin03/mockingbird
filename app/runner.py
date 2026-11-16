@@ -549,9 +549,12 @@ class Runner:
             rejection = "invalid"
         elif not raw_say.strip() or not checked.say:
             rejection = "empty"
+        # A lead-in before the one question is dropped and the question spoken, as on the
+        # decision path. Groq opens repairs with "You mentioned X." (16/11, Duy: "Accept
+        # lead-in trims"); refusing those spent the call and spoke a template.
         elif (raw_say.count("?") != 1
-              or "compound-request-trimmed" in checked.applied
-              or "extra-sentences-dropped" in checked.applied):
+              or ("extra-sentences-dropped" in checked.applied
+                  and not guards.lead_in_only(raw_say))):
             rejection = "multi_request"
         elif checked.needs_regeneration or checked.say in self.said_this_session:
             rejection = "repeated"

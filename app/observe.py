@@ -47,7 +47,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .depth_signals import FIRST_SG, MEASURED, NUMBER
+from . import result_check
+from .depth_signals import ASSERTED, FIRST_SG, MEASURED, NUMBER
 from .provider import Provider
 
 SYSTEM = """You are reading one answer from a job interview and quoting parts of it back.
@@ -129,6 +130,11 @@ DESIGN_PARTS = ("approach", "alternative", "tradeoff", "failure_mode")
 QUOTE_MATCH = 0.85
 # Below this a quote is a fragment, not evidence, and coverage stops discriminating.
 MIN_QUOTE_WORDS = 4
+# Except a result that is one of the answer's own sentences and states a change: "They signed
+# anyway." On the result gold set's 163 answers the only short sentences that state a change
+# are two outcomes; "It went fine." and "it worked" are claims, and stay out (16/11/2026).
+MIN_RESULT_WORDS = 2
+_SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 
 @dataclass
@@ -198,6 +204,17 @@ def _grounded(quote: str, answer: str) -> bool:
     return sum(b.size for b in m.get_matching_blocks()) / len(q) >= QUOTE_MATCH
 
 
+def _short_result(quote: str, answer: str) -> bool:
+    """A result under MIN_QUOTE_WORDS that is a whole sentence they said and states a change."""
+    q = " ".join((quote or "").split())
+    if not MIN_RESULT_WORDS <= len(q.split()) < MIN_QUOTE_WORDS:
+        return False
+    whole = {" ".join(s.split()).lower().rstrip(".!?")
+             for s in _SENTENCE.split(answer.strip())}
+    return (q.lower().rstrip(".!?") in whole and result_check.states_change(q)
+            and not ASSERTED.search(q))
+
+
 def deterministic(text: str) -> dict[str, bool]:
     """The three criteria that need no model. Regex over what they said."""
     return {"first_person": bool(FIRST_SG.search(text)),
@@ -231,7 +248,7 @@ async def observe(provider: Provider, question_id: str, question: str,
         quote = (raw.get(part) or "").strip()
         if not quote:
             continue
-        if _grounded(quote, joined):
+        if _grounded(quote, joined) or (part == "result" and _short_result(quote, joined)):
             setattr(obs, part, quote)
         else:
             obs.dropped_quotes.append("%s: %s" % (part, quote))
@@ -257,7 +274,9 @@ CACHE_VERSION = 1
 def fingerprint(items: list[tuple]) -> str:
     """What the observations depend on. Any change to it must invalidate the cache."""
     h = hashlib.sha256()
-    h.update(repr((CACHE_VERSION, QUOTE_MATCH, MIN_QUOTE_WORDS)).encode())
+    h.update(repr((CACHE_VERSION, QUOTE_MATCH, MIN_QUOTE_WORDS, MIN_RESULT_WORDS)).encode())
+    for rule in (result_check.CHANGE, result_check.NOT_CHANGE, ASSERTED):
+        h.update(rule.pattern.encode())
     h.update(SYSTEM.encode())
     h.update(DESIGN_SYSTEM.encode())
     for qid, question, answers, shape in items:

@@ -1467,6 +1467,44 @@ def test_an_off_focus_probe_gets_one_model_written_speech_repair(tmp_path, monke
     assert prior not in r.provider.systems[1]
 
 
+def test_a_repair_with_a_lead_in_speaks_its_question_alone(tmp_path, monkeypatch):
+    """Groq opens repairs with "You mentioned X." (16/11). The question after it was refused
+    and a template spoken."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "CONTEXT")
+    question = "Which constraints shaped the incident response?"
+    r, state = build([d("probe", "What happened afterwards?"),
+                      speech("You mentioned the outage hit the night shift. " + question)],
+                     tmp_path)
+    run(r.ask())
+    r.focus_used.add("OUTCOME")
+    out = run(r.submit("we shipped it"))
+    attempt = last_decision(state)["speech_attempt"]
+
+    assert out.spoken.text == question
+    assert attempt["accepted"] is True
+    assert "extra-sentences-dropped" in attempt["guards"]
+
+
+@pytest.mark.parametrize("repair", [
+    # a request before the question
+    "Walk me through the night shift. Which constraints shaped the incident response?",
+    # something after it
+    "Which constraints shaped the incident response? Tell me more.",
+    # two questions
+    "Which constraints shaped the response? What did the night shift know?",
+])
+def test_a_repair_that_asks_twice_is_still_refused(tmp_path, monkeypatch, repair):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "CONTEXT")
+    r, state = build([d("probe", "What happened afterwards?"), speech(repair)], tmp_path)
+    run(r.ask())
+    r.focus_used.add("OUTCOME")
+    out = run(r.submit("we shipped it"))
+    attempt = last_decision(state)["speech_attempt"]
+
+    assert attempt["rejection"] == "multi_request"
+    assert out.spoken.text in focus.TEMPLATE["CONTEXT"]
+
+
 def test_speech_repair_accepts_the_requested_focus_with_an_incidental_extra_label(
         tmp_path, monkeypatch):
     monkeypatch.setattr(focus, "next_focus", lambda *args: "STEPS")

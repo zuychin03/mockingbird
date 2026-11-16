@@ -289,6 +289,7 @@ def product_model(model: dict | None = None) -> dict | None:
 ROOT = Path(__file__).resolve().parent.parent
 CLOUD_MODELS = ROOT / "config" / "cloud_models.json"
 CLOUD_TIMEOUT = 30.0
+GROQ_SCHEMA_MIN_TOKENS = 800     # strings of up to 496 characters; see CloudClient.body
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
 
 
@@ -455,6 +456,12 @@ class CloudClient:
     def body(self, system: str, user: str, schema: dict | None, max_tokens: int,
              enum_field: str | None, temperature: float = 0.0) -> dict[str, Any]:
         p = self.profile
+        if schema and self.vendor.name == "groq":
+            # Groq's schema mode ends every string early, at a length it derives from this
+            # budget, with finish_reason "stop": 128 characters at 100 tokens, 384 at 400, 496
+            # at 800 (probed 16/11/2026). Gemini cuts nothing. Groq's rate limit counts the
+            # tokens used, not this ceiling, so a larger one costs nothing.
+            max_tokens = max(max_tokens * 4, GROQ_SCHEMA_MIN_TOKENS)
         b: dict[str, Any] = {
             "model": p.model,
             "messages": [{"role": "system", "content": system},

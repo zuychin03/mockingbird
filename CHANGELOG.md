@@ -66,8 +66,20 @@ compared side by side.
 - Asked at the end what happens to their recording, or how they will get feedback, the
   interviewer now answers. Before, a cloud interviewer said it could not answer, and the local
   one could answer a different question.
+- Asked "How will I know how I did?" or "When do I see my results?", the interviewer now says
+  the results come in the report. Before, it said it could not answer.
+- A question about the job that names the job title, such as what support new nurses get on the
+  ward, is now declined. Before, the interviewer could answer it with how many questions the
+  interview has.
 - When you have already said how a story ended, in words like "they kept the budget" or "no
   incidents since", the interviewer no longer asks what happened in the end.
+- A short outcome said as a sentence of its own, such as "They signed anyway.", now counts as
+  how the story ended, in the report and during the interview. Before, it was too short to
+  count. "It went fine." still does not count.
+- On Groq, the interviewer's rewritten follow-up questions were cut off at 128 characters and
+  then thrown away, so a stock question was asked instead. Groq now gets room for the whole
+  sentence. A rewrite that opens with a remark such as "You mentioned..." before its one
+  question is now asked without the remark, rather than thrown away.
 
 ## 1.0.1 - 2026-11-08
 
