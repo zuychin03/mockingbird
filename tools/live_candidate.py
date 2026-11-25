@@ -123,10 +123,10 @@ async def sit(r: Runner, script: dict[int, dict], pace: float = 0.0) -> list[dic
             line = (line + "  " if line else "") + (await r.ask()).text
         mine = [t for t in r.state.turns[before:] if t.utterance == text] or r.state.turns[-1:]
         t = mine[0]
-        asked = [d.get("focus_got") or [] for d in decisions(r.state.dir)
-                 if d.get("turn") == t.index]
+        row = ([d for d in decisions(r.state.dir) if d.get("turn") == t.index] or [{}])[-1]
         log.append({"q": n, "phase": phase, "kind": kind, "said": text, "act": t.act,
-                    "guards": t.guards, "reply": line, "asked": asked[-1] if asked else []})
+                    "guards": t.guards, "reply": line, "asked": row.get("focus_got") or [],
+                    "floor": row.get("floor_shadow")})
         print("Q%-2d %-6s %-8s | %s" % (n, kind, t.act, line[:150]), flush=True)
         await r.settle()
         save(r)
@@ -143,13 +143,15 @@ def decisions(session_dir: Path) -> list[dict]:
 
 
 def fill_asked(log: list[dict], records: list[dict]) -> None:
-    """Give each log entry the focuses its turn's line asked (`focus_got`), for runs saved
-    before the log carried them. Matched in order on the answer, as fillers repeat."""
+    """Give each log entry the focuses its turn's line asked (`focus_got`) and what the shadow
+    floor would have asked (`floor_shadow`), for runs saved before the log carried them.
+    Matched in order on the answer, as fillers repeat."""
     i = 0
     for e in log:
         for j in range(i, len(records)):
             if records[j].get("utterance") == e["said"]:
                 e["asked"] = records[j].get("focus_got") or []
+                e["floor"] = records[j].get("floor_shadow")
                 i = j + 1
                 break
 
@@ -164,9 +166,14 @@ def verdict(gap: str, first: dict | None) -> str:
 
 def report(plan: dict, script: dict[int, dict], log: list[dict]) -> dict:
     """Follow-ups to scripted lines per question, gaps followed up and targeted, and family
-    crossings. A gap question's first reply is printed under it, for reading by hand."""
+    crossings. A gap question's first reply is printed under it, for reading by hand.
+
+    The shadow floor's first request, where the first reply moved on, is what it would add if
+    it were live: `floor_targeted` gaps it would target, `floor_unplanted` questions with no
+    planted gap it would follow up."""
     generated = {g["text"] for g in plan.get("generated", [])}
     rows, caught, targeted, crossings = [], 0, 0, []
+    floor_targeted = floor_unplanted = 0
     for n, q in enumerate(sess.iter_questions(plan), 1):
         mine = [e for e in log if e["q"] == n]
         follow = sum(e["act"] in FOLLOW for e in mine if e["kind"] == "script")
@@ -175,16 +182,23 @@ def report(plan: dict, script: dict[int, dict], log: list[dict]) -> dict:
         how = verdict(gap, first) if gap else ""
         caught += how in ("targeted", "other")
         targeted += how == "targeted"
+        floor = (first or {}).get("floor") or []
+        if floor and gap and how == "missed":
+            floor_targeted += floor[0] in GAP_FOCUS[gap]
+        elif floor and not gap:
+            floor_unplanted += 1
         rows.append({"q": n, "phase": q["phase"], "generated": q["question"] in generated,
                      "gap": gap, "followed": how in ("targeted", "other"), "verdict": how,
                      "asked": (first or {}).get("asked", []), "follow_ups": follow,
-                     "acts": [e["act"] for e in mine],
+                     "acts": [e["act"] for e in mine], "floor": floor,
                      "reply": (first or {}).get("reply", "") if gap else ""})
         if how == "other":
             note = "  <- followed, asked %s" % (",".join(first.get("asked") or [])
                                                 or "nothing named")
         else:
             note = {"": "", "targeted": "  <- gap targeted", "missed": "  <- GAP MISSED"}[how]
+        if floor:
+            note += "  (floor would ask %s)" % ",".join(floor)
         print("  Q%-2d %-22s %-4s %-16s %s%s" % (
             n, q["phase"], "gen" if q["question"] in generated else "", gap or "-",
             " ".join(e["act"] for e in mine) or "(not reached)", note))
@@ -195,7 +209,10 @@ def report(plan: dict, script: dict[int, dict], log: list[dict]) -> dict:
     gaps = sum(1 for q in script.values() if q["gap"])
     print("gaps targeted %d/%d (followed up %d/%d), family crossings %d"
           % (targeted, gaps, caught, gaps, len(crossings)))
+    print("shadow floor: would target %d more gaps, follow up %d questions with no planted gap"
+          % (floor_targeted, floor_unplanted))
     return {"rows": rows, "gaps_targeted": targeted, "gaps_followed": caught, "gaps": gaps,
+            "floor_targeted": floor_targeted, "floor_unplanted": floor_unplanted,
             "crossings": [{"q": e["q"], "act": e["act"]} for e in crossings]}
 
 

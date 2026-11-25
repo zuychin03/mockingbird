@@ -967,6 +967,16 @@ class Runner:
             g.applied += ["design-gap->probe", "case-line->reworded"
                           if speech_attempt["accepted"] else "case-line->reference"]
 
+        # The follow-up floor in shadow (review Stage 2, Tier A): what it would ask where the
+        # model chose to move on from a story question with nothing followed up yet. Recorded
+        # beside the turn and never acted on; an advance the code forced is not the model's.
+        floor_shadow = None
+        if (self.pace and g.act == "advance" and self.follow_ups_used == 0
+                and self.follow_ups_used < allow.cap and self._star_paced(q)
+                and not any(a.endswith("->advance") for a in g.applied)):
+            floor_shadow = focus.floor(utterance, q.get("rubric_criteria") or [],
+                                       self.answers_this_question, self.seen)
+
         # A system-design question is hypothetical. Llama sometimes writes a useful probe
         # with a past-experience premise ("How did you handle...?"), which changes what the
         # candidate is being assessed on. Repair only the finite reviewed grammar here,
@@ -1133,7 +1143,7 @@ class Runner:
                                  wall_ms=(time.perf_counter() - t0) * 1000, calls=calls,
                                  want=want, asked=asked, say_model=say_model,
                                  say_raw=say_raw, speech_attempt=speech_attempt,
-                                 regenerated_from=regenerated_from)
+                                 regenerated_from=regenerated_from, floor_shadow=floor_shadow)
         if not outcome.closed_question:
             self._observe_later(utterance)
         return outcome
@@ -1146,7 +1156,8 @@ class Runner:
                   say_model: str | None = None,
                   say_raw: str | None = None,
                   speech_attempt: dict | None = None,
-                  regenerated_from: str | None = None) -> TurnOutcome:
+                  regenerated_from: str | None = None,
+                  floor_shadow: list[str] | None = None) -> TurnOutcome:
         q = self.current
         # Captured before any handler runs: `_close_question` moves the index, and the line
         # this returns belongs to the question being closed, not to the one after it.
@@ -1189,6 +1200,9 @@ class Runner:
             # and its precise reason remain available instead of disappearing behind the
             # focused template used as the final fallback.
             "speech_attempt": speech_attempt,
+            # What the follow-up floor would ask on this turn, in order; [] considered and
+            # nothing owed, null not considered. Shadow only: nothing reads it to decide.
+            "floor_shadow": floor_shadow,
             "follow_ups_used": self.follow_ups_used,
             "pool_left": self.pool,
             # Logged every turn, never branched on. The threshold gets set from real data

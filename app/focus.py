@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 
-from .depth_signals import FIRST_SG, signals
+from .depth_signals import FIRST_SG, NUMBER, signals
 
 # The closed set. Each is a distinct thing an interviewer wants, phrased as the instruction
 # that goes into the prompt.
@@ -470,6 +470,38 @@ def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None
         if focus not in used:
             return focus
     return "STEPS"
+
+
+# Below this a first answer is too short for its wording to show a gap.
+FLOOR_MIN_WORDS = 15
+
+
+def floor(utterance: str, criteria: list[str], earlier: list[str] | None = None,
+          seen: set[str] | None = None) -> list[str]:
+    """The follow-up floor (review Stage 2, Tier A): what a first answer leaves owed in its own
+    words, in the order it would be asked. ROLE for "we" with no "I"; OUTCOME for an outcome only
+    claimed ("it went fine") with no figure anywhere; MEASURE for a figure with no account of how
+    it was known, or size in vague words with no figure. Only what the phase scores (`criteria`),
+    and nothing `answered` already spends.
+
+    The review also required `result_check.states_change` to be false for OUTCOME. That test
+    reads "worked" as a change, so it fired on 0 of the 10 claimed outcomes in the result gold
+    set's dev half; no figure keeps the 4 the claim signal finds there and drops its 2 checkable
+    outcomes. Both halves: 5 of 14 claimed, 1 of 73 checkable, 2 of 76 with none (25/11)."""
+    if is_contentless(utterance) or len(utterance.split()) < FLOOR_MIN_WORDS:
+        return []
+    s = signals(utterance)
+    spent = answered(" ".join((earlier or []) + [utterance]), seen)
+    figure = NUMBER.search(utterance)
+    arms = []
+    if "first_person" in criteria and s["attribution"] and "ROLE" not in spent:
+        arms.append("ROLE")
+    if ("states_outcome" in criteria and s["asserted"] and not figure
+            and "OUTCOME" not in spent):
+        arms.append("OUTCOME")
+    if "measurement_stated" in criteria and (s["unverified"] or (s["vague"] and not figure)):
+        arms.append("MEASURE")
+    return arms
 
 
 # A design question is a hypothetical, so it has no outcome, no team and no duration, and the

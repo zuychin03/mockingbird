@@ -51,10 +51,24 @@ def test_report_keeps_the_old_follow_up_count_beside_the_targeted_one(capsys):
 def test_saved_logs_take_the_asked_focus_from_their_own_turn_in_order():
     log = [{"said": "That's all."}, {"said": "Real answer."}, {"said": "That's all."}]
     records = [{"utterance": "That's all.", "focus_got": ["ROLE"]},
-               {"utterance": "Real answer.", "focus_got": ["OUTCOME"]},
-               {"utterance": "That's all.", "focus_got": []}]
+               {"utterance": "Real answer.", "focus_got": ["OUTCOME"], "floor_shadow": []},
+               {"utterance": "That's all.", "focus_got": [], "floor_shadow": ["ROLE"]}]
     lc.fill_asked(log, records)
     assert [e["asked"] for e in log] == [["ROLE"], ["OUTCOME"], []]
+    assert [e["floor"] for e in log] == [None, [], ["ROLE"]]
+
+
+def test_report_counts_what_the_shadow_floor_would_add(capsys):
+    """Its first request is the one it would ask: MEASURE on a missing outcome adds nothing."""
+    script = {3: {"gap": "we throughout"}, 4: {"gap": "no outcome"}}
+    log = [dict(_entry(3, "advance"), floor=["ROLE", "MEASURE"]),
+           dict(_entry(4, "advance"), floor=["MEASURE"]),
+           dict(_entry(5, "advance"), floor=["OUTCOME"]),
+           dict(_entry(6, "advance"), floor=[])]
+    got = lc.report(PLAN, script, log)
+    assert (got["floor_targeted"], got["floor_unplanted"]) == (1, 1)
+    assert got["gaps_targeted"] == 0
+    assert "floor would ask ROLE,MEASURE" in capsys.readouterr().out
 
 
 def test_rescore_reads_a_saved_run_and_its_session(tmp_path, monkeypatch):

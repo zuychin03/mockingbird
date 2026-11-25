@@ -3328,3 +3328,81 @@ def test_a_typed_answer_does_not_inherit_the_previous_recording(tmp_path):
     run(r.submit("typed"))
     assert state.turns[-1].audio is None
     assert state.turns[0].audio == "data/sessions/s1/audio/answer-1.wav"
+
+
+# ------------------------------------------------------- the follow-up floor, shadow only
+FLOOR_CRITERIA = ["sets_context", "describes_action", "states_outcome", "first_person",
+                  "measurement_stated"]
+FLOOR_PLAN = {
+    "id": "test-floor",
+    "phases": [{
+        "id": "stories", "answer_shape": "open", "probe_budget": 2, "scored": True,
+        "rubric_criteria": FLOOR_CRITERIA,
+        "questions": ["Tell me about a change you led.", "Tell me about another one."],
+    }],
+}
+WE_STORY = ("We moved the clinic bookings to the new system over one weekend, and the front "
+            "desk team trained everyone on the Monday morning.")
+CLAIMED = ("I moved the clinic bookings to the new system over one weekend, and honestly it "
+           "worked fine for the whole front desk.")
+
+
+def test_the_floor_names_what_a_first_answer_leaves_owed():
+    """"It worked fine" reads as a change to `result_check`, which is why the review's OUTCOME
+    arm (claimed and no change stated) never fired; a figure is what separates a checkable
+    outcome from a claimed one."""
+    assert focus.floor(WE_STORY, FLOOR_CRITERIA) == ["ROLE"]
+    assert result_check.states_change(CLAIMED)
+    assert focus.floor(CLAIMED, FLOOR_CRITERIA) == ["OUTCOME"]
+    checked = CLAIMED.replace("for the whole front desk", "and 40 bookings moved with no errors")
+    assert "OUTCOME" not in focus.floor(checked, FLOOR_CRITERIA)
+    fast = ("I cut the page load from eight seconds to 300 ms by caching the product catalogue "
+            "on the edge servers in each region.")
+    assert focus.floor(fast, FLOOR_CRITERIA) == ["MEASURE"]
+    assert focus.floor("I measured it. " + fast, FLOOR_CRITERIA) == []
+
+
+def test_the_floor_leaves_out_what_is_not_scored_short_or_already_given():
+    assert focus.floor(WE_STORY, ["sets_context", "describes_action"]) == []
+    assert focus.floor("We moved the bookings over one weekend.", FLOOR_CRITERIA) == []
+    assert focus.floor(WE_STORY, FLOOR_CRITERIA, ["I ran the training myself."]) == []
+    assert focus.floor(CLAIMED, FLOOR_CRITERIA, seen={"result"}) == []
+
+
+def test_a_model_advance_records_the_floor_and_still_advances(tmp_path):
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(FLOOR_PLAN)
+    r = Runner(ScriptedProvider([d("advance", "Thanks.")]), FLOOR_PLAN, state)
+    run(r.ask())
+    out = run(r.submit(WE_STORY))
+    assert out.act == "advance" and out.closed_question
+    assert last_decision(state)["floor_shadow"] == ["ROLE"]
+    assert r.current["question"] == "Tell me about another one."
+
+
+def test_the_floor_is_not_considered_once_a_follow_up_was_asked(tmp_path):
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(FLOOR_PLAN)
+    r = Runner(ScriptedProvider([d("probe", "What happened next on the Monday?"),
+                                 d("advance", "Thanks.")]), FLOOR_PLAN, state)
+    run(r.ask())
+    run(r.submit("We moved the bookings."))
+    assert last_decision(state)["floor_shadow"] is None
+    run(r.submit(WE_STORY))
+    assert last_decision(state)["act"] == "advance"
+    assert last_decision(state)["floor_shadow"] is None
+
+
+def test_an_advance_the_code_forced_is_not_the_floor_s_to_consider(tmp_path):
+    """The kept part of a deferred answer completes the story, so the next answer closes the
+    question before any follow-up: the code's advance, not the model's."""
+    parts = Parts(("situation", "action", "result"))
+    r, state = adaptive([d("probe", "And how did that go?")], parts, tmp_path, plan=FLOOR_PLAN)
+    run(r.ask())
+    run(r.submit(WE_STORY + " How does training work on the team here?"))
+    run(r.submit("We also ran a second session for the night shift, and the whole front desk "
+                 "used the new system from the Tuesday."))
+    decision = last_decision(state)
+    assert "observations-complete->advance" in decision["guards"]
+    assert decision["follow_ups_used"] == 0
+    assert decision["floor_shadow"] is None
