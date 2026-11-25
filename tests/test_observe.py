@@ -425,3 +425,56 @@ def test_changing_the_extraction_prompt_invalidates_the_cache():
         assert observe.fingerprint(items) != before
     finally:
         observe.SYSTEM = original
+
+
+# ------------------------------------------------------------------ live wording (R3)
+class Recorder(Quoter):
+    """A Quoter that keeps the prompt each call was given."""
+
+    def __init__(self, **parts):
+        super().__init__(**parts)
+        self.systems = []
+
+    async def complete(self, system, user, **kw):
+        self.systems.append(system)
+        return await super().complete(system, user, **kw)
+
+
+def test_the_live_path_reads_its_own_prompt_and_the_report_the_shared_one():
+    rec = Recorder()
+    run(observe.observe_answer(rec, "q.1", "Tell me about a schema change.", ANSWER))
+    run(observe.observe(rec, "q.1", "Tell me about a schema change.", [ANSWER]))
+    assert rec.systems == [observe.LIVE_SYSTEM, observe.SYSTEM]
+
+
+def test_every_live_extractor_reads_the_live_prompt():
+    """Decision 2 (17/11): the live wording is for pacing only. A live caller left on SYSTEM
+    would measure as R3 and run as before."""
+    from api import main as api
+    from tools import live_candidate
+
+    for make in (api._extractor, live_candidate.extractor):
+        rec = Recorder()
+        run(make(rec)("q.1", "Tell me about a schema change.", ANSWER))
+        assert rec.systems == [observe.LIVE_SYSTEM]
+    cli = (Path(__file__).resolve().parent.parent / "app" / "cli.py").read_text(encoding="utf-8")
+    assert "observe.observe_answer(p, question_id, question, utterance)" in cli
+
+
+def test_the_live_wording_changes_only_the_result_line():
+    """R3 is about `result`; situation and action must read as the report's do."""
+    def lines(prompt):
+        return [x for x in prompt.splitlines() if x.startswith(('- "situation"', '- "action"'))]
+    assert lines(observe.LIVE_SYSTEM) == lines(observe.SYSTEM)
+    assert "SAME sentence may supply more than one field" in observe.LIVE_SYSTEM
+
+
+def test_the_live_wording_cannot_move_a_cached_report():
+    items = [("q.1", "Tell me about a schema change.", [ANSWER], "star")]
+    before = observe.fingerprint(items)
+    original = observe.LIVE_SYSTEM
+    try:
+        observe.LIVE_SYSTEM = original + "\n- An extra rule."
+        assert observe.fingerprint(items) == before
+    finally:
+        observe.LIVE_SYSTEM = original

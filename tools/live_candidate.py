@@ -23,6 +23,10 @@ than pickled: pickling a live object across a code change is how a harness start
 on `data/field_test_plan_<field>.json` in one run, then reports each question's decisions, the
 planted gaps followed up and any family crossing. `--data` moves the live file and the session
 out of `data/`, so a test never lands in History.
+
+    python tools/live_candidate.py --rescore <data dir> [<data dir> ...]
+
+`--rescore` reports saved `--script` runs again from their own session records, with no model.
 """
 
 from __future__ import annotations
@@ -32,7 +36,6 @@ import asyncio
 import json
 import re
 import sys
-from dataclasses import asdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -49,6 +52,17 @@ from app.runner import Runner  # noqa: E402
 STATE = ROOT / "data" / "live_session.json"
 SCRIPTS = ROOT / "internal_docs" / "FIELD_TEST_SCRIPTS.md"
 FOLLOW = ("probe", "reask")
+# The focus that asks for what each planted gap leaves out. Scoring the act alone credited any
+# follow-up, so a ROLE question on a missing outcome counted as caught (review, 25/11). An
+# asserted outcome is answered by the outcome or by how they knew it.
+GAP_FOCUS = {
+    "no outcome": {"OUTCOME"},
+    "we throughout": {"ROLE"},
+    "no figure": {"MEASURE"},
+    "it worked fine": {"OUTCOME", "MEASURE"},
+    "it went well": {"OUTCOME", "MEASURE"},
+    "it went fine": {"OUTCOME", "MEASURE"},
+}
 FALLBACK = ["I think that's everything I have on that one.", "That's really all there is to it.",
             "Sorry, I don't have more detail than that.", "Can we move on to the next one?"]
 
@@ -109,8 +123,10 @@ async def sit(r: Runner, script: dict[int, dict], pace: float = 0.0) -> list[dic
             line = (line + "  " if line else "") + (await r.ask()).text
         mine = [t for t in r.state.turns[before:] if t.utterance == text] or r.state.turns[-1:]
         t = mine[0]
+        asked = [d.get("focus_got") or [] for d in decisions(r.state.dir)
+                 if d.get("turn") == t.index]
         log.append({"q": n, "phase": phase, "kind": kind, "said": text, "act": t.act,
-                    "guards": t.guards, "reply": line})
+                    "guards": t.guards, "reply": line, "asked": asked[-1] if asked else []})
         print("Q%-2d %-6s %-8s | %s" % (n, kind, t.act, line[:150]), flush=True)
         await r.settle()
         save(r)
@@ -119,29 +135,84 @@ async def sit(r: Runner, script: dict[int, dict], pace: float = 0.0) -> list[dic
     return log
 
 
+def decisions(session_dir: Path) -> list[dict]:
+    path = Path(session_dir) / "decisions.jsonl"
+    if not path.exists():
+        return []
+    return [json.loads(x) for x in path.read_text(encoding="utf-8").splitlines() if x.strip()]
+
+
+def fill_asked(log: list[dict], records: list[dict]) -> None:
+    """Give each log entry the focuses its turn's line asked (`focus_got`), for runs saved
+    before the log carried them. Matched in order on the answer, as fillers repeat."""
+    i = 0
+    for e in log:
+        for j in range(i, len(records)):
+            if records[j].get("utterance") == e["said"]:
+                e["asked"] = records[j].get("focus_got") or []
+                i = j + 1
+                break
+
+
+def verdict(gap: str, first: dict | None) -> str:
+    """How the first reply to a planted gap's answer treated it: `targeted` asked for what the
+    gap leaves out, `other` followed up on something else, `missed` moved on."""
+    if first is None or first["act"] not in FOLLOW:
+        return "missed"
+    return "targeted" if GAP_FOCUS[gap] & set(first.get("asked") or []) else "other"
+
+
 def report(plan: dict, script: dict[int, dict], log: list[dict]) -> dict:
-    """Follow-ups to scripted lines per question, gaps followed up, and family crossings."""
+    """Follow-ups to scripted lines per question, gaps followed up and targeted, and family
+    crossings. A gap question's first reply is printed under it, for reading by hand."""
     generated = {g["text"] for g in plan.get("generated", [])}
-    rows, caught, crossings = [], 0, []
+    rows, caught, targeted, crossings = [], 0, 0, []
     for n, q in enumerate(sess.iter_questions(plan), 1):
         mine = [e for e in log if e["q"] == n]
         follow = sum(e["act"] in FOLLOW for e in mine if e["kind"] == "script")
         gap = script.get(n, {}).get("gap", "")
-        hit = bool(gap) and bool(mine) and mine[0]["act"] in FOLLOW
-        caught += hit
+        first = mine[0] if mine else None
+        how = verdict(gap, first) if gap else ""
+        caught += how in ("targeted", "other")
+        targeted += how == "targeted"
         rows.append({"q": n, "phase": q["phase"], "generated": q["question"] in generated,
-                     "gap": gap, "followed": hit, "follow_ups": follow,
-                     "acts": [e["act"] for e in mine]})
+                     "gap": gap, "followed": how in ("targeted", "other"), "verdict": how,
+                     "asked": (first or {}).get("asked", []), "follow_ups": follow,
+                     "acts": [e["act"] for e in mine],
+                     "reply": (first or {}).get("reply", "") if gap else ""})
+        if how == "other":
+            note = "  <- followed, asked %s" % (",".join(first.get("asked") or [])
+                                                or "nothing named")
+        else:
+            note = {"": "", "targeted": "  <- gap targeted", "missed": "  <- GAP MISSED"}[how]
         print("  Q%-2d %-22s %-4s %-16s %s%s" % (
             n, q["phase"], "gen" if q["question"] in generated else "", gap or "-",
-            " ".join(e["act"] for e in mine) or "(not reached)",
-            "" if not gap else ("  <- gap followed up" if hit else "  <- GAP MISSED")))
+            " ".join(e["act"] for e in mine) or "(not reached)", note))
+        if gap and first:
+            print("      %s" % first["reply"][:200])
         if q["type"] != "user_questions":
             crossings += [e for e in mine if e["act"] in contract.HALT]
     gaps = sum(1 for q in script.values() if q["gap"])
-    print("gaps followed up %d/%d, family crossings %d" % (caught, gaps, len(crossings)))
-    return {"rows": rows, "gaps_followed": caught, "gaps": gaps,
+    print("gaps targeted %d/%d (followed up %d/%d), family crossings %d"
+          % (targeted, gaps, caught, gaps, len(crossings)))
+    return {"rows": rows, "gaps_targeted": targeted, "gaps_followed": caught, "gaps": gaps,
             "crossings": [{"q": e["q"], "act": e["act"]} for e in crossings]}
+
+
+def rescore(data_dir: Path) -> tuple[int, int, int]:
+    """Report every saved `--script` run in `data_dir` again; (targeted, followed, gaps)."""
+    totals = [0, 0, 0]
+    for path in sorted(Path(data_dir).glob("field_script_*.json")):
+        run = json.loads(path.read_text(encoding="utf-8"))
+        session_dir = Path(data_dir) / "sessions" / run["session"]
+        plan = json.loads((session_dir / "session.json").read_text(encoding="utf-8"))[
+            "plan_snapshot"]
+        fill_asked(run["log"], decisions(session_dir))
+        print("\n%s (%s)" % (path.name, run["status"]))
+        got = report(plan, read_script(run["field"]), run["log"])
+        for i, k in enumerate(("gaps_targeted", "gaps_followed", "gaps")):
+            totals[i] += got[k]
+    return totals[0], totals[1], totals[2]
 
 
 def save(r: Runner) -> None:
@@ -151,7 +222,7 @@ def save(r: Runner) -> None:
 def extractor(p):
     """Plan 1c.5's per-answer extraction, as the runner wants it."""
     async def fn(question_id, question, utterance):
-        return await observe.observe(p, question_id, question, [utterance])
+        return await observe.observe_answer(p, question_id, question, utterance)
     return fn
 
 
@@ -187,7 +258,16 @@ async def main() -> int:
                     help="a cloud interviewer, with --model and the stored key")
     ap.add_argument("--model")
     ap.add_argument("--pace", type=float, default=0.0, help="seconds before each scripted answer")
+    ap.add_argument("--rescore", type=Path, nargs="+", metavar="DIR",
+                    help="report saved --script runs again, with no model")
     a = ap.parse_args()
+
+    if a.rescore:
+        totals = [rescore(d) for d in a.rescore]
+        print("\nall: gaps targeted %d/%d (followed up %d/%d)" % (
+            sum(t[0] for t in totals), sum(t[2] for t in totals),
+            sum(t[1] for t in totals), sum(t[2] for t in totals)))
+        return 0
 
     global STATE
     if a.data:

@@ -35,7 +35,8 @@ The report path runs this after the session ends. 1c.5's pacing also runs it DUR
 session, one answer at a time, so the runner can tell whether an answer added a new part --
 `Runner._settle` awaits it off the decision path and its result reaches the focus selector as
 `seen`. Nothing it produces may reach the candidate mid-interview (12.6.1); only the decision
-of what to ask next depends on it.
+of what to ask next depends on it. That path reads `LIVE_SYSTEM` through `observe_answer`; the
+report reads `SYSTEM`, so a change to the live wording moves no score.
 """
 
 from __future__ import annotations
@@ -61,6 +62,32 @@ if that part is not there:
 - "situation" : where they set the scene -- the system, the team, the problem, the constraint.
 - "action"    : where they say what was DONE. Prefer a sentence where they say what THEY did.
 - "result"    : where they say how it turned out -- what changed, what the effect was.
+
+Rules:
+- Copy the text exactly as they said it. Do not paraphrase, tidy or shorten.
+- One sentence per field. The SAME sentence may supply more than one field -- if they set the
+  scene and say what they did in one sentence, quote it for both.
+- If a part is genuinely absent, return an empty string for it.
+- An empty string is a correct answer. Do not invent a quote to fill a field."""
+
+# The live path's wording (V1.2 R3), used for pacing only: a result here stops OUTCOME being
+# asked again, and on one answer the old wording quoted the wrong sentence or none on 18 of 73
+# stated outcomes (R1, 15/11). Kept apart from SYSTEM so reports and their cache are unchanged
+# (decision 2, 17/11/2026). SYSTEM with only the `result` line widened: a first version that
+# added "is not a result" rules left more fields empty, situation included (25/11). The example
+# is invented, never from the result gold set it is measured on.
+LIVE_SYSTEM = """You are reading one answer from a job interview and quoting parts of it back.
+
+You do NOT judge the answer. You only find and copy text.
+
+Return three fields. Each is a VERBATIM quote from the candidate's answer, or an empty string
+if that part is not there:
+
+- "situation" : where they set the scene -- the system, the team, the problem, the constraint.
+- "action"    : where they say what was DONE. Prefer a sentence where they say what THEY did.
+- "result"    : where they say how it turned out -- what changed, what the effect was, or the
+                state things ended up in ("the release went out on the Friday"). A short
+                sentence counts.
 
 Rules:
 - Copy the text exactly as they said it. Do not paraphrase, tidy or shorten.
@@ -223,7 +250,8 @@ def deterministic(text: str) -> dict[str, bool]:
 
 
 async def observe(provider: Provider, question_id: str, question: str,
-                  answers: list[str], shape: str = "star") -> Observation:
+                  answers: list[str], shape: str = "star",
+                  system: str | None = None) -> Observation:
     """One question in, one Observation out. No judgement, no scores.
 
     `shape` comes from the phase (`observation_shape` in the plan). It selects which parts are
@@ -240,7 +268,7 @@ async def observe(provider: Provider, question_id: str, question: str,
 
     design = shape == "design"
     out = await provider.complete(
-        DESIGN_SYSTEM if design else SYSTEM,
+        DESIGN_SYSTEM if design else (system or SYSTEM),
         "QUESTION: %s\n\nCANDIDATE: %s" % (question, joined),
         schema=DESIGN_SCHEMA if design else SCHEMA, max_tokens=400)
     raw = out.json() or {}
@@ -253,6 +281,12 @@ async def observe(provider: Provider, question_id: str, question: str,
         else:
             obs.dropped_quotes.append("%s: %s" % (part, quote))
     return obs
+
+
+async def observe_answer(provider: Provider, question_id: str, question: str,
+                         utterance: str) -> Observation:
+    """One answer during the interview, for pacing (`Runner._observe_later`)."""
+    return await observe(provider, question_id, question, [utterance], system=LIVE_SYSTEM)
 
 
 # ------------------------------------------------------------------ caching (log 9.7)

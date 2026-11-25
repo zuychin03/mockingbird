@@ -89,7 +89,7 @@ async def run(plan_path: Path, skip_canary: bool) -> int:
 
     async def observe_answer(question_id, question, utterance):
         """Plan 1c.5's per-answer extraction. Runs between turns, never inside one."""
-        return await observe.observe(p, question_id, question, [utterance])
+        return await observe.observe_answer(p, question_id, question, utterance)
 
     r = Runner(p, plan, state, observe_fn=observe_answer)
 

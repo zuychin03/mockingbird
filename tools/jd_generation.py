@@ -11,14 +11,15 @@ sentence that is only context ("Words are part of the design.") is left out rath
 into a kind, so an item the model reads that matches nothing is not scored either way. The gate
 reports, not gates, how the model's kinds agree with these (P3).
 
-Adjudicated by Duy with the gate's labels (D6, activation item 10).
+Adjudicated 25/11/2026 with the gate's labels (D6, activation item 10). Every kind stood;
+it_ops moved from software to general.
 """
 
 from __future__ import annotations
 
 import jd_fields as jf
 
-ADJUDICATED = False
+ADJUDICATED = True
 
 D, O = "duty", "offer"
 
@@ -37,8 +38,8 @@ patiently.
 
 What we offer: a hybrid roster after probation, free on-site parking, and a $1,000 annual
 learning budget for certifications."""),
-    ("it_ops", "software", "runs production systems: incidents, changes and automation, the "
-     "software field's nearest vocabulary",
+    ("it_ops", "general", "runs servers, networks and backups rather than building software; "
+     "moved from software to general (25/11)",
      """IT Operations Engineer
 
 We run the servers, networks and backups behind a regional bank's branches. You will patch and

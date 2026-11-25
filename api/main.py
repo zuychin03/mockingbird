@@ -328,7 +328,7 @@ def save(path: str = Body(..., embed=True)) -> dict:
 
 def _extractor(p):
     async def fn(question_id, question, utterance):
-        return await observe.observe(p, question_id, question, [utterance])
+        return await observe.observe_answer(p, question_id, question, utterance)
     return fn
 
 
