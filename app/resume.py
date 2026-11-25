@@ -90,10 +90,7 @@ def restore(provider, plan: dict | None, data: dict, *, observe_fn=None,
 
 
 def write(r: Runner, path: str | Path) -> None:
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(snapshot(r), indent=1, ensure_ascii=False),
-                 encoding="utf-8", newline="\n")
+    sess.write_atomic(Path(path), json.dumps(snapshot(r), indent=1, ensure_ascii=False))
 
 
 def read(provider, plan: dict | None, path: str | Path, *, observe_fn=None,

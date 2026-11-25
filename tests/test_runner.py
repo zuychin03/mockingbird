@@ -1402,6 +1402,37 @@ def test_llama_focus_words_outside_the_bounded_question_forms_do_not_match():
         "How did you know the colleague who reviewed it?")
 
 
+@pytest.mark.parametrize("said", [
+    "Which parts of that plan were yours personally?",
+    "Which parts of that coordination were specifically your responsibility?",
+    "What was your specific role in resolving the disagreement?",
+    "What was your personal responsibility in justifying that decision?",
+    "What was your specific role in reconciling their differing interpretations of the results?",
+])
+def test_the_role_lines_the_model_writes_are_role(said):
+    """Stored lines that named nothing, or OUTCOME for "the results" (25/11)."""
+    assert focus.classify(said) == {"ROLE"}
+
+
+@pytest.mark.parametrize("said", [
+    "Which parts of the plan were you most worried about?",
+    "What drew you to your current role?",
+    "How did you know which part of the system was failing?",
+])
+def test_role_words_in_another_request_are_not_role(said):
+    assert "ROLE" not in focus.classify(said)
+
+
+def test_results_as_data_are_not_an_outcome_request():
+    for said in ("How did you interpret the results?",
+                 "How did you know the blood result was ready in time?",
+                 "What were the key factors when presenting your benchmark results?"):
+        assert "OUTCOME" not in focus.classify(said), said
+    for said in ("What was the end result?", "What were the results of that change?",
+                 "What did that change result in?", "What result would show success?"):
+        assert "OUTCOME" in focus.classify(said), said
+
+
 def test_a_relevant_llama_impact_question_beats_the_outcome_template(tmp_path, monkeypatch):
     raw = "What was the impact of this change on your users?"
     monkeypatch.setattr(focus, "next_focus", lambda *args: "OUTCOME")
@@ -3009,6 +3040,26 @@ def test_runner_advances_rather_than_asking_a_reworded_probe(tmp_path, monkeypat
     assert first not in decision["say"] and second not in decision["say"]
     # The focus is not charged either: nothing was asked, so nothing was delivered.
     assert decision["focus_got"] == []
+
+
+def test_a_probe_cancelled_as_a_rewording_spends_no_reserve(tmp_path, monkeypatch):
+    """The pool was charged before `redundant-probe->advance` could cancel the probe, so a
+    turn that asked nothing spent reserve (review, 25/11)."""
+    focuses = iter(["STEPS", "MEASURE", "REASON"])
+    monkeypatch.setattr(focus, "next_focus", lambda *args: next(focuses))
+    first = "How did you determine that a 15-minute TTL on product data was sufficient?"
+    second = "What made you choose fifteen minutes as a threshold for TTLs?"
+    r, state = build([d("probe", "Walk me through what you did.", ok=False),
+                      d("probe", first, ok=False), d("probe", second, ok=False)], tmp_path)
+    r.pool = 4
+    run(r.ask())
+    run(r.submit("I cached the product catalogue."))
+    run(r.submit("I set a fifteen minute TTL."))
+    run(r.submit("It felt like a round number."))
+    decision = last_decision(state)
+    assert "redundant-probe->advance" in decision["guards"]
+    assert r.pool == 4
+    assert not any(g.startswith("pool-draw") for g in decision["guards"])
 
 
 @pytest.mark.parametrize("said", [

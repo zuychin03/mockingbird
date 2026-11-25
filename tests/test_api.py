@@ -3,6 +3,7 @@ the domain's, so the web and the terminal cannot disagree about what may be aske
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -261,6 +262,57 @@ def test_an_answers_extraction_reaches_the_next_answer_over_http(monkeypatch, tm
             .read_text(encoding="utf-8").splitlines()]
     assert "observations-complete->advance" in rows[-1]["guards"]
     assert state["question_number"] == 2
+
+
+def test_a_page_poll_never_writes_the_live_snapshot(client, monkeypatch):
+    """GET runs in the thread pool, so a write there could land after an answer's and put the
+    older snapshot back (review, 25/11)."""
+    from app import session as sess
+
+    plan = sess.load_plan(api.ROOT / "config" / "interview_swe_general.json")
+
+    class R:
+        state = sess.new_session(plan, {"model_id": "test"})
+        done, index, said_this_question = False, 0, []
+        questions = list(sess.iter_questions(plan))
+        current = questions[0]
+
+    writes = []
+    monkeypatch.setattr(api, "_runner", lambda: R())
+    monkeypatch.setattr(api.resume, "write", lambda *a, **k: writes.append(a))
+    got = client.get("/api/session")
+    assert got.status_code == 200, got.text
+    assert writes == []
+
+
+def test_answers_take_turns_on_the_live_snapshot(monkeypatch):
+    """Each reads the snapshot, awaits the model, then writes it. Overlapping (a double submit,
+    or Leave during a slow answer), the later write undoes the earlier one."""
+    events = []
+
+    class Out:
+        closed_question = end_session = False
+
+    class Slow:
+        done = False
+
+        async def submit(self, text, audio, heard):
+            events.append(("in", text))
+            await asyncio.sleep(0.01)
+            events.append(("out", text))
+            return Out()
+
+    monkeypatch.setattr(api, "_LIVE_LOCK", asyncio.Lock())
+    monkeypatch.setattr(api, "_runner", lambda: Slow())
+    monkeypatch.setattr(api, "_hold_pending", lambda r: None)
+    monkeypatch.setattr(api, "_session_state", lambda r, save=True: {})
+
+    async def both():
+        await asyncio.gather(api.session_answer(text="a", audio=None, heard=None),
+                             api.session_answer(text="b", audio=None, heard=None))
+
+    asyncio.run(both())
+    assert events == [("in", "a"), ("out", "a"), ("in", "b"), ("out", "b")]
 
 
 def test_a_plan_outside_the_project_cannot_be_loaded(client, monkeypatch, tmp_path):

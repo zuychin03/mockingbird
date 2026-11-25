@@ -946,13 +946,6 @@ class Runner:
                 g.act, g.say = "advance", ""
                 g.applied.append("no-new-observation->advance")
 
-        # Charge the reserve only after adaptive pacing has decided the follow-up will
-        # actually be dispatched. Previously an over-cap model proposal spent a token before
-        # `observations-complete` or `no-new-observation` silently converted it to advance.
-        if g.act in ("probe", "reask") and self.follow_ups_used >= allow.cap:
-            self.pool -= 1
-            g.applied.append("pool-draw(%d left)" % self.pool)
-
         # A design question that is about to advance with a part missing and budget unspent.
         # The code decides that a follow-up is owed, like the focus rotation. Live, the design
         # question drew zero probes out of three because the answer was long and fluent and
@@ -1127,6 +1120,13 @@ class Runner:
             g.applied.append("redundant-probe->advance")
         elif g.act in ("probe", "reask") and g.say and asked:
             self.last_probe = (g.say, tuple(asked))
+
+        # Charge the reserve only once the follow-up is certain to be dispatched: pacing and
+        # `redundant-probe` above can both turn it into an advance, and a turn that asks nothing
+        # must not spend reserve. A design follow-up never reaches here over its cap.
+        if g.act in ("probe", "reask") and self.follow_ups_used >= allow.cap:
+            self.pool -= 1
+            g.applied.append("pool-draw(%d left)" % self.pool)
 
         self.answers_this_question.append(utterance)
         outcome = self._dispatch(g, utterance, out,

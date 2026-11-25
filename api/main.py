@@ -350,6 +350,10 @@ def _detour(plan: dict) -> list:
 # over 8 sessions on 07/11/2026, against 93 in-process. One live session, so one entry.
 _PENDING: dict[str, asyncio.Future] = {}
 
+# Start, answer and leave each read the snapshot, await, then write it. Two at once (a double
+# submit, or Leave during a slow answer) would each write over the other, so they take turns.
+_LIVE_LOCK = asyncio.Lock()
+
 
 def _hold_pending(r) -> None:
     """Called only by the endpoints that create or advance a session. A read-only request
@@ -430,8 +434,9 @@ def _pending(r) -> str | None:
     return r.current["question"]
 
 
-def _session_state(r) -> dict:
-    resume.write(r, LIVE)
+def _session_state(r, save: bool = True) -> dict:
+    if save:
+        resume.write(r, LIVE)
     turns = _turns(r)
     pending = _pending(r)
     if pending:
@@ -500,23 +505,26 @@ async def session_start(plan_path: str = Body(..., embed=True)) -> dict:
         snap["voice"] = speech.describe()
     except (OSError, ValueError, KeyError, RuntimeError):
         snap["voice"] = None
-    state = sess.new_session(plan, snap)
-    p = prov.Metered(p, state.usage)
-    r = resume.Runner(p, plan, state, observe_fn=_extractor(p), similarity=embed.similarity,
-                      detour=_detour(plan))
-    LIVE.parent.mkdir(parents=True, exist_ok=True)
-    # Called for the effect, not the text: `ask` is the only place the rolling history
-    # refreshes, and `_pending` derives the line to show.
-    await _guard_async(r.ask)
-    if prov.is_local(p):
-        _warm(p, plan)
-    _hold_pending(r)
-    return _session_state(r)
+    async with _LIVE_LOCK:
+        state = sess.new_session(plan, snap)
+        p = prov.Metered(p, state.usage)
+        r = resume.Runner(p, plan, state, observe_fn=_extractor(p),
+                          similarity=embed.similarity, detour=_detour(plan))
+        LIVE.parent.mkdir(parents=True, exist_ok=True)
+        # Called for the effect, not the text: `ask` is the only place the rolling history
+        # refreshes, and `_pending` derives the line to show.
+        await _guard_async(r.ask)
+        if prov.is_local(p):
+            _warm(p, plan)
+        _hold_pending(r)
+        return _session_state(r)
 
 
 @app.get("/api/session")
 def session_get() -> dict:
-    return _session_state(_runner())
+    # Read only. It runs in the thread pool, so a write here could land after an answer's and
+    # put the older snapshot back (review, 25/11).
+    return _session_state(_runner(), save=False)
 
 
 def _recording(r, audio: str | None) -> str | None:
@@ -540,17 +548,18 @@ def _recording(r, audio: str | None) -> str | None:
 async def session_answer(text: str = Body(..., embed=True),
                          audio: str | None = Body(None, embed=True),
                          heard: str | None = Body(None, embed=True)) -> dict:
-    r = _runner()
-    if r.done:
-        raise HTTPException(400, "this session has finished")
-    heard = (heard or "").strip()[:20000] or None
-    out = await _guard_async(r.submit, text, _recording(r, audio), heard)
-    if out.closed_question and not r.done and not out.end_session:
-        await _guard_async(r.ask)
-    # Only on success: a failed request leaves the snapshot as it was, and the task it had
-    # already folded in is folded in again by the retry, which is then correct.
-    _hold_pending(r)
-    return _session_state(r)
+    async with _LIVE_LOCK:
+        r = _runner()
+        if r.done:
+            raise HTTPException(400, "this session has finished")
+        heard = (heard or "").strip()[:20000] or None
+        out = await _guard_async(r.submit, text, _recording(r, audio), heard)
+        if out.closed_question and not r.done and not out.end_session:
+            await _guard_async(r.ask)
+        # Only on success: a failed request leaves the snapshot as it was, and the task it had
+        # already folded in is folded in again by the retry, which is then correct.
+        _hold_pending(r)
+        return _session_state(r)
 
 
 @app.post("/api/session/leave")
@@ -561,21 +570,22 @@ async def session_leave() -> dict:
     this page resumes it, so the only way out was answering every remaining question. No
     provider is built, so a stopped model server or a missing key cannot block leaving.
     """
-    if not LIVE.exists():
-        raise HTTPException(404, "no session in progress")
-    try:
-        r = resume.read(None, None, LIVE)
-    except KeyError as e:
-        raise HTTPException(
-            409, "this session predates the self-describing snapshot and cannot be left "
-                 "here; finish it in the terminal (%s)" % e) from e
-    if r.done:
-        raise HTTPException(409, "this interview has already finished")
-    r.leave()
-    held = _PENDING.pop(r.state.session_id, None)
-    if held is not None:
-        held.cancel()
-    return _session_state(r)
+    async with _LIVE_LOCK:
+        if not LIVE.exists():
+            raise HTTPException(404, "no session in progress")
+        try:
+            r = resume.read(None, None, LIVE)
+        except KeyError as e:
+            raise HTTPException(
+                409, "this session predates the self-describing snapshot and cannot be left "
+                     "here; finish it in the terminal (%s)" % e) from e
+        if r.done:
+            raise HTTPException(409, "this interview has already finished")
+        r.leave()
+        held = _PENDING.pop(r.state.session_id, None)
+        if held is not None:
+            held.cancel()
+        return _session_state(r)
 
 
 LOOPBACK =("127.0.0.1", "::1", "localhost", "testclient")

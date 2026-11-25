@@ -80,6 +80,10 @@ compared side by side.
   then thrown away, so a stock question was asked instead. Groq now gets room for the whole
   sentence. A rewrite that opens with a remark such as "You mentioned..." before its one
   question is now asked without the remark, rather than thrown away.
+- Leaving an interview while an answer was still being read could be undone when that answer
+  finished. Leave now waits for the answer, then ends the interview.
+- Refreshing the interview page while an answer was being read could bring back the interview as
+  it was before that answer. A refresh now only reads the interview.
 
 ## 1.0.1 - 2026-11-08
 

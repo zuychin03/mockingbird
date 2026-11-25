@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -110,6 +113,43 @@ def test_files_are_written_with_lf_endings(tmp_path):
     state = full(tmp_path)
     for name in ("session.json", "transcript.json", "decisions.jsonl"):
         assert b"\r\n" not in (state.dir / name).read_bytes(), name
+
+
+def test_a_write_is_swapped_in_whole_and_leaves_no_temporary_file(tmp_path):
+    p = tmp_path / "w" / "s.json"
+    p.parent.mkdir()
+    p.write_text("old", encoding="utf-8")
+    session.write_atomic(p, "new\nline\n")
+    assert p.read_bytes() == b"new\nline\n"
+    assert [x.name for x in p.parent.iterdir()] == ["s.json"]
+
+
+def test_a_swap_refused_while_a_reader_holds_the_file_is_retried(tmp_path, monkeypatch):
+    """Windows refuses the swap while any handle has the target open (WinError 5)."""
+    p, real, tries = tmp_path / "w" / "s.json", os.replace, []
+
+    def busy_twice(src, dst):
+        tries.append(dst)
+        if len(tries) < 3:
+            raise PermissionError(5, "Access is denied")
+        real(src, dst)
+
+    monkeypatch.setattr(session.os, "replace", busy_twice)
+    monkeypatch.setattr(session.time, "sleep", lambda s: None)
+    session.write_atomic(p, "x")
+    assert p.read_text(encoding="utf-8") == "x" and len(tries) == 3
+    assert [x.name for x in p.parent.iterdir()] == ["s.json"]
+
+
+def test_a_swap_that_never_succeeds_raises_and_leaves_nothing_behind(tmp_path, monkeypatch):
+    def busy(src, dst):
+        raise PermissionError(5, "Access is denied")
+
+    monkeypatch.setattr(session.os, "replace", busy)
+    monkeypatch.setattr(session.time, "sleep", lambda s: None)
+    with pytest.raises(PermissionError):
+        session.write_atomic(tmp_path / "w" / "s.json", "x")
+    assert list((tmp_path / "w").iterdir()) == []
 
 
 # ------------------------- the live harness's own state (log 8.19)

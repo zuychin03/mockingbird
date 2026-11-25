@@ -148,14 +148,30 @@ _PATTERNS = {
                # question about documents or dashboards, "looking at to tell/know" is a
                # question about the evidence a judgement rested on.
                r"looking at to (?:tell|know)\b",
-    "ROLE": r"\byou personally\b|your (own )?(part|role|contribution)|"
+    # The model's usual ROLE line, "Which parts of that plan were yours personally?", and "your
+    # specific role" named nothing: 16 of 1,018 stored lines (25/11), so a ROLE line asked when
+    # another focus was requested was charged that focus. The wide object slot takes only
+    # "yours" or "your responsibility": "which parts of the plan were you worried about" is not
+    # ROLE. No "current" or "previous": "your current role" is the job.
+    "ROLE": r"\byou personally\b|\byours personally\b|"
+            r"your (?:own |specific |personal |individual |exact )?"
+            r"(?:part|role|contributions?|responsibility)\b|"
             # TEMPLATE. `were you` already carried "which parts were you responsible for";
             # the optional object is what "which parts of that were yours" needs.
             r"which parts (?:of (?:that|it|this) )?were you|"
+            r"which parts? (?:of [^?]{1,60}? )?(?:was|were) (?:specifically )?"
+            r"(?:yours\b|your (?:own |personal )?responsibility)|"
             r"what did you do|were you the",
+    # `result` only in outcome question forms. As a data noun ("interpretations of the results",
+    # "benchmark results", "the blood result") it named 7 of 1,018 stored lines OUTCOME (25/11).
     "OUTCOME": r"outcome|what happened|end (up|result)|"
                r"how (?:did|would) (it|that|this) (?:\w+ ){0,2}?(go|land|turn out)|"
-               r"result|in the end|was it successful|what (?:was|is) the impact",
+               r"what (?:was|were) the (?:end |final |overall |actual )?results?\b|"
+               r"\bresults? (?:would|will) (?:show|tell|prove)\b|"
+               r"\bresults? of (?:that|this|it|those|these)\b|"
+               r"\b(?:did|would|will) (?:that|it|this)(?: \w+)? result in\b|"
+               r"resulted (?:in|from)\b|"
+               r"as a result\b|in the end|was it successful|what (?:was|is) the impact",
     "STEPS": r"step|walk (me )?through|"
              r"how did you (do|approach|go about|handle|address|resolve|fix)|"
              r"what did you (?:\w+ ){0,3}?do\b|"

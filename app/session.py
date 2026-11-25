@@ -20,6 +20,9 @@ gets an explicit limit and a logged failure.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -109,11 +112,31 @@ def new_session(plan: dict, provenance: dict | None = None) -> SessionState:
     return s
 
 
-def _write(path: Path, obj) -> None:
+def write_atomic(path: Path, text: str) -> None:
+    """Write beside `path` and swap it in, so a reader never sees half a file. Windows refuses
+    the swap while any reader has the target open (WinError 5, checked 25/11), and readers hold
+    it for milliseconds, so the swap is retried briefly before giving up."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(obj, f, indent=1, ensure_ascii=False)
-        f.write("\n")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(text)
+        for attempt in range(6):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+def _write(path: Path, obj) -> None:
+    write_atomic(path, json.dumps(obj, indent=1, ensure_ascii=False) + "\n")
 
 
 def append_decision(state: SessionState, record: dict) -> None:
