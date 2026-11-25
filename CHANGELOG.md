@@ -84,6 +84,16 @@ compared side by side.
   finished. Leave now waits for the answer, then ends the interview.
 - Refreshing the interview page while an answer was being read could bring back the interview as
   it was before that answer. A refresh now only reads the interview.
+- Each edit on the plan page wrote a temporary file into the Mockingbird folder to check the
+  plan, so editing failed where that folder could not be written to. The plan is now checked
+  without a file.
+- Once you have said how a story ended, a later "it went well overall" on the same question no
+  longer brings a question about what happened in the end.
+- A follow-up such as "How did you know it worked?" or "How did you know it was safe to start?"
+  is now kept as the interviewer wrote it. Before, it could be swapped for a stock question, or
+  counted as asking how the story ended.
+- A figure given alongside "we never measured it" now counts as unchecked, so the interviewer can
+  ask how you know it.
 
 ## 1.0.1 - 2026-11-08
 

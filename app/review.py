@@ -93,12 +93,10 @@ def _drop_generated(plan: dict, text: str) -> None:
 def _revalidated(draft: Draft, plan: dict, **changes) -> Draft:
     """Every operation goes through here. A draft that the runner would refuse is refused at
     the moment it is created, not at the start of an interview."""
-    tmp = Path(sess.__file__).parent.parent / ".plan-check.tmp.json"
-    tmp.write_text(json.dumps(plan), encoding="utf-8")
-    try:
-        sess.load_plan(tmp)
-    finally:
-        tmp.unlink(missing_ok=True)
+    # Checked in memory: a temp file in the install folder failed where that folder is read-only,
+    # and two edits at once shared it. The JSON round trip keeps the old check's refusal of
+    # anything JSON cannot hold.
+    sess.check_plan(json.loads(json.dumps(plan)))
     return replace(draft, plan=plan, **changes)
 
 

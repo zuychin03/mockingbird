@@ -308,6 +308,22 @@ def test_a_measured_figure_does_not_fire():
     assert signals("p95 went from 8 seconds to 400ms, we traced it")["unverified"] == 0
 
 
+def test_a_denied_measurement_leaves_the_figure_unverified():
+    """"never measured" matched MEASURED, so the figure counted as checked (review, 25/11)."""
+    from app.depth_signals import signals
+    assert signals("We cut it to two seconds, but we never measured it")["unverified"] > 0
+    assert signals("There's no measurement, it took three weeks")["unverified"] > 0
+    # A negation in an earlier clause does not deny the measurement after it.
+    assert signals("We cut what wasn't essential, we tested over two weekends")[
+        "unverified"] == 0
+
+
+def test_the_report_still_scores_measurement_with_the_plain_pattern():
+    """The guard is pacing only; reports and their cache stay as they were until P4."""
+    from app import observe
+    assert observe.deterministic("we never measured it")["measurement_stated"] is True
+
+
 def test_an_abbreviation_is_not_a_sentence_boundary():
     """A line was cut to "...and any other factors (e." live (log 8.20)."""
     r = guards.apply(g("probe", "Which factors (e.g. load, latency) did you weigh?"),

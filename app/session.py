@@ -171,7 +171,11 @@ PHASE_TYPES = frozenset({"fixed_sequence", "adaptive_discussion", "long_turn",
 
 
 def load_plan(path: str | Path) -> dict:
-    plan = json.loads(Path(path).read_text(encoding="utf-8"))
+    return check_plan(json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+def check_plan(plan: dict) -> dict:
+    """`load_plan`'s checks on a plan already in memory; raises ValueError, returns the plan."""
     for phase in plan.get("phases", []):
         # answer_shape is required and validated at load, never defaulted (section 3.2).
         # A saved config that dropped the field once sat dormant in production for weeks,

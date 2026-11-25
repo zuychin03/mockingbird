@@ -147,7 +147,14 @@ _PATTERNS = {
                # TEMPLATE. Bounded by the epistemic infinitive: "looking at" alone is a
                # question about documents or dashboards, "looking at to tell/know" is a
                # question about the evidence a judgement rested on.
-               r"looking at to (?:tell|know)\b",
+               r"looking at to (?:tell|know)\b|"
+               # "How did you know the old report was undercounting?": how they knew a clause
+               # was true, as "how did you know that" already is. 21 of 1,018 stored lines in
+               # this form named nothing and were charged whatever was requested (review,
+               # 25/11). Not when/which/who forms, which ask something else.
+               r"how (?:did|do|would) you know (?!when\b|which\b|who\b|what\b|where\b|how\b|"
+               r"that\b)(?:(?!who\b)[\w'-]+ ){1,6}?(?:was|wasn|were|weren|had|would|could|is|"
+               r"are|worked|felt|kept|led|needed|caused|solved|did)\b",
     # The model's usual ROLE line, "Which parts of that plan were yours personally?", and "your
     # specific role" named nothing: 16 of 1,018 stored lines (25/11), so a ROLE line asked when
     # another focus was requested was charged that focus. The wide object slot takes only
@@ -171,7 +178,12 @@ _PATTERNS = {
                r"\bresults? of (?:that|this|it|those|these)\b|"
                r"\b(?:did|would|will) (?:that|it|this)(?: \w+)? result in\b|"
                r"resulted (?:in|from)\b|"
-               r"as a result\b|in the end|was it successful|what (?:was|is) the impact",
+               r"as a result\b|in the end|was it successful|what (?:was|is) the impact|"
+               # OUTCOME's own wording asks "how they knew it worked"; read as MEASURE alone, the
+               # line left OUTCOME owed after it was answered (Groq, 25/11).
+               r"how (?:did|do|would) you know (?:it|that|this|the \w+)(?: \w+){0,2}? "
+               r"(?:worked|was working|had worked|is working)\b"
+               r"(?! (?:late|on|with|for|overtime|together|at|through)\b)",
     "STEPS": r"step|walk (me )?through|"
              r"how did you (do|approach|go about|handle|address|resolve|fix)|"
              r"what did you (?:\w+ ){0,3}?do\b|"
@@ -387,12 +399,19 @@ SATISFIED_BY = {
 }
 
 
-def answered(text: str) -> set[str]:
+def answered(text: str, seen: set[str] | None = None) -> set[str]:
     """Requests `text` has already answered. ROLE asks which parts were theirs as opposed to the
     team's, and is spent once they have spoken in the first person: 20 of 37 stored ROLE
     follow-ups came after they had ("Which parts of that were yours?" after "I recorded short
-    videos", 15/11). The same check scores `first_person`."""
-    return {"ROLE"} if FIRST_SG.search(text) else set()
+    videos", 15/11). The same check scores `first_person`.
+
+    OUTCOME is spent once an earlier answer's extraction found a result (`seen`): the criteria
+    already skip it, but the `asserted` signal and the ladder did not, so "so overall it worked
+    well" asked for an outcome already given (review, 25/11)."""
+    got = {"ROLE"} if FIRST_SG.search(text) else set()
+    if "result" in (seen or ()):
+        got.add("OUTCOME")
+    return got
 
 
 def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None,
@@ -419,7 +438,7 @@ def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None
     earlier = earlier or []
     criteria = criteria or []
     ladder = ladder or (UNSCORED_LADDER if not criteria else [])
-    used = used | answered(" ".join(earlier + [utterance]))
+    used = used | answered(" ".join(earlier + [utterance]), seen)
     if criteria:
         for name, focus in FROM_SIGNAL:
             if signals(utterance).get(name) and focus not in used:

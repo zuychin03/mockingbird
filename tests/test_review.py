@@ -165,6 +165,21 @@ def test_no_temp_file_is_left_behind(tmp_path):
     assert not list(ROOT.glob(".plan-check.tmp.json"))
 
 
+def test_an_edit_is_checked_without_writing_a_file(monkeypatch):
+    """Each edit wrote `.plan-check.tmp.json` in the install folder to check the plan, which
+    fails where that folder is read-only (review, 25/11)."""
+    def read_only(*a, **k):
+        raise PermissionError("read-only folder")
+
+    d = draft()
+    monkeypatch.setattr(Path, "write_text", read_only)
+    assert review.move(d, "behavioural_core", 0, 2).plan != d.plan
+    bad = json.loads(json.dumps(d.plan))
+    bad["phases"][0]["answer_shape"] = ""
+    with pytest.raises(ValueError):
+        review._revalidated(d, bad)
+
+
 def test_a_saved_draft_keeps_a_proposals_field_and_level(tmp_path):
     """The bank format's round-trip lesson, on the draft: a field it does not write reverts."""
     proposal = bank.Question(id="gen.perf.96", text="A proposed latency question?",

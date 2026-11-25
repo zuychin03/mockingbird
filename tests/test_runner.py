@@ -1390,6 +1390,37 @@ def test_a_timeframe_question_is_both_measurement_and_duration():
     assert got == {"MEASURE", "DURATION"}
 
 
+@pytest.mark.parametrize("said", [
+    "How did you know the old report was undercounting?",
+    "How did you know it was safe to start monitoring patients without prior experience?",
+    "How did you know the blood result would come back in time?",
+    "How did you know the family felt supported by the end of the stay?",
+    "How did you know it worked?",
+])
+def test_how_they_knew_a_clause_was_true_is_measure(said):
+    """Stored lines in this form named nothing and were charged the requested focus (25/11)."""
+    assert "MEASURE" in focus.classify(said)
+
+
+@pytest.mark.parametrize("said", [
+    "How did you know which feature to prioritize?",
+    "How did you know when the deadline was set?",
+    "How did you know the colleague who was on call?",
+])
+def test_how_did_you_know_which_or_who_is_not_measure(said):
+    assert "MEASURE" not in focus.classify(said)
+
+
+def test_how_they_knew_it_worked_is_both_outcome_and_measure():
+    """OUTCOME's own wording asks "how they knew it worked"; as MEASURE alone it left OUTCOME
+    owed after it was answered (Groq, 25/11)."""
+    for said in ("How did you know it worked?", "How did you know the migration had worked?",
+                 "How did you know that approach actually worked?"):
+        assert {"OUTCOME", "MEASURE"} <= focus.classify(said), said
+    assert "OUTCOME" not in focus.classify("How did you know the team worked late?")
+    assert "OUTCOME" not in focus.classify("How did you know it was safe to start?")
+
+
 def test_non_measurement_determination_is_not_misclassified_as_measure():
     assert "MEASURE" not in focus.classify(
         "How did you determine which framework to use?")
@@ -2839,6 +2870,17 @@ WE_OUTCOME = ("It cost a small part of the training budget, which we reused at t
 def test_a_first_person_answer_has_answered_role():
     assert focus.answered(VIDEOS) == {"ROLE"}
     assert focus.answered(WE_OUTCOME) == set()
+
+
+def test_an_outcome_already_seen_is_not_asked_for_on_a_later_claim():
+    """"So overall it worked well" fires `asserted`, which asked OUTCOME even when an earlier
+    answer's extraction had found the outcome (review, 25/11). Without one, it still asks."""
+    later = "So overall it worked well, and the team were happy with it."
+    assert focus.next_focus(later, {"STEPS"}, DELIVERY_CRITERIA, DELIVERY_LADDER) == "OUTCOME"
+    got = focus.next_focus(later, {"STEPS"}, DELIVERY_CRITERIA, DELIVERY_LADDER,
+                           {"situation", "action", "result"})
+    assert got != "OUTCOME"
+    assert "OUTCOME" in focus.answered("", {"result"})
 
 
 def test_their_own_part_once_stated_is_not_asked_for_again():

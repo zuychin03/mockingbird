@@ -48,12 +48,26 @@ SKIPPED = re.compile(
 FIRST_SG = re.compile(r"\b(i|my|me|mine)\b", re.I)
 FIRST_PL = re.compile(r"\b(we|our|us|ours)\b", re.I)
 
+_DENIAL = re.compile(r"\b(?:never|not|no|without|nobody|none|nothing)\b|n['’]t\b", re.I)
+
+
+def is_measured(text):
+    """MEASURED, less a match denied in its own clause ("there's no measurement", "our analytics
+    didn't track it"): 4 of 466 stored answers (25/11). Pacing only: `observe.deterministic`
+    still scores `measurement_stated` with MEASURED, so reports and their cache do not move."""
+    t = text or ""
+    for m in MEASURED.finditer(t):
+        clause = re.split(r"[.!?;,]", t[:m.start()])[-1].split()[-4:]
+        if not _DENIAL.search(" ".join(clause)):
+            return True
+    return False
+
 
 def signals(text):
     """Return {signal_name: count}. Pure function of the text."""
     t = text or ""
     numbers = NUMBER.findall(t)
-    measured = bool(MEASURED.search(t))
+    measured = is_measured(t)
     sg, pl = len(FIRST_SG.findall(t)), len(FIRST_PL.findall(t))
     return {
         # a figure stated with no account of how it was established
