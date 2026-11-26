@@ -3425,15 +3425,31 @@ def test_the_floor_keeps_the_model_s_line_when_it_asks_that_focus(line, tmp_path
     assert decision["speech_attempt"]["trigger"] == "floor"
 
 
-def test_a_model_line_on_another_focus_gives_way_to_the_floor_s_template(tmp_path):
+@pytest.mark.parametrize("story, line, arm", [
+    (WE_STORY, "What was the hardest part of the weekend move?", "ROLE"),
+    (WE_STORY, "How did you know for sure that the training worked?", "ROLE"),
+    (CLAIMED, "What was the hardest part of the weekend move?", "OUTCOME"),
+])
+def test_a_model_line_on_another_focus_gives_way_to_the_floor_s_template(story, line, arm,
+                                                                          tmp_path):
     """The speech repair takes any fresh focus; the floor asks for the one it found missing."""
-    r, state = floor_runner([d("advance", "Thanks."),
-                             speech("What was the hardest part of the weekend move?")], tmp_path)
+    r, state = floor_runner([d("advance", "Thanks."), speech(line)], tmp_path)
     run(r.ask())
-    run(r.submit(WE_STORY))
+    run(r.submit(story))
     decision = last_decision(state)
     assert decision["speech_attempt"]["rejection"] == "off_floor"
-    assert decision["say"] in focus.TEMPLATE["ROLE"] and decision["focus_got"] == ["ROLE"]
+    assert decision["say"] in focus.TEMPLATE[arm] and decision["focus_got"] == [arm]
+
+
+def test_the_outcome_floor_keeps_a_line_on_how_they_knew(tmp_path):
+    """A claimed outcome is checked by how they knew as much as by what happened (26/11)."""
+    line = "How did you know for sure that the bookings moved over without errors?"
+    r, state = floor_runner([d("advance", "Thanks."), speech(line)], tmp_path)
+    run(r.ask())
+    run(r.submit(CLAIMED))
+    decision = last_decision(state)
+    assert decision["say"] == line and decision["focus_got"] == ["MEASURE"]
+    assert {"floor-outcome->probe", "floor-line->model"} <= set(decision["guards"])
 
 
 def test_the_floor_asks_for_an_outcome_only_claimed(tmp_path):

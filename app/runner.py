@@ -972,7 +972,7 @@ class Runner:
         # model chose to move on from a story question with nothing followed up yet. An advance
         # the code forced is not the model's. Its first `FLOOR_LIVE` request is asked, charged
         # to the question's own cap like the design follow-up, so never the pool and at most
-        # once per question. The line is the model's, held to that focus, or a template.
+        # once per question. The line is the model's, held to `FLOOR_KEEPS`, or a template.
         floor = None
         if (self.pace and g.act == "advance" and self.follow_ups_used == 0
                 and self.follow_ups_used < allow.cap and self._star_paced(q)
@@ -985,7 +985,7 @@ class Runner:
                 repaired, speech_attempt, repair_guards = await self._repair_speech(
                     utterance, arm, "", "floor")
                 calls += 1
-                if repaired and arm not in focus.classify(repaired):
+                if repaired and not focus.classify(repaired) & focus.FLOOR_KEEPS[arm]:
                     speech_attempt.update(accepted=False, rejection="off_floor")
                     repaired = None
                 g.applied.append("floor-%s->probe" % arm.lower())

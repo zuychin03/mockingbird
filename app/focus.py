@@ -481,6 +481,10 @@ FLOOR_MIN_WORDS = 15
 # The floor's requests the runner asks (Duy 26/11). MEASURE stays recorded only: on stored
 # sessions 2 of its 6 requests were on a plain count ("I later moved 18,000 files").
 FLOOR_LIVE = ("ROLE", "OUTCOME")
+# The focuses a floor request keeps in the model's line. A claimed outcome is checked by how
+# they knew as much as by what happened, as the field harness scores it (Duy 26/11): the 4
+# stored speech repairs for OUTCOME that read MEASURE alone all asked how they knew it worked.
+FLOOR_KEEPS = {"ROLE": {"ROLE"}, "OUTCOME": {"OUTCOME", "MEASURE"}}
 
 
 def floor(utterance: str, criteria: list[str], earlier: list[str] | None = None,
