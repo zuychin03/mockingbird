@@ -1177,6 +1177,10 @@ async def session_report(session_id: str, refresh: bool = False, provider: str =
     if not refresh:
         hit = _report_is_fresh(d)
         if hit is not None:
+            # Cached before reports carried their structure: read from the text, never rebuilt.
+            if "structure" not in hit:
+                hit["structure"] = report_mod.from_text(hit.get("text") or "", hit.get("rubric"),
+                                                        hit.get("delivery"))
             return hit
     raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
     plan = raw.get("plan_snapshot") or {}
@@ -1228,15 +1232,17 @@ async def session_report(session_id: str, refresh: bool = False, provider: str =
 
     rep = score_mod.build(raw.get("session_id", session_id), observations, criteria_for)
     spoken = _delivery(d)
-    text = report_mod.render(rep, questions_asked=len(states),
-                             questions_answered=sum(1 for q in states if q.answers),
-                             observations=observations, question_states=states,
-                             delivery=spoken)
+    doc = report_mod.build(rep, questions_asked=len(states),
+                           questions_answered=sum(1 for q in states if q.answers),
+                           observations=observations, question_states=states,
+                           delivery=spoken)
     return _cache_report(d, {
         "session_id": session_id,
         "label": plan.get("label") or raw.get("plan_id"),
         "started_at": raw.get("started_at"),
-        "text": text,
+        "text": report_mod.to_text(doc),
+        # The same report as sections of typed blocks, for a page to lay out.
+        "structure": doc,
         "scored": len(rep.scores),
         "asked": len(states),
         "answered": sum(1 for q in states if q.answers),

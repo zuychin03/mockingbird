@@ -192,3 +192,112 @@ def test_a_candidate_question_is_never_truncated():
     flat = " ".join(text.split())
     assert "Second, who gets paged" in flat, "the second question was dropped"
     assert "..." not in text.split("WHAT YOU ASKED")[1].split("\n\n")[1]
+
+
+# ------------------------------------------------ the report as structure (P4)
+ASKED = ("Two questions. Who owns the release train now the ledger moved? 2. Is \"on call\" "
+         "shared across both teams?")
+
+
+def _full():
+    """A report that reaches every section, asking a question that wraps onto "2."."""
+    from types import SimpleNamespace
+    r = _report({"sets_context": [True, True, True], "states_outcome": [False, False, True],
+                 "first_person": [True, False, True]})
+    for i, qs in enumerate(r.scores):
+        qs.question = "Tell me about a time number %d that a plan changed late?" % i
+        qs.answer = ("We moved the ledger to a new service over three weekends and I wrote the "
+                     "cut-over plan myself, then ran it with the on-call team %d." % i)
+        qs.addresses_question = "yes" if i else "partly"
+        qs.evidence["sets_context"] = "the ledger ran on one box in Sydney"
+        qs.quoted.add("sets_context")
+    states = [SimpleNamespace(question_id=q.question_id, question=q.question,
+                              closed_because="budget_exhausted" if i == 1 else None,
+                              asked_back=[ASKED] if i == 2 else [])
+              for i, q in enumerate(r.scores)]
+    design = SimpleNamespace(shape="design", text="a queue", approach="a queue in front",
+                             alternative="", tradeoff="it adds a hop", failure_mode="")
+    delivery = {"answers": [{"question_id": "q.0"}], "spoken": 3, "articulation_rate": 4.2,
+                "wpm": 131.0, "pause_count": 7, "mid_clause_pauses": 2,
+                "mid_clause_share": 0.29, "speaking_seconds": 95.0}
+    return r, states, [design], delivery
+
+
+def _rubric(r):
+    """The payload's rubric rows, as `api._rubric` writes them."""
+    return [{"name": n, "label": n, "description": score.CRITERIA[n][1], "met": m, "of": o,
+             "evidence": []} for n, (m, o) in sorted(r.totals.items())]
+
+
+def test_the_text_is_laid_out_from_the_structure():
+    r, states, obs, d = _full()
+    doc = rep.build(r, 3, 3, obs, states, d)
+    assert rep.to_text(doc) == rep.render(r, 3, 3, observations=obs, question_states=states,
+                                          delivery=d)
+    assert [s["id"] for s in doc["sections"]] == [
+        "summary", "change", "strengths", "criteria", "delivery", "cut_short", "revisit",
+        "asked", "design"]
+    assert {b["kind"] for s in doc["sections"] for b in s["blocks"]} == {
+        "para", "lead", "item", "quote", "rubric", "delivery"}
+    # Whole sentences: the wrapping belongs to whatever lays the blocks out.
+    assert not any("\n" in b.get("text", "") for s in doc["sections"] for b in s["blocks"])
+    assert {"kind": "item", "text": ASKED} in doc["sections"][7]["blocks"]
+    assert "answers" not in doc["sections"][4]["blocks"][-1]["figures"]
+    assert doc["signoff"] == list(rep.SIGNOFF)
+
+
+def test_a_report_reads_back_to_the_structure_it_was_printed_from():
+    """How a report cached before the structure gets one. If text this renderer printed read
+    back as anything else, History would lay out an old report differently from a new one."""
+    r, states, obs, d = _full()
+    doc = rep.build(r, 3, 3, obs, states, d)
+    text = rep.to_text(doc)
+    assert "\n    2. Is" in text, "the fixture no longer wraps a question onto a number"
+    back = rep.from_text(text, _rubric(r), d)
+    assert back.pop("from_text") is True
+    assert back == doc
+
+
+def test_one_criterion_still_reads_back_as_the_rubric():
+    r = _report({"first_person": [True, False]})
+    doc = rep.build(r, 2, 2)
+    back = rep.from_text(rep.to_text(doc), _rubric(r))
+    back.pop("from_text")
+    assert back == doc
+
+
+def test_a_session_with_nothing_scored_still_has_a_structure():
+    d = {"answers": [], "spoken": 1, "articulation_rate": None, "wpm": None, "pause_count": 0,
+         "mid_clause_pauses": 0, "mid_clause_share": None, "speaking_seconds": 12.6}
+    doc = rep.build(score.Report(session_id="t"), 2, 0, delivery=d)
+    assert [s["id"] for s in doc["sections"]] == ["summary", "delivery"]
+    assert doc["sections"][0]["heading"] is None and doc["signoff"] == []
+    text = rep.to_text(doc)
+    assert text.startswith("No scored questions in this session.\n\nDELIVERY\n")
+    back = rep.from_text(text, None, d)
+    back.pop("from_text")
+    assert back == doc
+
+
+def test_an_older_report_reads_the_way_history_read_it():
+    """Headings this version does not print still make sections, and the rubric is found by
+    the criteria it names."""
+    old = ("HOW IT WENT\n==========\n\n"
+           "  You gave four figures and said how\n  you measured two of them.\n\n"
+           "1. Say what changed  (2 of 6 answers)\n   Finish with the effect.\n"
+           "   You said: \"it went fine\"\n\n"
+           "THE CRITERIA\n============\n\n  sets_context        6/6\n  specific_detail     2/6\n\n"
+           "Every quote above is your own words.\n")
+    rows = [{"name": "sets_context", "met": 6, "of": 6, "description": "said where"},
+            {"name": "specific_detail", "met": 2, "of": 6, "description": "gave a figure"}]
+    assert rep.from_text(old, rows) == {
+        "version": 1, "from_text": True,
+        "sections": [
+            {"id": None, "heading": "HOW IT WENT", "blocks": [
+                {"kind": "para",
+                 "text": "You gave four figures and said how you measured two of them."},
+                {"kind": "lead", "text": "1. Say what changed  (2 of 6 answers)"},
+                {"kind": "para", "text": "Finish with the effect."},
+                {"kind": "quote", "text": "You said: \"it went fine\""}]},
+            {"id": None, "heading": "THE CRITERIA", "blocks": [{"kind": "rubric", "rows": rows}]}],
+        "signoff": ["Every quote above is your own words."]}

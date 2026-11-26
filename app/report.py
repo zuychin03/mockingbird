@@ -19,12 +19,14 @@ Four decisions about what this says, all of which constrain the code below:
   their words       advice is phrased against what they actually said, not against a template,
                     so "you gave the figure and not the method" cites the figure.
 
-Plain text by design. It is read in a terminal today and rendered elsewhere later, and the
-structure has to survive both.
+`build` makes the report as sections of typed blocks, and every reader lays those out its own
+way: `to_text` for a terminal, History and the exports as pages. A report cached before it had
+the structure is read back from its text by `from_text`.
 """
 
 from __future__ import annotations
 
+import re
 import textwrap
 
 from . import guards
@@ -190,28 +192,71 @@ def _clip(text: str, limit: int) -> str:
     return (cut or t[:limit]) + "..."
 
 
-def design_note(observations) -> list[str]:
+# A reader finds a section by its id. The heading is what the candidate reads, and a field may
+# word it differently.
+HEADINGS = {
+    "summary": "HOW THAT WENT",
+    "change": "WHAT WOULD CHANGE THE MOST",
+    "strengths": "WHAT YOU ALREADY DO WELL",
+    "criteria": "EVERY CRITERION",
+    "delivery": "DELIVERY",
+    "cut_short": "SCORED, BUT CUT SHORT",
+    "revisit": "QUESTIONS WORTH REVISITING ON YOUR OWN",
+    "asked": "WHAT YOU ASKED",
+    "design": "ON THE DESIGN QUESTION",
+}
+
+DESIGN_INTRO = ("Not scored -- a hypothetical has no outcome to check an answer against, and "
+                "the parts below are reported rather than marked. Read them as a checklist of "
+                "what a design answer usually covers.")
+DELIVERY_INTRO = ("Observations, not scores. These measures are the ones most affected by "
+                  "recognition error and by accent, so they sit beside the result, not in it.")
+CUT_SHORT_INTRO = ("These questions ended before the conversation was finished with them, so "
+                   "read their scores as weaker evidence than the rest.")
+ASKED_INTRO = ("These went unanswered on purpose. There is no employer behind this interview, "
+               "and inventing an answer about a real workplace is the one thing a practice "
+               "interviewer must not do. They are recorded here so you can put them to the "
+               "real one.")
+# "Nothing here is an impression" was not true, and it is the kind of untrue that 9.5 was
+# written about. The quotes are the candidate's own words and the arithmetic is checkable, but
+# a model chose which words counted as evidence, and saying otherwise claims a guarantee the
+# pipeline does not have.
+SIGNOFF = ("Every quote above is your own words, and the counting on top of them is "
+           "arithmetic you can check.",
+           "Which words counted as evidence was decided by a model, so that part is a "
+           "reading, not a measurement.")
+
+
+def _block(kind: str, text: str) -> dict:
+    return {"kind": kind, "text": text}
+
+
+def _section(sid: str, blocks: list[dict]) -> dict:
+    return {"id": sid, "heading": HEADINGS[sid], "blocks": blocks}
+
+
+def _design_section(observations) -> dict | None:
     """A description of the design answer. No score, no contribution to any total."""
     d = next((o for o in observations if o.shape == "design" and o.text.strip()), None)
     if d is None:
-        return []
-    have = [(k, label) for k, label in DESIGN_PARTS if getattr(d, k)]
-    missing = [label for k, label in DESIGN_PARTS if not getattr(d, k)]
-    out = ["ON THE DESIGN QUESTION", "-" * 60, ""]
-    out.append("Not scored -- a hypothetical has no outcome to check an answer against, and")
-    out.append("the parts below are reported rather than marked. Read them as a checklist of")
-    out.append("what a design answer usually covers.")
-    out.append("")
+        return None
+    blocks = [_block("para", DESIGN_INTRO)]
     # "covered" would be a verdict, and a verdict is the thing that inverted the ranking.
-    # These lines say what was FOUND and let the candidate judge it -- which they can, since
-    # the words are their own.
-    for k, label in have:
-        out.append("  You %s:" % label)
-        out.append("      \"%s\"" % _clip(getattr(d, k), 88))
-    for label in missing:
-        out.append("  - Nothing in the answer %s." % label)
-    out.append("")
-    return out
+    # These say what was FOUND and let the candidate judge it -- which they can, since the
+    # words are their own.
+    for k, label in DESIGN_PARTS:
+        if getattr(d, k):
+            blocks += [_block("para", "You %s:" % label),
+                       _block("quote", "\"%s\"" % _clip(getattr(d, k), 88))]
+    blocks += [_block("item", "Nothing in the answer %s." % label)
+               for k, label in DESIGN_PARTS if not getattr(d, k)]
+    return _section("design", blocks)
+
+
+def design_note(observations) -> list[str]:
+    """The design section as text, or nothing when no design question was answered."""
+    s = _design_section(observations)
+    return _lay_design(s) if s else []
 
 
 # Why a question ended, in words a candidate can act on. Only the reasons that mean the
@@ -235,7 +280,12 @@ CUT_SHORT = {
 }
 
 
-def _delivery_lines(d: dict) -> list[str]:
+def _figures(d: dict) -> dict:
+    """The session's delivery measures. The per-answer rows stay in the payload's own copy."""
+    return {k: v for k, v in d.items() if k != "answers"}
+
+
+def _delivery_section(d: dict) -> dict | None:
     """How the answers were said. Plain numbers in -- this module is on the text path and may
     not import what measured them.
 
@@ -244,14 +294,170 @@ def _delivery_lines(d: dict) -> list[str]:
     is told it sits beside the score instead of inside it.
     """
     if not d or not d.get("spoken"):
-        return []
-    out = ["DELIVERY", "-" * 60, ""]
-    out.append("  Observations, not scores. These measures are the ones most affected by")
-    out.append("  recognition error and by accent, so they sit beside the result, not in it.")
-    out.append("")
-    out.append("  Measured on %d spoken answer%s, %.0fs of speech."
-               % (d["spoken"], "" if d["spoken"] == 1 else "s", d.get("speaking_seconds") or 0))
-    out.append("")
+        return None
+    measured = ("Measured on %d spoken answer%s, %.0fs of speech."
+                % (d["spoken"], "" if d["spoken"] == 1 else "s", d.get("speaking_seconds") or 0))
+    return _section("delivery", [_block("para", DELIVERY_INTRO), _block("para", measured),
+                                 {"kind": "delivery", "figures": _figures(d)}])
+
+
+def _delivery_lines(d: dict) -> list[str]:
+    s = _delivery_section(d)
+    return _lay_delivery(s) if s else []
+
+
+def build(report: Report, questions_asked: int, questions_answered: int,
+          observations=None, question_states=None, delivery=None) -> dict:
+    """The report as sections of typed blocks, for each reader to lay out its own way.
+
+    A block is a `para` of our prose, a numbered `lead`, an `item`, a `quote` of the
+    candidate's words (marks included), the `rubric` counts or the `delivery` figures. Text is
+    whole: wrapping belongs to whatever lays it out.
+    """
+    totals = report.totals
+    if not totals:
+        # Delivery is explicitly not a score (FR-36), so it does not belong behind
+        # this gate: an interview that was spoken aloud and scored nothing still has
+        # something measured and true to say about how it was spoken.
+        sections = [{"id": "summary", "heading": None,
+                     "blocks": [_block("para", "No scored questions in this session.")]}]
+        spoken = _delivery_section(delivery or {})
+        return {"version": 1, "sections": sections + ([spoken] if spoken else []),
+                "signoff": []}
+
+    rate = {k: v[0] / v[1] for k, v in totals.items() if v[1]}
+    weak = sorted((k for k, r in rate.items() if r <= WEAK), key=lambda k: rate[k])
+    strong = sorted((k for k, r in rate.items() if r >= STRONG), key=lambda k: -rate[k])
+
+    sections = [_section("summary", [_block(
+        "para", "%d questions, %d answered. Scored on %d of them; the opening and closing "
+                "questions are not scored." % (questions_asked, questions_answered,
+                                               len(report.scores)))])]
+
+    if weak:
+        blocks = []
+        cited: set[str] = set()
+        for i, name in enumerate(weak[:3], 1):
+            problem, fix = ADVICE.get(name, (name, ""))
+            got, n = totals[name]
+            blocks += [_block("lead", "%d. %s  (%d of %d answers)" % (i, problem, got, n)),
+                       _block("para", fix)]
+            miss = _missed(report, name, cited)
+            if miss:
+                cited.add(miss.question_id)
+                blocks.append(_block("para", "Where it showed -- %s" % _clip(miss.question, 66)))
+                if miss.answer:
+                    blocks.append(_block("quote", "You said: \"%s\"" % _clip(miss.answer, 110)))
+        sections.append(_section("change", blocks))
+
+    if strong:
+        blocks = []
+        praised: set[str] = set()
+        for name in strong[:3]:
+            got, n = totals[name]
+            blocks.append(_block("item", "On %d of %d answers, %s."
+                                 % (got, n, PRAISE.get(name, name))))
+            q = _shown(report, name, praised)
+            if q:
+                praised.add(q.question_id)
+                blocks.append(_block("quote", "\"%s\"" % _clip(_quote(q, name), 96)))
+        sections.append(_section("strengths", blocks))
+
+    sections.append(_section("criteria", [{"kind": "rubric", "rows": [
+        {"name": name, "met": got, "of": n, "description": CRITERIA[name][1]}
+        for name, (got, n) in sorted(totals.items())]}]))
+
+    spoken = _delivery_section(delivery or {})
+    if spoken:
+        sections.append(spoken)
+
+    scored_ids = {q.question_id for q in report.scores}
+    cut = [(q, CUT_SHORT[q.closed_because]) for q in (question_states or [])
+           if q.closed_because in CUT_SHORT and q.question_id in scored_ids]
+    if cut:
+        sections.append(_section("cut_short", [_block("para", CUT_SHORT_INTRO)] + [
+            _block("item", "[%s] %s" % (why, _clip(q.question, 60))) for q, why in cut[:5]]))
+
+    thin = [q for q in report.scores if q.addresses_question != "yes"]
+    if thin:
+        sections.append(_section("revisit", [
+            _block("item", "[%s] %s" % (q.addresses_question, _clip(q.question, 70)))
+            for q in thin[:5]]))
+
+    # The candidate's own questions. `asked_back` was persisted from the first version of the
+    # closing handler and read by nobody, while the interviewer told them to their face it had
+    # gone "in your report" -- a reviewed line promising what the runner did not do, which is
+    # the SKIP_ACK defect. They are verbatim: these are the only words in the report that were
+    # never scored, never extracted and never judged, so paraphrasing them would be the one
+    # edit with nothing to gain.
+    asked = [line for q in (question_states or []) for line in q.asked_back if line.strip()]
+    if asked:
+        # Whole, never clipped. A candidate often asks two things in one breath, and
+        # truncating dropped the second one silently -- which is the same loss the section
+        # was added to undo.
+        blocks = [_block("para", ASKED_INTRO)]
+        blocks += [_block("item", " ".join(line.split())) for line in asked[:6]]
+        if len(asked) > 6:
+            blocks.append(_block("para", "... and %d more in the session record."
+                                 % (len(asked) - 6)))
+        sections.append(_section("asked", blocks))
+
+    design = _design_section(observations or [])
+    if design:
+        sections.append(design)
+    return {"version": 1, "sections": sections, "signoff": list(SIGNOFF)}
+
+
+# The widths the intros were hand-wrapped at before the report had a structure, so a cached
+# report and a new one print the same text.
+_WIDE, _NARROW = 76, 72
+
+
+def _wrap(text: str, indent: str, width: int) -> list[str]:
+    return textwrap.wrap(text, width, initial_indent=indent, subsequent_indent=indent,
+                         break_on_hyphens=False, break_long_words=False)
+
+
+def _lay_summary(s: dict) -> list[str]:
+    head = [s["heading"], "=" * 60, ""] if s["heading"] else []
+    return head + [b["text"] for b in s["blocks"]] + [""]
+
+
+def _lay_change(s: dict) -> list[str]:
+    out = [s["heading"], "-" * 60]
+    prev = None
+    for b in s["blocks"]:
+        if b["kind"] == "lead":
+            out += ["", b["text"]]
+        elif b["kind"] == "para" and prev != "lead":
+            out += ["", "   " + b["text"]]
+        else:
+            out.append("   " + b["text"])
+        prev = b["kind"]
+    return out + [""]
+
+
+def _lay_list(s: dict) -> list[str]:
+    out = [s["heading"], "-" * 60]
+    for b in s["blocks"]:
+        if b["kind"] == "para":
+            out += _wrap(b["text"], "  ", _NARROW)
+        elif b["kind"] == "item":
+            out.append("  - " + b["text"])
+        else:
+            out.append("      " + b["text"])
+    return out + [""]
+
+
+def _lay_criteria(s: dict) -> list[str]:
+    return ([s["heading"], "-" * 60]
+            + ["  %-22s %2d/%-2d   %s" % (r["name"], r["met"], r["of"], r["description"])
+               for b in s["blocks"] for r in b["rows"]]
+            + [""])
+
+
+def _figure_lines(d: dict) -> list[str]:
+    out = []
     if d.get("articulation_rate"):
         out.append("  Speaking rate      %.1f syllables per second while actually speaking"
                    % d["articulation_rate"])
@@ -262,143 +468,168 @@ def _delivery_lines(d: dict) -> list[str]:
                    % d["wpm"])
     if d.get("pause_count"):
         out.append("  Pauses             %d of 200ms or longer" % d["pause_count"])
-        share = d.get("mid_clause_share")
-        if share is not None:
+        if d.get("mid_clause_share") is not None:
             out.append("  Where they fell    %d of %d were mid-clause"
                        % (d["mid_clause_pauses"], d["pause_count"]))
             out.append("                     Pausing between clauses reads as normal;")
             out.append("                     pausing inside one reads as hunting for the word.")
     elif d.get("spoken"):
         out.append("  Pauses             none of 200ms or longer")
-    out.append("")
     return out
+
+
+def _lay_delivery(s: dict) -> list[str]:
+    out = [s["heading"], "-" * 60, ""]
+    for b in s["blocks"]:
+        out += (_wrap(b["text"], "  ", _WIDE) if b["kind"] == "para"
+                else _figure_lines(b["figures"])) + [""]
+    return out
+
+
+def _lay_asked(s: dict) -> list[str]:
+    out = [s["heading"], "-" * 60]
+    for i, b in enumerate(s["blocks"]):
+        if b["kind"] == "item":
+            # `break_on_hyphens` off: the default split "per-region?" across two lines, and a
+            # hyphenation break in the one section that exists to reproduce the candidate's
+            # words exactly is the same defect as clipping, just quieter.
+            wrapped = textwrap.wrap(b["text"], width=64, break_on_hyphens=False,
+                                    break_long_words=False)
+            out.append("  - %s" % (wrapped[0] if wrapped else ""))
+            out.extend("    %s" % w for w in wrapped[1:])
+        elif i == 0:
+            out += _wrap(b["text"], "  ", _NARROW) + [""]
+        else:
+            out += [""] + _wrap(b["text"], "  ", _NARROW)
+    return out + [""]
+
+
+def _lay_design(s: dict) -> list[str]:
+    out = [s["heading"], "-" * 60, ""]
+    for i, b in enumerate(s["blocks"]):
+        if i == 0:
+            out += _wrap(b["text"], "", _WIDE) + [""]
+        elif b["kind"] == "quote":
+            out.append("      " + b["text"])
+        elif b["kind"] == "item":
+            out.append("  - " + b["text"])
+        else:
+            out.append("  " + b["text"])
+    return out + [""]
+
+
+_LAYOUT = {"summary": _lay_summary, "change": _lay_change, "strengths": _lay_list,
+           "criteria": _lay_criteria, "delivery": _lay_delivery, "cut_short": _lay_list,
+           "revisit": _lay_list, "asked": _lay_asked, "design": _lay_design}
+
+
+def to_text(doc: dict) -> str:
+    """The report as plain text for a terminal: a 60-column rule under every heading."""
+    out = [line for s in doc["sections"] for line in _LAYOUT[s["id"]](s)]
+    if not doc["signoff"]:
+        return "\n".join(out).rstrip() + "\n"
+    return "\n".join(out + list(doc["signoff"])) + "\n"
 
 
 def render(report: Report, questions_asked: int, questions_answered: int,
            observations=None, question_states=None, delivery=None) -> str:
-    totals = report.totals
-    if not totals:
-        # Delivery is explicitly not a score (FR-36), so it does not belong behind
-        # this gate: an interview that was spoken aloud and scored nothing still has
-        # something measured and true to say about how it was spoken.
-        head = ["No scored questions in this session.", ""]
-        body = head + _delivery_lines(delivery or {})
-        return "\n".join(body).rstrip() + "\n"
+    return to_text(build(report, questions_asked, questions_answered,
+                         observations, question_states, delivery))
 
-    rate = {k: v[0] / v[1] for k, v in totals.items() if v[1]}
-    weak = sorted((k for k, r in rate.items() if r <= WEAK), key=lambda k: rate[k])
-    strong = sorted((k for k, r in rate.items() if r >= STRONG), key=lambda k: -rate[k])
 
-    out: list[str] = []
-    out.append("HOW THAT WENT")
-    out.append("=" * 60)
-    out.append("")
-    out.append("%d questions, %d answered. Scored on %d of them; the opening and closing "
-               "questions are not scored." % (questions_asked, questions_answered,
-                                              len(report.scores)))
-    out.append("")
+_RULE = re.compile(r"^[=-]{10,}$")
+_QUOTED = re.compile(r"^(You said:\s*)?[“\"]")
+_NUMBERED = re.compile(r"^\d+\.")
+_IDS = {heading: sid for sid, heading in HEADINGS.items()}
 
-    if weak:
-        out.append("WHAT WOULD CHANGE THE MOST")
-        out.append("-" * 60)
-        cited: set[str] = set()
-        for i, name in enumerate(weak[:3], 1):
-            problem, fix = ADVICE.get(name, (name, ""))
-            got, n = totals[name]
-            out.append("")
-            out.append("%d. %s  (%d of %d answers)" % (i, problem, got, n))
-            out.append("   %s" % fix)
-            miss = _missed(report, name, cited)
-            if miss:
-                cited.add(miss.question_id)
-            if miss:
-                out.append("")
-                out.append("   Where it showed -- %s" % _clip(miss.question, 66))
-                if miss.answer:
-                    out.append("   You said: \"%s\"" % _clip(miss.answer, 110))
-        out.append("")
 
-    if strong:
-        out.append("WHAT YOU ALREADY DO WELL")
-        out.append("-" * 60)
-        praised: set[str] = set()
-        for name in strong[:3]:
-            got, n = totals[name]
-            out.append("  - On %d of %d answers, %s." % (got, n, PRAISE.get(name, name)))
-            q = _shown(report, name, praised)
-            if q:
-                praised.add(q.question_id)
-                out.append("      \"%s\"" % _clip(_quote(q, name), 96))
-        out.append("")
+def _text_blocks(lines: list[str]) -> list[dict]:
+    """Paragraphs back out of the 60-column wrapping. A blank line ends a block, a bullet or a
+    number starts one, and a line opening on a quotation mark is the candidate's words."""
+    out: list[dict] = []
+    cur = None
+    col = 0
+    for raw in lines:
+        line = raw.strip()
+        indent = len(raw) - len(raw.lstrip())
+        if not line:
+            cur = None
+        elif cur and cur["kind"] == "item" and indent == col:
+            # A wrapped bullet's next line, whatever it opens with. History split a
+            # candidate's question that wrapped onto "2." or a quotation mark.
+            cur["text"] += " " + line
+        elif _QUOTED.match(line):
+            out.append(_block("quote", line))
+            cur = None
+        elif line.startswith("- "):
+            cur = _block("item", line[2:])
+            col = indent + 2
+            out.append(cur)
+        elif _NUMBERED.match(line):
+            out.append(_block("lead", line))
+            cur = None
+        elif line.startswith("["):
+            out.append(_block("item", line))
+            cur = None
+        elif cur:
+            cur["text"] += " " + line
+        else:
+            cur = _block("para", line)
+            out.append(cur)
+    return out
 
-    out.append("EVERY CRITERION")
-    out.append("-" * 60)
-    for name in sorted(totals):
-        got, n = totals[name]
-        out.append("  %-22s %2d/%-2d   %s" % (name, got, n, CRITERIA[name][1]))
-    out.append("")
 
-    out.extend(_delivery_lines(delivery or {}))
+def from_text(text: str, rubric: list[dict] | None = None,
+              delivery: dict | None = None) -> dict:
+    """The structure of a report cached before it had one, read back from its text.
 
-    scored_ids = {q.question_id for q in report.scores}
-    cut = [(q, CUT_SHORT[q.closed_because]) for q in (question_states or [])
-           if q.closed_because in CUT_SHORT and q.question_id in scored_ids]
-    if cut:
-        out.append("SCORED, BUT CUT SHORT")
-        out.append("-" * 60)
-        out.append("  These questions ended before the conversation was finished with them,")
-        out.append("  so read their scores as weaker evidence than the rest.")
-        for q, why in cut[:5]:
-            out.append("  - [%s] %s" % (why, _clip(q.question, 60)))
-        out.append("")
+    Read the way History and the exports read the text until now, so an old report looks the
+    same once they read the structure. Nothing is rebuilt: the scoring behind a cached report
+    took a model minutes, and the candidate has already read it. `rubric` and `delivery` are
+    the same payload's data, which stand in for the lines that printed them.
+    """
+    lines = (text or "").split("\n")
+    raw = [{"heading": None, "lines": []}]
+    i = 0
+    while i < len(lines):
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        if lines[i].strip() and _RULE.match(nxt.strip()):
+            raw.append({"heading": lines[i].strip(), "lines": []})
+            i += 2
+            continue
+        raw[-1]["lines"].append(lines[i])
+        i += 1
 
-    thin = [q for q in report.scores if q.addresses_question != "yes"]
-    if thin:
-        out.append("QUESTIONS WORTH REVISITING ON YOUR OWN")
-        out.append("-" * 60)
-        for q in thin[:5]:
-            out.append("  - [%s] %s" % (q.addresses_question, _clip(q.question, 70)))
-        out.append("")
+    # The sign-off is the run of unindented lines closing the last section.
+    last = raw[-1]["lines"]
+    end = len(last)
+    while end and not last[end - 1].strip():
+        end -= 1
+    start = end
+    while start and last[start - 1].strip() and not last[start - 1].startswith((" ", "\t")):
+        start -= 1
+    signoff: list[str] = []
+    if start < end and (raw[-1]["heading"] or start):
+        signoff = [line.strip() for line in last[start:end]]
+        raw[-1]["lines"] = last[:start]
 
-    # The candidate's own questions. `asked_back` was persisted from the first version of the
-    # closing handler and read by nobody, while the interviewer told them to their face it had
-    # gone "in your report" -- a reviewed line promising what the runner did not do, which is
-    # the SKIP_ACK defect. They are verbatim: these are the only words in the report that were
-    # never scored, never extracted and never judged, so paraphrasing them would be the one
-    # edit with nothing to gain.
-    asked = [line for q in (question_states or []) for line in q.asked_back if line.strip()]
-    if asked:
-        out.append("WHAT YOU ASKED")
-        out.append("-" * 60)
-        out.append("  These went unanswered on purpose. There is no employer behind this")
-        out.append("  interview, and inventing an answer about a real workplace is the one")
-        out.append("  thing a practice interviewer must not do. They are recorded here so")
-        out.append("  you can put them to the real one.")
-        out.append("")
-        # Wrapped, never clipped. A candidate often asks two things in one breath, and
-        # truncating dropped the second one silently -- which is the same loss the section
-        # was added to undo.
-        for line in asked[:6]:
-            # `break_on_hyphens` off: the default split "per-region?" across two lines, and
-            # a hyphenation break in the one section that exists to reproduce the candidate's
-            # words exactly is the same defect as clipping, just quieter.
-            wrapped = textwrap.wrap(" ".join(line.split()), width=64,
-                                    break_on_hyphens=False, break_long_words=False)
-            out.append("  - %s" % (wrapped[0] if wrapped else ""))
-            out.extend("    %s" % w for w in wrapped[1:])
-        if len(asked) > 6:
-            out.append("")
-            out.append("  ... and %d more in the session record." % (len(asked) - 6))
-        out.append("")
-
-    out.extend(design_note(observations or []))
-
-    # "Nothing here is an impression" was not true, and it is the kind of untrue that 9.5
-    # was written about. The quotes are the candidate's own words and the arithmetic is
-    # checkable, but a model chose which words counted as evidence, and saying otherwise
-    # claims a guarantee the pipeline does not have.
-    out.append("Every quote above is your own words, and the counting on top of them is "
-               "arithmetic you can check.")
-    out.append("Which words counted as evidence was decided by a model, so that part is a "
-               "reading, not a measurement.")
-    return "\n".join(out) + "\n"
+    rows = [{k: c.get(k) for k in ("name", "met", "of", "description")} for c in rubric or []]
+    sections = []
+    for s in raw:
+        body = "\n".join(s["lines"])
+        if not (s["heading"] or body.strip()):
+            continue
+        sid = _IDS.get(s["heading"]) if s["heading"] else "summary"
+        # By heading, or by naming two criteria for a heading this does not know.
+        if rows and (sid == "criteria"
+                     or sum(1 for r in rows if r["name"] and r["name"] in body) >= 2):
+            blocks = [{"kind": "rubric", "rows": rows}]
+        else:
+            blocks = _text_blocks(s["lines"])
+        if sid == "delivery" and (delivery or {}).get("spoken"):
+            at = next((n for n, b in enumerate(blocks)
+                       if b["kind"] == "para" and b["text"].startswith("Measured on")), None)
+            if at is not None:
+                blocks = blocks[:at + 1] + [{"kind": "delivery", "figures": _figures(delivery)}]
+        sections.append({"id": sid, "heading": s["heading"], "blocks": blocks})
+    return {"version": 1, "sections": sections, "signoff": signoff, "from_text": True}

@@ -521,6 +521,40 @@ def test_a_built_report_is_cached_beside_its_session(client, monkeypatch, tmp_pa
     assert again.json() == first.json()
 
 
+def test_a_built_report_keeps_its_structure(client, monkeypatch, tmp_path):
+    root = tmp_path / "s"
+    d = _session_with_report(root, "20260101-000000-struct")
+    monkeypatch.setattr(api, "SESSIONS", root)
+    got = client.get("/api/sessions/20260101-000000-struct/report").json()
+    assert got["text"] == api.report_mod.to_text(got["structure"])
+    assert "from_text" not in got["structure"]
+    kept = json.loads((d / "report.json").read_text(encoding="utf-8"))
+    assert kept["structure"] == got["structure"]
+
+
+def test_a_report_cached_before_the_structure_is_read_from_its_text(client, monkeypatch,
+                                                                     tmp_path):
+    """Never rebuilt, and the cached file is left as it was."""
+    root = tmp_path / "s"
+    d = _session_with_report(root, "20260101-000000-legacy")
+    monkeypatch.setattr(api, "SESSIONS", root)
+    url = "/api/sessions/20260101-000000-legacy/report"
+    built = client.get(url).json()
+    cached = d / "report.json"
+    cached.write_text(json.dumps({k: v for k, v in built.items() if k != "structure"}),
+                      encoding="utf-8")
+    before = cached.read_bytes()
+
+    def boom(*a, **k):
+        raise AssertionError("rebuilt a report that was already cached")
+    monkeypatch.setattr(api.observe, "observe", boom)
+    monkeypatch.setattr(api.score_mod, "build", boom)
+    got = client.get(url).json()["structure"]
+    assert got.pop("from_text") is True
+    assert got == built["structure"]
+    assert cached.read_bytes() == before
+
+
 def test_the_cache_is_dropped_when_the_session_changes(client, monkeypatch, tmp_path):
     """A cache that never invalidates is worse than none: a report built from four answers
     must not be served once the session holds six."""
