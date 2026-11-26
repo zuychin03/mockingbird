@@ -1411,6 +1411,16 @@ def test_how_did_you_know_which_or_who_is_not_measure(said):
     assert "MEASURE" not in focus.classify(said)
 
 
+@pytest.mark.parametrize("said", [
+    "So, how did you know for sure that the automatic payment reminders actually led to "
+    "customers getting paid faster?",
+    "How did you know for certain whether the fix held?",
+])
+def test_how_they_knew_for_sure_is_measure(said):
+    """A floor line in this form named nothing and was refused (26/11)."""
+    assert "MEASURE" in focus.classify(said)
+
+
 def test_how_they_knew_it_worked_is_both_outcome_and_measure():
     """OUTCOME's own wording asks "how they knew it worked"; as MEASURE alone it left OUTCOME
     owed after it was answered (Groq, 25/11)."""
@@ -1443,6 +1453,13 @@ def test_llama_focus_words_outside_the_bounded_question_forms_do_not_match():
 def test_the_role_lines_the_model_writes_are_role(said):
     """Stored lines that named nothing, or OUTCOME for "the results" (25/11)."""
     assert focus.classify(said) == {"ROLE"}
+
+
+def test_personally_yours_is_role():
+    """A floor line in this order named nothing and was refused (26/11)."""
+    assert focus.classify("Which of those two requests was personally yours to advocate for, "
+                          "versus something you made a decision about as part of your "
+                          "team?") == {"ROLE"}
 
 
 @pytest.mark.parametrize("said", [
@@ -3393,8 +3410,12 @@ def test_the_floor_asks_for_the_role_where_the_model_moved_on(tmp_path):
     assert last_decision(state)["floor"] is None
 
 
-def test_the_floor_keeps_the_model_s_line_when_it_asks_that_focus(tmp_path):
-    line = "What was your own part in the weekend move?"
+@pytest.mark.parametrize("line", [
+    "What was your own part in the weekend move?",
+    # Refused live as naming nothing before "personally yours" was ROLE (26/11).
+    "Which of those weekend tasks was personally yours, versus the front desk team's?",
+])
+def test_the_floor_keeps_the_model_s_line_when_it_asks_that_focus(line, tmp_path):
     r, state = floor_runner([d("advance", "Thanks."), speech(line)], tmp_path)
     run(r.ask())
     run(r.submit(WE_STORY))

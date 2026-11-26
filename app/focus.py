@@ -99,7 +99,10 @@ LADDER = ["STEPS", "REASON", "OUTCOME", "MEASURE", "CHALLENGE", "ROLE",
 # form, not a topical keyword, for the reason above. `test_focus.py` pins the invariant.
 _PATTERNS = {
     "MEASURE": r"measur|metric|number|how (much|many|fast|long)|quantif|benchmark|profil|"
-               r"how do you know|how did you know (?:that|whether|if)|what data|p9\d|"
+               # "for sure": a floor line, "So, how did you know for sure that the reminders
+               # actually led to ...?", named nothing and was refused (26/11).
+               r"how do you know|how did you know (?:for (?:sure|certain) )?(?:that|whether|if)|"
+               r"what data|p9\d|"
                # Three head nouns added to the bounded quantity slot, and the opening widened.
                # The `determine` family reached six rejected lines over two live sessions and
                # cleared D1's three-example bar; four of them are recovered here.
@@ -159,8 +162,9 @@ _PATTERNS = {
     # specific role" named nothing: 16 of 1,018 stored lines (25/11), so a ROLE line asked when
     # another focus was requested was charged that focus. The wide object slot takes only
     # "yours" or "your responsibility": "which parts of the plan were you worried about" is not
-    # ROLE. No "current" or "previous": "your current role" is the job.
-    "ROLE": r"\byou personally\b|\byours personally\b|"
+    # ROLE. No "current" or "previous": "your current role" is the job. "personally yours": a
+    # floor line, "Which of those two requests was personally yours ...?", was refused (26/11).
+    "ROLE": r"\byou personally\b|\b(?:yours personally|personally yours)\b|"
             r"your (?:own |specific |personal |individual |exact )?"
             r"(?:part|role|contributions?|responsibility)\b|"
             # TEMPLATE. `were you` already carried "which parts were you responsible for";

@@ -97,6 +97,9 @@ compared side by side.
   counted as asking how the story ended.
 - A figure given alongside "we never measured it" now counts as unchecked, so the interviewer can
   ask how you know it.
+- A follow-up that asks which part was "personally yours", or "how did you know for sure that
+  ...", is now read as asking about your own part or how you knew. Before, it could be swapped
+  for a stock question.
 
 ## 1.0.1 - 2026-11-08
 
