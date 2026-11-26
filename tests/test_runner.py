@@ -3369,15 +3369,71 @@ def test_the_floor_leaves_out_what_is_not_scored_short_or_already_given():
     assert focus.floor(CLAIMED, FLOOR_CRITERIA, seen={"result"}) == []
 
 
-def test_a_model_advance_records_the_floor_and_still_advances(tmp_path):
+def floor_runner(decisions, tmp_path):
     session.SESSIONS = tmp_path / "sessions"
     state = session.new_session(FLOOR_PLAN)
-    r = Runner(ScriptedProvider([d("advance", "Thanks.")]), FLOOR_PLAN, state)
+    return Runner(ScriptedProvider(decisions), FLOOR_PLAN, state), state
+
+
+def test_the_floor_asks_for_the_role_where_the_model_moved_on(tmp_path):
+    """Charged to the question's own cap, never the shared reserve, and asked once: the next
+    advance stands."""
+    r, state = floor_runner([d("advance", "Thanks."), d("advance", "Thanks.")], tmp_path)
+    pool = r.pool
     run(r.ask())
     out = run(r.submit(WE_STORY))
+    decision = last_decision(state)
+    assert out.act == "probe" and not out.closed_question
+    assert decision["floor"] == ["ROLE"] and decision["focus_got"] == ["ROLE"]
+    assert {"floor-role->probe", "floor-line->template"} <= set(decision["guards"])
+    assert decision["say"] in focus.TEMPLATE["ROLE"]
+    assert (r.follow_ups_used, r.pool) == (1, pool)
+    out = run(r.submit("I ran the Monday training myself and wrote the cheat sheet for it."))
     assert out.act == "advance" and out.closed_question
-    assert last_decision(state)["floor_shadow"] == ["ROLE"]
-    assert r.current["question"] == "Tell me about another one."
+    assert last_decision(state)["floor"] is None
+
+
+def test_the_floor_keeps_the_model_s_line_when_it_asks_that_focus(tmp_path):
+    line = "What was your own part in the weekend move?"
+    r, state = floor_runner([d("advance", "Thanks."), speech(line)], tmp_path)
+    run(r.ask())
+    run(r.submit(WE_STORY))
+    decision = last_decision(state)
+    assert decision["say"] == line and decision["focus_got"] == ["ROLE"]
+    assert "floor-line->model" in decision["guards"]
+    assert decision["speech_attempt"]["trigger"] == "floor"
+
+
+def test_a_model_line_on_another_focus_gives_way_to_the_floor_s_template(tmp_path):
+    """The speech repair takes any fresh focus; the floor asks for the one it found missing."""
+    r, state = floor_runner([d("advance", "Thanks."),
+                             speech("What was the hardest part of the weekend move?")], tmp_path)
+    run(r.ask())
+    run(r.submit(WE_STORY))
+    decision = last_decision(state)
+    assert decision["speech_attempt"]["rejection"] == "off_floor"
+    assert decision["say"] in focus.TEMPLATE["ROLE"] and decision["focus_got"] == ["ROLE"]
+
+
+def test_the_floor_asks_for_an_outcome_only_claimed(tmp_path):
+    r, state = floor_runner([d("advance", "Thanks.")], tmp_path)
+    run(r.ask())
+    out = run(r.submit(CLAIMED))
+    decision = last_decision(state)
+    assert out.act == "probe"
+    assert decision["floor"] == ["OUTCOME"] and decision["focus_got"] == ["OUTCOME"]
+    assert "floor-outcome->probe" in decision["guards"]
+
+
+def test_the_floor_s_measure_request_is_recorded_and_not_asked(tmp_path):
+    fast = ("I cut the page load from eight seconds to 300 ms by caching the product catalogue "
+            "on the edge servers in each region.")
+    r, state = floor_runner([d("advance", "Thanks.")], tmp_path)
+    run(r.ask())
+    out = run(r.submit(fast))
+    assert out.act == "advance" and out.closed_question
+    assert last_decision(state)["floor"] == ["MEASURE"]
+    assert not any(a.startswith("floor-") for a in last_decision(state)["guards"])
 
 
 def test_the_floor_is_not_considered_once_a_follow_up_was_asked(tmp_path):
@@ -3387,10 +3443,10 @@ def test_the_floor_is_not_considered_once_a_follow_up_was_asked(tmp_path):
                                  d("advance", "Thanks.")]), FLOOR_PLAN, state)
     run(r.ask())
     run(r.submit("We moved the bookings."))
-    assert last_decision(state)["floor_shadow"] is None
+    assert last_decision(state)["floor"] is None
     run(r.submit(WE_STORY))
     assert last_decision(state)["act"] == "advance"
-    assert last_decision(state)["floor_shadow"] is None
+    assert last_decision(state)["floor"] is None
 
 
 def test_an_advance_the_code_forced_is_not_the_floor_s_to_consider(tmp_path):
@@ -3405,4 +3461,4 @@ def test_an_advance_the_code_forced_is_not_the_floor_s_to_consider(tmp_path):
     decision = last_decision(state)
     assert "observations-complete->advance" in decision["guards"]
     assert decision["follow_ups_used"] == 0
-    assert decision["floor_shadow"] is None
+    assert decision["floor"] is None

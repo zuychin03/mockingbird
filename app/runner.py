@@ -787,6 +787,7 @@ class Runner:
 
         calls = 1
         speech_attempt: dict | None = None
+        say_model: str | None = None
         # The line that TRIPPED guard 3. Without it the retry's `say_raw` overwrites the only
         # record of what was rejected, which is why the false-positive rate above had to be
         # inferred from spoken pairs rather than read off the firings themselves.
@@ -967,15 +968,33 @@ class Runner:
             g.applied += ["design-gap->probe", "case-line->reworded"
                           if speech_attempt["accepted"] else "case-line->reference"]
 
-        # The follow-up floor in shadow (review Stage 2, Tier A): what it would ask where the
-        # model chose to move on from a story question with nothing followed up yet. Recorded
-        # beside the turn and never acted on; an advance the code forced is not the model's.
-        floor_shadow = None
+        # The follow-up floor (review Stage 2, Tier A): what a first answer leaves owed where the
+        # model chose to move on from a story question with nothing followed up yet. An advance
+        # the code forced is not the model's. Its first `FLOOR_LIVE` request is asked, charged
+        # to the question's own cap like the design follow-up, so never the pool and at most
+        # once per question. The line is the model's, held to that focus, or a template.
+        floor = None
         if (self.pace and g.act == "advance" and self.follow_ups_used == 0
                 and self.follow_ups_used < allow.cap and self._star_paced(q)
                 and not any(a.endswith("->advance") for a in g.applied)):
-            floor_shadow = focus.floor(utterance, q.get("rubric_criteria") or [],
-                                       self.answers_this_question, self.seen)
+            floor = focus.floor(utterance, q.get("rubric_criteria") or [],
+                                self.answers_this_question, self.seen)
+            arm = next((a for a in floor if a in focus.FLOOR_LIVE), None)
+            if arm:
+                say_model, want, g.act = g.say, arm, "probe"
+                repaired, speech_attempt, repair_guards = await self._repair_speech(
+                    utterance, arm, "", "floor")
+                calls += 1
+                if repaired and arm not in focus.classify(repaired):
+                    speech_attempt.update(accepted=False, rejection="off_floor")
+                    repaired = None
+                g.applied.append("floor-%s->probe" % arm.lower())
+                if repaired:
+                    g.say = repaired
+                    g.applied += ["floor-line->model"] + repair_guards
+                else:
+                    g.say = focus.template(arm, set(self.said_this_session))
+                    g.applied.append("floor-line->template")
 
         # A system-design question is hypothetical. Llama sometimes writes a useful probe
         # with a past-experience premise ("How did you handle...?"), which changes what the
@@ -1003,7 +1022,6 @@ class Runner:
         # Empty model speech is repaired late, after action and pacing gates are final. The
         # second call exposes only `say`, so it cannot change the probe decision. Reask keeps
         # its established behaviour: an empty line repeats the scripted question.
-        say_model = None
         if (want and g.act == "probe" and not g.say and not g.needs_regeneration
                 and calls == 1):
             say_model = ""
@@ -1037,6 +1055,9 @@ class Runner:
             self.focus_used.add(want)
             asked = [want]
             say_model = ""
+        elif "floor-line->template" in g.applied:
+            self.focus_used.add(want)
+            asked = [want]
         elif want and g.act in ("probe", "reask") and g.say:
             # The objective is a DISTINCT request, not obedience. If the model ignored the
             # requested focus but asked about some other unused one, that is a good turn and
@@ -1143,7 +1164,7 @@ class Runner:
                                  wall_ms=(time.perf_counter() - t0) * 1000, calls=calls,
                                  want=want, asked=asked, say_model=say_model,
                                  say_raw=say_raw, speech_attempt=speech_attempt,
-                                 regenerated_from=regenerated_from, floor_shadow=floor_shadow)
+                                 regenerated_from=regenerated_from, floor=floor)
         if not outcome.closed_question:
             self._observe_later(utterance)
         return outcome
@@ -1157,7 +1178,7 @@ class Runner:
                   say_raw: str | None = None,
                   speech_attempt: dict | None = None,
                   regenerated_from: str | None = None,
-                  floor_shadow: list[str] | None = None) -> TurnOutcome:
+                  floor: list[str] | None = None) -> TurnOutcome:
         q = self.current
         # Captured before any handler runs: `_close_question` moves the index, and the line
         # this returns belongs to the question being closed, not to the one after it.
@@ -1200,9 +1221,10 @@ class Runner:
             # and its precise reason remain available instead of disappearing behind the
             # focused template used as the final fallback.
             "speech_attempt": speech_attempt,
-            # What the follow-up floor would ask on this turn, in order; [] considered and
-            # nothing owed, null not considered. Shadow only: nothing reads it to decide.
-            "floor_shadow": floor_shadow,
+            # What the follow-up floor named on this turn, in order; [] considered and nothing
+            # owed, null not considered. A `floor-*->probe` guard says it was asked. Runs from
+            # 742e90a saved this as `floor_shadow`.
+            "floor": floor,
             "follow_ups_used": self.follow_ups_used,
             "pool_left": self.pool,
             # Logged every turn, never branched on. The threshold gets set from real data

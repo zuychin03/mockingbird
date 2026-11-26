@@ -53,6 +53,9 @@ compared side by side.
 - The interview header names the provider and model that are reading your answers.
 - Requests that change anything are refused when they come from another website.
 - The installer's file properties name the product, version and publisher.
+- When your first answer to a story question says only "we", or says only that it worked with
+  no number to show it, the interviewer now asks once about your own part or how it ended,
+  where before it could move straight on. It counts as one of that question's follow-ups.
 
 ### Fixed
 

@@ -474,15 +474,19 @@ def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None
 
 # Below this a first answer is too short for its wording to show a gap.
 FLOOR_MIN_WORDS = 15
+# The floor's requests the runner asks (Duy 26/11). MEASURE stays recorded only: on stored
+# sessions 2 of its 6 requests were on a plain count ("I later moved 18,000 files").
+FLOOR_LIVE = ("ROLE", "OUTCOME")
 
 
 def floor(utterance: str, criteria: list[str], earlier: list[str] | None = None,
           seen: set[str] | None = None) -> list[str]:
     """The follow-up floor (review Stage 2, Tier A): what a first answer leaves owed in its own
-    words, in the order it would be asked. ROLE for "we" with no "I"; OUTCOME for an outcome only
-    claimed ("it went fine") with no figure anywhere; MEASURE for a figure with no account of how
-    it was known, or size in vague words with no figure. Only what the phase scores (`criteria`),
-    and nothing `answered` already spends.
+    words, in the order it would be asked; the runner asks the first of `FLOOR_LIVE`. ROLE for
+    "we" with no "I"; OUTCOME for an outcome only claimed ("it went fine") with no figure
+    anywhere; MEASURE for a figure with no account of how it was known, or size in vague words
+    with no figure. Only what the phase scores (`criteria`), and nothing `answered` already
+    spends.
 
     The review also required `result_check.states_change` to be false for OUTCOME. That test
     reads "worked" as a change, so it fired on 0 of the 10 claimed outcomes in the result gold

@@ -51,24 +51,27 @@ def test_report_keeps_the_old_follow_up_count_beside_the_targeted_one(capsys):
 def test_saved_logs_take_the_asked_focus_from_their_own_turn_in_order():
     log = [{"said": "That's all."}, {"said": "Real answer."}, {"said": "That's all."}]
     records = [{"utterance": "That's all.", "focus_got": ["ROLE"]},
-               {"utterance": "Real answer.", "focus_got": ["OUTCOME"], "floor_shadow": []},
+               {"utterance": "Real answer.", "focus_got": ["OUTCOME"], "floor": []},
                {"utterance": "That's all.", "focus_got": [], "floor_shadow": ["ROLE"]}]
     lc.fill_asked(log, records)
     assert [e["asked"] for e in log] == [["ROLE"], ["OUTCOME"], []]
     assert [e["floor"] for e in log] == [None, [], ["ROLE"]]
 
 
-def test_report_counts_what_the_shadow_floor_would_add(capsys):
-    """Its first request is the one it would ask: MEASURE on a missing outcome adds nothing."""
-    script = {3: {"gap": "we throughout"}, 4: {"gap": "no outcome"}}
-    log = [dict(_entry(3, "advance"), floor=["ROLE", "MEASURE"]),
+def test_report_counts_what_the_follow_up_floor_asked_and_named(capsys):
+    """Its first request is the one it asks; MEASURE, kept in shadow, adds nothing on a
+    missing outcome and would target a missing figure."""
+    script = {3: {"gap": "we throughout"}, 4: {"gap": "no outcome"}, 7: {"gap": "no figure"}}
+    log = [dict(_entry(3, "probe", ["ROLE"]), floor=["ROLE", "MEASURE"],
+                guards=["floor-role->probe", "floor-line->template"]),
            dict(_entry(4, "advance"), floor=["MEASURE"]),
-           dict(_entry(5, "advance"), floor=["OUTCOME"]),
-           dict(_entry(6, "advance"), floor=[])]
+           dict(_entry(5, "advance"), floor=["MEASURE"]),
+           dict(_entry(6, "advance"), floor=[]),
+           dict(_entry(7, "advance"), floor=["MEASURE"])]
     got = lc.report(PLAN, script, log)
-    assert (got["floor_targeted"], got["floor_unplanted"]) == (1, 1)
-    assert got["gaps_targeted"] == 0
-    assert "floor would ask ROLE,MEASURE" in capsys.readouterr().out
+    assert (got["floor_asked"], got["floor_targeted"], got["floor_unplanted"]) == (1, 1, 1)
+    assert got["gaps_targeted"] == 1
+    assert "floor named ROLE,MEASURE" in capsys.readouterr().out
 
 
 def test_rescore_reads_a_saved_run_and_its_session(tmp_path, monkeypatch):
