@@ -1,6 +1,8 @@
 # Mockingbird
 
-A mock-interview coach for software-engineering roles that runs on your own machine. It
+A mock-interview coach that runs on your own machine, for software engineering, data
+analytics, product management, UX design and project management roles, with a general
+behavioural interview for any other role. It
 conducts a structured interview, decides for itself when to probe and when to move on, and
 produces feedback in which every claim quotes something you actually said. By default nothing
 leaves the computer; for a machine without a capable GPU, Settings can hand the interviewer to
@@ -96,9 +98,8 @@ is weak will change their answer, and the assessment stops measuring what it cla
 
 ## Installing it on Windows
 
-The latest release, 1.0.1, is on the [Releases page](https://github.com/zuychin03/mockingbird/releases).
-This section describes 1.1.0, which is not released yet: the setup page, the cloud interviewer
-and the stored API key arrive with it.
+The latest release is on the [Releases page](https://github.com/zuychin03/mockingbird/releases).
+Installing it over an earlier version keeps your interviews and approved questions.
 
 `python installer/build.py` builds `dist/Mockingbird-Setup-<version>.exe`, a 33 MB installer
 carrying its own Python, the app and the built interface. It needs Inno Setup 6 and the
@@ -287,6 +288,36 @@ worse, so review is the mitigation rather than a better prompt. And the near-dup
 on a generated question catches 12 of 28 real rephrasings at the threshold that produces no
 false positives -- a cheap filter on the obvious cases, not a guarantee.
 
+## Fields
+
+Six interviews share one behavioural scoring. Software engineering, data analytics, product
+management, UX design and project management each have their own scored round and one unscored
+question of their own kind: a system design for software, and a case for the other four. The
+general interview is the shared behavioural rounds alone, for any other role. Every field draws
+on one question bank, and each competency in it is mapped to O*NET work activities
+(`config/fields.json`, `config/question_bank.json`; the notice is in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+
+A job description is read for its field before anything else, and the plan page quotes the words
+that decided it. When it reads wrong, "Read it as another field" plans it again for the field
+you choose. A standard plan has a field picker instead. The description is kept with the plan
+and with every interview made from it, and can be read on the plan page, in the history page,
+in the report and in the exports. It is never quoted to you during the interview.
+
+The planner also writes questions from the description's duties that the bank does not cover: at
+most one for each scored round, quoting the duty word for word. Code checks that each one comes
+from a real duty, is one past-tense question of a sensible length, fits the competency and level,
+and is not close to a question already chosen; one that fails leaves the bank question in its
+place. On the plan page each one shows its duty, with Replace (write another), Use a bank
+question, and Keep for future plans, which adds it to your own bank. Saving the plan approves the
+questions in it. Design and case questions are always curated. Your approved questions live in
+`data/bank_local.json`, so an upgrade never replaces them; an upgrade from 1.0 brings across the
+ones approved there, once.
+
+Measured on six test descriptions against adjudicated labels: the local model's questions were
+well formed 73 of 78 times (93.6%), relevant 93.6% and realistic 92.3%; Qwen3.8 27B on Groq was
+well formed 89 of 89 times, relevant 89.9% and realistic 98.9%.
+
 ## Layout
 
 ```
@@ -323,6 +354,7 @@ app/
   transcript.py    the interview line by line, for History and the HTML export
   session.py       plan validation and persistence
   provenance.py    what produced a session: runtime, quantisation, context, prompt, revision
+  fields.py        the six interview fields, from config/fields.json
   bank.py          the curated question bank and its closed competency vocabulary
   planner.py       description -> competencies -> plan; generation, and stock plans
   review.py        the operations a person performs on a plan before it is run
@@ -394,11 +426,11 @@ intentionally ignored by Git.
 
 ## Status
 
-Version 1.1.0, not released yet; the latest release is 1.0.1. The text and spoken interview,
-rubric scoring, the report, the planner, the cloud interviewer, the no-GPU path, transcript
-correction and comparison are implemented, with 919 automated tests passing. An interview can
-be planned from a job description or from a stock plan, reviewed and edited, saved, and then
-conducted. [CHANGELOG.md](CHANGELOG.md) lists what each release added and
+Version 1.2.0. The text and spoken interview in six fields, rubric scoring, the report, the
+planner with questions written from a job description, the cloud interviewer, the no-GPU path,
+transcript correction and comparison are implemented, with 1,396 automated tests passing. An
+interview can be planned from a job description or from a stock plan, reviewed and edited, saved,
+and then conducted. [CHANGELOG.md](CHANGELOG.md) lists what each release added and
 [ROADMAP.md](ROADMAP.md) what comes next.
 
 The paired acceptance control passes on a fresh run of each profile: a junior-to-mid interview

@@ -35,7 +35,13 @@ the model's six-action JSON object is advisory input to that orchestrator.
 
 ### What is implemented
 
-- A 14-question, six-phase software-engineering interview plan, and a planner that produces one from a job description or from a stock template at a chosen length.
+- Six interview fields (software engineering, data analytics, product management, UX design,
+  project management and a general behavioural interview), each from its own template, and a
+  planner that produces a plan from a job description or from a stock template at a chosen
+  length.
+- Field detection with a quoted reason, questions written from the description's uncovered
+  duties in fixed slots behind code checks, and the description kept with the plan and every
+  interview made from it.
 - Terminal-based text interviews through `python -m app.cli`.
 - llama-server integration with structured output, enum posteriors, timing and health checks.
 - Exact-identity, Qwen3-4B-Instruct-2507 runtime with a measured 35-word speech cap.
@@ -176,7 +182,9 @@ verbatim. Both hold only while the text has been read by someone, so a question 
 `source` -- where the text came from, which never changes -- and a `status`, which is whether
 it may be asked at all. Generation produces `proposed`, only approval changes status, and both
 selection and review refuse anything unapproved. Approving never rewrites `source`, so a
-generated question stays marked as one for good.
+generated question stays marked as one for good. The shipped bank is read-only to the app;
+approved generated questions live in `data/bank_local.json`, merged at load, so an upgrade
+cannot replace them.
 
 The competency vocabulary is closed for the same reason `rubric_criteria` is validated at
 load: a planner free to invent a name produces a tag nothing matches, and the failure is
@@ -280,6 +288,7 @@ fixtures and real answers, and the remaining wording differences were near-ties.
 | [`app/guards.py`](../app/guards.py) | Validates model proposal and sanitises speech | Raw model JSON and utterance | `Guarded` effective proposal |
 | [`app/focus.py`](../app/focus.py) | Chooses and classifies request types; supplies session-distinct and design-safe fallbacks | Answer, criteria, used focuses | Focus instruction, classification or fallback line |
 | [`app/budget.py`](../app/budget.py) | Per-question allowance and shared overflow pool | Phase cap, pool and progress | `Allowance` |
+| [`app/fields.py`](../app/fields.py) | The closed set of interview fields, read from `config/fields.json` | Field id | `Field`: label, template, prompt arm, kinds, case follow-up, lexicon |
 | [`app/bank.py`](../app/bank.py) | Curated questions over a closed competency vocabulary; the approved/proposed gate | Bank file | `Bank`, or a load error naming what is wrong |
 | [`app/planner.py`](../app/planner.py) | Reads a description into cited competencies; selects, generates and assembles a plan | Description text or a stock kind, and a `Bank` | `JobSpec`, a proposed `Question`, or an `Assembled` plan |
 | [`app/review.py`](../app/review.py) | The operations a person performs on a plan before it runs | `Draft` and one edit | A revalidated `Draft` |
@@ -346,7 +355,8 @@ an assessment leaking into a surface that must not carry one.
 | Area | Role |
 |---|---|
 | [`config/interview_swe_general.json`](../config/interview_swe_general.json) | Current plan, phases, question text, caps, focus ladders and rubric metadata. Also the template every generated plan takes its phase configuration from |
-| [`config/question_bank.json`](../config/question_bank.json) | Curated questions, the closed competency vocabulary and the phase each competency belongs to |
+| [`config/question_bank.json`](../config/question_bank.json) | Curated questions, the closed competency vocabulary and the phase each competency belongs to; each competency and question is `shared` or belongs to one field, and each competency names its O*NET work activities |
+| [`config/fields.json`](../config/fields.json) and `config/interview_<field>.json` | Each field's label, template, prompt arm, stock kinds, O*NET occupations and importance ranks, case follow-up and lexicon; each template's phases, rubric, advice and advice order |
 | [`config/cloud_models.json`](../config/cloud_models.json) | The measured cloud models, each with its gate results, latency and date |
 | [`config/voices.json`](../config/voices.json) | The voice catalogue: engine, licence, the non-commercial flag, package URL, SHA-256 and size |
 | [`installer/release_notes.py`](../installer/release_notes.py) and [`.github/workflows/release.yml`](../.github/workflows/release.yml) | The release workflow and its tag check and notes: a draft release with the installer, from a `v<version>` tag |
@@ -564,6 +574,22 @@ Plan loading validates:
 - every scored phase declares at least one criterion.
 
 `session.iter_questions()` then flattens phase data into the runner's ordered question records.
+
+### Fields, views and the description's path
+
+A field is a template plus a view of the shared bank. `Bank.view(field)` keeps the shared
+competencies and questions and the field's own, and the planner only ever sees a view, so a
+field cannot be planned from another field's questions.
+
+A description goes through `planner.plan_description`: `detect_field` names the field and
+quotes its evidence, `read_jd` reads cited competencies from that field's view, `assemble`
+fills the template from the bank, `read_duties` quotes the duties verbatim, and
+`fill_generated` writes at most one question per scored phase for a duty the bank does not
+cover. Each generated question passes `Check`s (duty, opener, shape, past tense, distinct,
+competency, level) or the bank question stays. Switching the field re-reads the stored
+description as the chosen field. The description is stored in the draft as
+`job_description`, copied into the saved plan and each session's plan snapshot, and read from
+there by the plan page, History, the report and the exports. It never enters a turn prompt.
 
 ## 9. State and persistence
 

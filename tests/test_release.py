@@ -91,6 +91,15 @@ def test_nothing_the_installer_ships_from_config_is_gitignored():
     assert got.stdout.strip() == "", "ignored but shipped: %s" % got.stdout.split()
 
 
+def test_an_upgrade_keeps_the_old_bank_where_the_app_imports_it():
+    """V1.2_PLAN D12: approvals lived in the shipped bank until 1.2, and [Files] replaces it."""
+    from app import bank
+    iss = (ROOT / "installer" / "mockingbird.iss").read_text(encoding="utf-8")
+    assert "{app}\\config\\question_bank.json" in iss
+    assert "{app}\\data\\%s" % bank.LEGACY.name in iss
+    assert "ssInstall" in iss
+
+
 def test_the_installer_carries_product_metadata():
     iss = (ROOT / "installer" / "mockingbird.iss").read_text(encoding="utf-8")
     for key in ("VersionInfoVersion", "VersionInfoProductName", "VersionInfoCompany",

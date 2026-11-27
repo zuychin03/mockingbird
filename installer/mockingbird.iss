@@ -46,7 +46,7 @@ Source: "{#Staging}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
 Source: "{#Repo}\installer\mockingbird.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Mockingbird"; Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; IconFilename: "{app}\mockingbird.ico"; Comment: "Practise a software-engineering interview"
+Name: "{autoprograms}\Mockingbird"; Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; IconFilename: "{app}\mockingbird.ico"; Comment: "Practise a job interview"
 Name: "{autodesktop}\Mockingbird"; Filename: "{app}\python\python.exe"; Parameters: "-m app.launch"; WorkingDir: "{app}"; IconFilename: "{app}\mockingbird.ico"; Tasks: desktopicon
 
 [Run]
@@ -61,3 +61,23 @@ Type: filesandordirs; Name: "{app}\app"
 Type: filesandordirs; Name: "{app}\api"
 ; The cloud provider's API key, DPAPI-encrypted; an uninstall should not leave it behind.
 Type: filesandordirs; Name: "{app}\secrets"
+
+[Code]
+// Until 1.2 the app wrote approved generated questions into config\question_bank.json, which
+// [Files] replaces. A copy in data\ is imported once by app.bank.import_legacy.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Old, Kept: String;
+  Text: AnsiString;
+begin
+  if CurStep <> ssInstall then
+    Exit;
+  Old := ExpandConstant('{app}\config\question_bank.json');
+  Kept := ExpandConstant('{app}\data\bank_1.1.json');
+  if FileExists(Old) and not FileExists(Kept) and LoadStringFromFile(Old, Text)
+      and (Pos('"generated"', Text) > 0) then
+  begin
+    ForceDirectories(ExtractFileDir(Kept));
+    FileCopy(Old, Kept, True);
+  end;
+end;

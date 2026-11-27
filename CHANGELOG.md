@@ -2,13 +2,38 @@
 
 Every release of Mockingbird. Dates are in Australian Eastern time.
 
-## 1.1.0 - Unreleased
+## 1.2.0 - 2026-11-28
 
-Mockingbird no longer needs an NVIDIA graphics card. The interviewer can run on a cloud provider
-with your own API key, answers can be corrected before they are scored, and two interviews can be
-compared side by side.
+Mockingbird now interviews for five more fields and writes questions from a job description. It
+no longer needs an NVIDIA graphics card: the interviewer can run on a cloud provider with your own
+API key. Answers can be corrected before they are scored, and two interviews can be compared side
+by side. 1.1.0 was never released, so its changes are listed here.
 
 ### Added
+
+- Interviews for data analytics, product management, UX design and project management, each
+  with its own scored round and an unscored case question, and a general behavioural interview
+  for any role. Software engineering keeps its own round and design question.
+- A job description is read for its field first, and the plan page quotes the words that
+  decided it. "Read it as another field" switches it when it reads wrong. Standard plans have a
+  field picker.
+- The planner writes questions from the duties in a job description that the question bank
+  does not cover, at most one for each scored round. Each is checked by code and falls back to a
+  bank question when it fails. On the plan page each one quotes its duty, and you can replace it,
+  use a bank question instead, or keep it for future plans. Saving the plan approves it. Design
+  and case questions stay curated.
+- The job description is kept with the plan and with every interview, and can be read on the
+  plan page, in the history page, in the report and in the exports.
+- Questions written by the model and approved by you are kept in your own data folder, so an
+  upgrade no longer loses them. An upgrade brings across the ones approved in 1.0, once.
+- Reports, the history page and the exports name a question written by the model as one, with
+  the duty it came from.
+- One question bank shared by every field, with each competency mapped to O*NET work activities.
+  Standard plans choose competencies by how much the field's occupations rate them.
+- Among bank questions that fit a plan equally well, the one asked least recently is chosen, so
+  practice runs vary.
+- Each field has its own report advice, and its own order for which weak criterion the advice
+  starts with.
 
 - Settings can hand the interviewer to a cloud provider: OpenAI, OpenRouter, Google Gemini or
   Groq, through their OpenAI-compatible APIs, with your own key. Settings names what is sent (the
@@ -53,6 +78,8 @@ compared side by side.
 
 ### Changed
 
+- The interviewer's prompts for each new field were chosen by measuring them on labelled
+  answers. The software-engineering prompts are unchanged.
 - The interview header names the provider and model that are reading your answers.
 - Requests that change anything are refused when they come from another website.
 - The installer's file properties name the product, version and publisher.
