@@ -68,6 +68,12 @@ compared side by side.
 
 ### Fixed
 
+- Saying "Let me think" or "I'll make that clearer" and pausing no longer counts as your answer.
+  The interviewer says "Take your time" and waits, and no follow-up is used up.
+- Once you have said how you measured something ("we started tracking the rate of..."), the
+  interviewer no longer asks what you measured.
+- A follow-up that asks three things at once ("what was the situation, what did you do, and how
+  did it turn out?") is now worded again to ask one.
 - A word repeated where live mode cut an answer into slices is now kept only once.
 - The voice bar no longer says nothing is uploaded when a cloud provider is reading the answers.
 - When the app was updated but the old version was still running, pages showed a JSON parse

@@ -197,8 +197,9 @@ def test_the_snapshot_saves_every_field_the_runner_carries():
     # absent one is also FR-32's kill switch, which a snapshot must not be able to re-arm.
     # `system`, `speech_system`, `case_line`, `case_covered` and `field` are the plan field's,
     # derived from the plan.
+    # `fit_fn` is a capability handle like `observe_fn`.
     rebuilt = {"provider", "plan", "state", "questions", "history", "pace",
-               "observe_fn", "_pending", "max_say_words", "similarity", "_audio", "_heard",
+               "observe_fn", "fit_fn", "_pending", "max_say_words", "similarity", "_audio", "_heard",
                "detour", "system", "speech_system", "case_line", "case_covered", "field"}
     missing = attrs - rebuilt - saved
     assert not missing, "app/resume.py does not persist: %s" % sorted(missing)

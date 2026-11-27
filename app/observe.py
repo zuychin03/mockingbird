@@ -50,7 +50,7 @@ from pathlib import Path
 
 from . import fields, result_check
 from .depth_signals import ASSERTED, FIRST_SG, patterns
-from .provider import Provider
+from .provider import Provider, ProviderError
 
 SYSTEM = """You are reading one answer from a job interview and quoting parts of it back.
 
@@ -317,6 +317,38 @@ async def observe_answer(provider: Provider, question_id: str, question: str,
                          utterance: str) -> Observation:
     """One answer during the interview, for pacing (`Runner._observe_later`)."""
     return await observe(provider, question_id, question, [utterance], system=LIVE_SYSTEM)
+
+
+# Is the story the kind the question asks for? The live interview's performance question was
+# answered with a correctness bug and probed three times (27/11/2026). The turn prompt could not
+# see it: told that a different kind of story is off-topic, it redirected 1 of 10 such answers.
+# Asked on its own, Qwen redirected 8 of those 10 and none of 10 matching stories, in about
+# 110 ms. Over 176 stored first answers it flagged 35, each a scripted answer written for a
+# different question. It passes the live answer, which opened on tracking event rates. Naming
+# both subjects first caught 10 of 10 but copied whole answers into the reply, and capping
+# their length broke the output.
+FIT_SYSTEM = """You check one answer in a job interview. The question asks for a story of a particular kind.
+
+Does the candidate's story match the kind of story the question asks for?
+- fits is true when the story is about the thing the question asks about, even if the story is short, vague or unfinished.
+- fits is false only when the story is clearly about a different kind of thing, so it cannot answer this question however much more detail is given.
+- If the candidate gave no story at all, fits is true. That is handled elsewhere.
+
+Return {"fits": true} or {"fits": false}."""
+FIT_SCHEMA = {"type": "object", "properties": {"fits": {"type": "boolean"}},
+              "required": ["fits"], "additionalProperties": False}
+
+
+async def fits_question(provider: Provider, question: str, utterance: str) -> bool | None:
+    """False when the story is clearly a different kind from the one asked for; None when the
+    call fails, which the runner reads as no reason to redirect."""
+    try:
+        out = await provider.complete(FIT_SYSTEM, "QUESTION: %s\n\nCANDIDATE: %s"
+                                      % (question, utterance), schema=FIT_SCHEMA, max_tokens=20)
+    except ProviderError:
+        return None
+    fits = (out.json() or {}).get("fits")
+    return fits if isinstance(fits, bool) else None
 
 
 # ------------------------------------------------------------------ caching (log 9.7)

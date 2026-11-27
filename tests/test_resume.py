@@ -12,6 +12,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import resume, session as sess  # noqa: E402
@@ -53,7 +55,7 @@ def test_every_field_the_runner_carries_between_turns_is_persisted(tmp_path):
         # purpose: it is derived from the plan and a document on disk, and a snapshot would pin
         # an edited policy page to whatever it said when the session started. That it really
         # does arrive back is pinned by `test_a_resumed_session_keeps_its_corpus`.
-        "provider", "plan", "state", "observe_fn", "similarity", "history", "detour",
+        "provider", "plan", "state", "observe_fn", "similarity", "history", "detour", "fit_fn",
         # Derived from the plan or the state, never independently mutated. The prompts and the
         # case line are the plan field's (`contract.for_plan`, `fields.CaseFollowUp`).
         "questions", "pace", "max_say_words", "system", "speech_system", "case_line",
@@ -127,3 +129,14 @@ def test_a_session_written_before_answers_had_audio_still_loads(tmp_path):
         t.pop("audio")
     after = resume.restore(None, None, data)
     assert all(t.audio is None for t in after.state.turns)
+
+
+@pytest.mark.parametrize("name,value,start", [("holds", 1, 0), ("fit_checked", True, False)])
+def test_a_snapshot_written_before_a_field_existed_still_loads(tmp_path, name, value, start):
+    """A live session saved by the previous version and answered after an upgrade."""
+    before = _advanced(tmp_path)
+    setattr(before, name, value)
+    data = resume.snapshot(before)
+    assert getattr(resume.restore(None, None, data), name) == value
+    data.pop(name)
+    assert getattr(resume.restore(None, None, data), name) == start

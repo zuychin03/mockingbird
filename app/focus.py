@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 
-from .depth_signals import FIRST_SG, patterns, signals
+from .depth_signals import FIRST_SG, patterns, signals, states_measure
 
 # The closed set. Each is a distinct thing an interviewer wants, phrased as the instruction
 # that goes into the prompt.
@@ -386,6 +386,20 @@ def classify(say: str) -> set[str]:
     return {k for k, rx in _COMPILED.items() if rx.search(say or "")}
 
 
+# A wh-word that opens a clause: at the start, or after a comma, a dash or "and".
+_ASK_OPENS = re.compile(r"(?:^|[,;:\u2013\u2014]\s*|\s-\s*|\band\s+)"
+                        r"(?:what|how|who|when|where|why|which)\b", re.I)
+
+
+def is_form(say: str) -> bool:
+    """Three or more asks in one line: "What was the situation, what did you do, and how did it
+    turn out?" Two-part questions are kept (`runner.MAX_SAY_WORDS`); three is a form, and the
+    live interview was asked one twice in a row (27/11). Read to the first question mark,
+    where the spoken line ends."""
+    first = (say or "").strip().split("?")[0]
+    return len(_ASK_OPENS.findall(first)) >= 3
+
+
 # Warmup and closing declare no `rubric_criteria`: nothing about them is scored, so there are
 # no gaps for the signals to find. Running them anyway made the agent answer "I'm a platform
 # engineer, seven years" with "How do you know? What did you measure?" -- the figure is real,
@@ -403,7 +417,8 @@ SATISFIED_BY = {
 }
 
 
-def answered(text: str, seen: set[str] | None = None) -> set[str]:
+def answered(text: str, seen: set[str] | None = None,
+             field: str | None = None) -> set[str]:
     """Requests `text` has already answered. ROLE asks which parts were theirs as opposed to the
     team's, and is spent once they have spoken in the first person: 20 of 37 stored ROLE
     follow-ups came after they had ("Which parts of that were yours?" after "I recorded short
@@ -411,10 +426,15 @@ def answered(text: str, seen: set[str] | None = None) -> set[str]:
 
     OUTCOME is spent once an earlier answer's extraction found a result (`seen`): the criteria
     already skip it, but the `asserted` signal and the ladder did not, so "so overall it worked
-    well" asked for an outcome already given (review, 25/11)."""
+    well" asked for an outcome already given (review, 25/11).
+
+    MEASURE is spent once a measure has been stated: the live interview said "we started
+    tracking the rate of out-of-order events" and was asked what it measured (27/11)."""
     got = {"ROLE"} if FIRST_SG.search(text) else set()
     if "result" in (seen or ()):
         got.add("OUTCOME")
+    if states_measure(text, field):
+        got.add("MEASURE")
     return got
 
 
@@ -442,7 +462,7 @@ def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None
     earlier = earlier or []
     criteria = criteria or []
     ladder = ladder or (UNSCORED_LADDER if not criteria else [])
-    used = used | answered(" ".join(earlier + [utterance]), seen)
+    used = used | answered(" ".join(earlier + [utterance]), seen, field)
     if criteria:
         for name, focus in FROM_SIGNAL:
             if signals(utterance, field).get(name) and focus not in used:

@@ -26,7 +26,7 @@ from .runner import Runner
 FIELDS = ("index", "pool", "follow_ups_used", "clarifies_used", "stalls",
           "said_this_session", "design_followed_up", "clarify_extra", "skip_offered",
           "awaiting_confirm", "confirm_narrowed", "awaiting_skip_offer", "questions_asked",
-          "said_this_question", "answers_this_question")
+          "said_this_question", "answers_this_question", "holds", "fit_checked")
 
 # Attributes that need converting in one or both directions, and why.
 #   focus_used, seen   sets, which JSON has no notion of
@@ -59,7 +59,7 @@ def snapshot(r: Runner) -> dict[str, Any]:
 
 
 def restore(provider, plan: dict | None, data: dict, *, observe_fn=None,
-            similarity=None, detour_for=None) -> Runner:
+            similarity=None, detour_for=None, fit_fn=None) -> Runner:
     """`plan` may be None for any snapshot that carries its own, which is all of them written
     since the plan was embedded. It is still accepted so a caller can resume an older file."""
     plan = plan if plan is not None else data["plan"]
@@ -76,9 +76,11 @@ def restore(provider, plan: dict | None, data: dict, *, observe_fn=None,
     # the builder and not the result: a snapshot of the passages would pin an edited
     # policy document to whatever it said when the session started.
     r = Runner(provider, plan, state, pool=data["pool"], observe_fn=observe_fn,
-               similarity=similarity, detour=detour_for(plan) if detour_for else None)
+               similarity=similarity, detour=detour_for(plan) if detour_for else None,
+               fit_fn=fit_fn)
     for name in FIELDS:
-        setattr(r, name, data[name])
+        # A snapshot written before a field existed resumes with the field's starting value.
+        setattr(r, name, data.get(name, getattr(r, name)))
     for name in SET_FIELDS:
         setattr(r, name, set(data.get(name, [])))
     lp = data.get("last_probe")
@@ -94,6 +96,7 @@ def write(r: Runner, path: str | Path) -> None:
 
 
 def read(provider, plan: dict | None, path: str | Path, *, observe_fn=None,
-         similarity=None, detour_for=None) -> Runner:
+         similarity=None, detour_for=None, fit_fn=None) -> Runner:
     return restore(provider, plan, json.loads(Path(path).read_text(encoding="utf-8")),
-                   observe_fn=observe_fn, similarity=similarity, detour_for=detour_for)
+                   observe_fn=observe_fn, similarity=similarity, detour_for=detour_for,
+                   fit_fn=fit_fn)

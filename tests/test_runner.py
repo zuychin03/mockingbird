@@ -3499,3 +3499,247 @@ def test_an_advance_the_code_forced_is_not_the_floor_s_to_consider(tmp_path):
     assert "observations-complete->advance" in decision["guards"]
     assert decision["follow_ups_used"] == 0
     assert decision["floor"] is None
+
+
+# ------------------------------------------- buying time (live interview, 27/11/2026)
+HOLDS = ["Yeah, I'll think this through carefully.", "Right, I'll make that clearer.",
+         "Great, let me wind that up with the right part of the story.", "I'll spill that out.",
+         "Good question. Let me think.", "Give me a second.", "Hmm, let me think about that.",
+         "One sec, let me gather my thoughts.", "Can I take a minute?",
+         "Hold on, let me think about the best way to explain this.",
+         "Right, I’ll make that clearer."]
+NOT_HOLDS = ["Let me line that up precisely. I replayed the same out of order sequences and "
+             "confirmed the UI stayed confirmed.",
+             "I'll put a cache in front of the database.", "I'd use a queue for it.",
+             "Let me walk you through how we migrated the users table.",
+             "Let me see. I think it was the payments retry.", "Sure.", "Okay.", "Yeah.",
+             "I can't really think of one, to be honest.", "Let me get back to you on that.",
+             "I'll tell you about the time our cache fell over.", "Let's go with a queue.",
+             "Sorry, could you say that again?"]
+
+
+@pytest.mark.parametrize("text", HOLDS)
+def test_buying_time_is_read_as_a_hold(text):
+    from app import direction
+    assert direction.is_holding(text)
+
+
+@pytest.mark.parametrize("text", NOT_HOLDS)
+def test_an_answer_or_a_bare_filler_is_not_a_hold(text):
+    from app import direction
+    assert not direction.is_holding(text)
+
+
+def test_a_hold_waits_without_a_model_call_or_a_follow_up(tmp_path):
+    """Live, "Yeah, I'll think this through carefully." drew a follow-up on the design question
+    and the next hold spent its budget before the design was given."""
+    r, state = build([d("probe", "Tell me more.")], tmp_path)
+    run(r.ask())
+    before = len(r.provider.prompts)
+    out = run(r.submit(HOLDS[0]))
+    assert out.act == "clarify" and not out.closed_question
+    assert out.spoken.text == runner_mod.HOLD_ACK[0]
+    assert len(r.provider.prompts) == before, "no model call"
+    assert r.follow_ups_used == 0 and r.clarifies_used == 0
+    assert r.answers_this_question == [], "a hold is not evidence"
+    assert "holding->wait" in state.turns[-1].guards
+
+    out = run(r.submit("We moved the retries onto a queue and cut the timeouts to zero."))
+    assert out.act == "probe" and r.follow_ups_used == 1, "the next answer is decided as usual"
+
+
+def test_holds_past_the_limit_go_to_the_model(tmp_path):
+    r, state = build([d("probe", "Tell me more.")], tmp_path)
+    run(r.ask())
+    for _ in range(runner_mod.HOLD_LIMIT):
+        assert run(r.submit("Let me think.")).act == "clarify"
+    out = run(r.submit("Let me think."))
+    assert out.act == "probe" and "holding->wait" not in state.turns[-1].guards
+
+
+def test_the_hold_allowance_is_per_question(tmp_path):
+    r, _ = build([d("advance", "Thanks.")], tmp_path)
+    run(r.ask())
+    run(r.submit("Let me think."))
+    run(r.submit("We split the table in two."))
+    assert r.current["question"] == "Question two?" and r.holds == 0
+
+
+def test_a_hold_in_the_closing_phase_does_not_close_the_interview(tmp_path):
+    r, state = build_closing(tmp_path)
+    run(r.ask())
+    out = run(r.submit("Good question. Let me think."))
+    assert out.act == "clarify" and not out.closed_question and not r.done
+    assert "holding->wait" in state.turns[-1].guards
+
+
+# --------------------------------------- a measure already given (live interview, 27/11)
+TRACKED = ("For that one, we started tracking the rate of out of order events and the number of "
+           "state corrections in the UI, plus support tickets tagged for wrong status.")
+
+
+def test_a_stated_measure_is_not_asked_for_again():
+    """Asked "What specific metric did you measure?" straight after this answer."""
+    assert "MEASURE" in focus.answered(TRACKED)
+    later = "Customers noticed first, with a couple of tickets about payments still pending."
+    got = focus.next_focus(later, set(), DELIVERY_CRITERIA, DELIVERY_LADDER, set(), [TRACKED])
+    assert got != "MEASURE"
+
+
+@pytest.mark.parametrize("text", [
+    "I checked with my manager and we tested it on staging.",
+    "It showed the problem, and I counted on the team to fix it.",
+    "We never measured it, honestly.",
+    "There were no metrics on that service at the time.",
+])
+def test_a_loose_or_denied_measure_leaves_measure_owed(text):
+    assert "MEASURE" not in focus.answered(text)
+
+
+def test_a_field_measure_word_counts_for_its_field():
+    text = "We ran a usability study with eight participants before the redesign."
+    assert "MEASURE" in focus.answered(text, field="ux_design")
+    assert "MEASURE" not in focus.answered(text)
+
+
+# ------------------------------------------------ one ask at a time (live interview, 27/11)
+FORM = "What was the situation before the change, what did you do, and how did it turn out?"
+
+
+@pytest.mark.parametrize("text", [
+    FORM,
+    "Describe the situation more clearly—what was the system doing before, what exactly "
+    "changed, and how it turned out.",
+    "What was the exact timeline—when did it occur, how long did it last, and who else "
+    "was involved?",
+])
+def test_three_asks_in_one_line_is_a_form(text):
+    assert focus.is_form(text)
+
+
+@pytest.mark.parametrize("text", [
+    "What was the problem and how did you address it?",
+    "How did you know it worked, and what would you change?",
+    "What steps, tools, and people were involved?",
+    "What did you measure? And how did you pick it? And who checked it?",
+])
+def test_one_or_two_asks_is_not_a_form(text):
+    assert not focus.is_form(text)
+
+
+def test_a_three_part_probe_is_worded_again_for_one_focus(tmp_path):
+    r, state = build([d("probe", FORM, ok=False)], tmp_path)
+    run(r.ask())
+    out = run(r.submit("We added the column as nullable and backfilled it over a week."))
+    assert out.act == "probe"
+    assert "three-part->one" in state.turns[-1].guards
+    assert out.spoken.text != FORM and not focus.is_form(out.spoken.text)
+
+
+def test_a_two_part_probe_is_kept(tmp_path):
+    two = "Why did you pick a nullable column, and how did you backfill it?"
+    r, state = build([d("probe", two, ok=False)], tmp_path)
+    run(r.ask())
+    run(r.submit("We added the column as nullable and backfilled it over a week."))
+    assert "three-part->one" not in state.turns[-1].guards
+
+
+# ------------------------------------------- a different kind of story (live interview, 27/11)
+class Fit:
+    """Stands in for `observe.fits_question`: answers in order, then True."""
+
+    def __init__(self, *answers):
+        self.queue = list(answers)
+        self.calls = []
+
+    async def __call__(self, question, utterance):
+        self.calls.append((question, utterance))
+        return self.queue.pop(0) if self.queue else True
+
+
+OFF_KIND = ("We once had a bug where repayment labels showed pending after a success event, "
+            "because the events arrived out of order and the UI kept the older one.")
+ON_KIND = ("Our reporting endpoint got slow as tickets grew, so I timed it locally and found "
+           "the same lookup running once per row.")
+
+
+def fit_runner(decisions, fit, tmp_path, plan=None):
+    plan = plan or FLOOR_PLAN
+    session.SESSIONS = tmp_path / "sessions"
+    state = session.new_session(plan)
+    return Runner(ScriptedProvider(decisions), plan, state, fit_fn=fit), state
+
+
+def test_a_story_of_another_kind_is_redirected_to_the_question(tmp_path):
+    fit = Fit(False)
+    r, state = fit_runner([d("probe", "What did you measure?")], fit, tmp_path)
+    run(r.ask())
+    out = run(r.submit(OFF_KIND))
+    assert out.act == "reask" and not out.closed_question
+    assert out.spoken.text == runner_mod.REDIRECT % "Tell me about a change you led."
+    assert "off-kind->redirect" in state.turns[-1].guards
+    assert fit.calls == [("Tell me about a change you led.", OFF_KIND)]
+    assert r.follow_ups_used == 1 and r.answers_this_question == [OFF_KIND]
+
+
+def test_only_the_first_story_is_checked(tmp_path):
+    fit = Fit(False, False)
+    r, state = fit_runner([d("probe", "What did you measure?"), d("probe", "Who checked it?")],
+                          fit, tmp_path)
+    run(r.ask())
+    run(r.submit(OFF_KIND))
+    out = run(r.submit(OFF_KIND + " It was still the same bug."))
+    assert len(fit.calls) == 1, "a reply to a follow-up is not judged on its own"
+    assert out.act == "probe" and "off-kind->redirect" not in state.turns[-1].guards
+
+
+def test_a_short_answer_does_not_use_up_the_check(tmp_path):
+    fit = Fit(False)
+    r, _ = fit_runner([d("probe", "What happened?"), d("probe", "What did you measure?")],
+                      fit, tmp_path)
+    run(r.ask())
+    run(r.submit("Yes, we had one on the payments page."))
+    assert fit.calls == []
+    assert run(r.submit(OFF_KIND)).act == "reask"
+
+
+def test_a_fitting_story_or_a_failed_check_goes_on_as_decided(tmp_path):
+    for verdict in (True, None):
+        fit = Fit(verdict)
+        r, state = fit_runner([d("probe", "What did you measure?")], fit, tmp_path)
+        run(r.ask())
+        out = run(r.submit(ON_KIND))
+        assert out.act == "probe" and len(fit.calls) == 1
+        assert "off-kind->redirect" not in state.turns[-1].guards
+
+
+def test_no_check_without_rubric_criteria_or_a_follow_up_left(tmp_path):
+    fit = Fit(False)
+    r, _ = fit_runner([d("probe", "What did you measure?")], fit, tmp_path, plan=PLAN)
+    run(r.ask())
+    assert run(r.submit(OFF_KIND)).act == "probe" and fit.calls == []
+
+    capped = {"id": "capped", "phases": [dict(FLOOR_PLAN["phases"][0], probe_budget=0)]}
+    r, _ = fit_runner([d("advance", "Thanks.")], fit, tmp_path, plan=capped)
+    run(r.ask())
+    assert run(r.submit(OFF_KIND)).act == "advance" and fit.calls == []
+
+
+def test_saying_there_is_no_example_is_not_judged_as_one(tmp_path):
+    """Fixture 50: the check calls this off-kind, and "That example" would be the wrong reply."""
+    fit = Fit(False)
+    r, state = fit_runner([d("reask", "Any situation where you had to say something hard?")],
+                          fit, tmp_path)
+    run(r.ask())
+    run(r.submit("I tend to avoid that kind of thing, so I can't think of an example."))
+    assert fit.calls == [] and "off-kind->redirect" not in state.turns[-1].guards
+
+
+def test_the_check_is_per_question(tmp_path):
+    fit = Fit(True, False)
+    r, _ = fit_runner([d("advance", "Thanks."), d("probe", "What did you measure?")], fit,
+                      tmp_path)
+    run(r.ask())
+    run(r.submit(ON_KIND))
+    assert r.current["question"] == "Tell me about another one." and not r.fit_checked
+    assert run(r.submit(OFF_KIND)).act == "reask"

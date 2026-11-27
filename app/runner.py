@@ -52,6 +52,21 @@ SKIP_DECLINED = "No problem -- let me put it another way."
 # line used to promise "come back if there's time", which the runner cannot honour.
 SKIP_ACK = "That one isn't landing, so let's leave it there and move on."
 
+# A candidate buying time ("Let me think this through") is answered without a model call and
+# without spending a follow-up; the next utterance answers whatever was last asked. Past the
+# limit a hold goes to the model like any answer, so a run of them cannot stall a question.
+HOLD_LIMIT = 2
+HOLD_ACK = ("Take your time.", "Sure, no rush.")
+
+# Said once per question when the story is a different kind from the one asked for
+# (`observe.fits_question`), with the question after it word for word. Off in the product:
+# nothing passes `fit_fn`. In a scripted live run the check added about 330 ms to the first long
+# answer of each story question, because the one llama-server slot drops the turn prompt's
+# cache, and it missed the live answer that prompted it (Duy, 27/11/2026).
+REDIRECT = "That example is a different kind from the one I'm after, so let me ask again. %s"
+# Below this an answer has no story to judge.
+FIT_MIN_WORDS = 15
+
 # Spoken when an `advance` would otherwise say nothing, which is 94% of them across the
 # recorded sessions (681 of 724): the contract discards `say` on advance, and the runner's own
 # forced advances -- the follow-up cap, the adaptive stop, the regeneration veto -- throw away
@@ -281,8 +296,11 @@ class Runner:
                  observe_fn: Callable[[str, str, str], Awaitable] | None = None,
                  max_say_words: int | None = MAX_SAY_WORDS,
                  similarity: Callable[[str, str], float | None] | None = None,
-                 detour: list | None = None):
+                 detour: list | None = None,
+                 fit_fn: Callable[[str, str], Awaitable] | None = None):
         self.max_say_words = max_say_words
+        # `observe.fits_question`, supplied by the caller like `observe_fn`; None checks nothing.
+        self.fit_fn = fit_fn
         # Stage 5's corpus, or None for the behaviour that shipped before it: note the question
         # and move on. FR-32 asks every subsystem for a kill switch restoring the previous
         # behaviour exactly, and an absent corpus IS that switch -- there is no second path to
@@ -309,6 +327,8 @@ class Runner:
         self.clarify_extra = 0
         self.skip_offered = False
         self.design_followed_up = False
+        self.holds = 0
+        self.fit_checked = False
         # Plan 1c.5's adaptive stop. `seen` is the accumulated situation/action/result triple
         # for the current question; `stalls` counts consecutive answers that added nothing to
         # it. Accumulated in PYTHON from per-answer extractions -- the model is asked what one
@@ -747,6 +767,14 @@ class Runner:
             self.answers_this_question.append(utterance)
             return self._dispatch(g, utterance, Completion(text=""))
 
+        # Before the closing phase's own branch, which would read "Let me think" as having no
+        # questions and close the interview.
+        if self.pace and self.holds < HOLD_LIMIT and direction.is_holding(utterance):
+            g = guards.Guarded("clarify", HOLD_ACK[self.holds % len(HOLD_ACK)], False, "",
+                               ["holding->wait"])
+            self.holds += 1
+            return self._dispatch(g, utterance, Completion(text=""))
+
         # A user-questions phase is the candidate's turn to ask, so it does not go through the
         # turn contract at all: there is no probe to write and nothing to score. The generic
         # loop used to run it, which captured their questions into `ask` and advanced past
@@ -925,6 +953,26 @@ class Runner:
         pool_left = 0 if hard_cap else self.pool
         allow = budget.follow_ups_allowed(
             q["probe_budget"], pool_left, self.index, len(self.questions))
+
+        # A story of a different kind from the one asked for is redirected before a follow-up
+        # spends a turn on it. Charged to the question's own cap, never the pool. Only the first
+        # answer long enough to hold a story is checked: over stored sessions, later answers
+        # checked alone flagged 14 replies to follow-ups about a fitting story (27/11/2026).
+        if (self.pace and self.fit_fn and not self.fit_checked and self._star_paced(q)
+                and q.get("rubric_criteria") and g.act in ("probe", "advance")
+                and self.follow_ups_used < allow.cap
+                and len(utterance.split()) >= FIT_MIN_WORDS
+                and not guards.cannot_answer(utterance) and not focus.is_contentless(utterance)):
+            self.fit_checked = True
+            calls += 1
+            if await self.fit_fn(q["question"], utterance) is False:
+                g = guards.Guarded("reask", REDIRECT % q["question"], False, "",
+                                   g.applied + ["off-kind->redirect"])
+                self.answers_this_question.append(utterance)
+                return self._dispatch(g, utterance, out,
+                                      wall_ms=(time.perf_counter() - t0) * 1000, calls=calls,
+                                      say_raw=say_raw, regenerated_from=regenerated_from)
+
         if g.act in ("probe", "reask"):
             if self.pace and self.follow_ups_used >= allow.total:
                 g.act = "advance"
@@ -1072,6 +1120,10 @@ class Runner:
             # produced one 22-word compound request; the cap sent it to a focused template.
             over_cap = bool(self.max_say_words
                             and len(g.say.split()) > self.max_say_words)
+            # A three-part question goes the same way: worded again for the one focus asked.
+            if focus.is_form(g.say):
+                over_cap = True
+                g.applied.append("three-part->one")
             if over_cap:
                 fresh = set()
             if fresh:
@@ -1303,7 +1355,8 @@ class Runner:
                                             "candidate-question->defer",
                                             "candidate-question->noted",
                                             "clarify-limit->skip-offer",
-                                            "skip-offer-declined")):
+                                            "skip-offer-declined",
+                                            "holding->wait")):
             self.clarifies_used += 1
         say = g.say or "It just means a specific example from your own experience."
         self.said_this_question.append(say)
@@ -1322,6 +1375,8 @@ class Runner:
         self.follow_ups_used = 0
         self.clarifies_used = 0
         self.clarify_extra = 0
+        self.holds = 0
+        self.fit_checked = False
         self.skip_offered = False
         self.awaiting_skip_offer = False
         self.confirm_narrowed = False

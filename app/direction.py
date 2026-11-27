@@ -181,3 +181,62 @@ def asks_anything(utterance: str) -> bool:
     if CLARIFYING.search(text) or intent.asked_to_stop(text):
         return False
     return any(s.rstrip().endswith("?") for s in sentences(text))
+
+
+# Buying time before answering (live interview, 27/11/2026). "Yeah, I'll think this through
+# carefully." was taken as the design answer, drew a follow-up, and the next hold spent the
+# question's budget before the design was ever given. Every clause has to be filler, an
+# acknowledgement, a request for a moment, or a promise of the answer. A promise may point back
+# at the question ("that", "this") but never names a thing of its own, so "I'll put a cache in
+# front" is an answer. Over the stored sessions it fired on 4 of 337 distinct answers, all four
+# of them that interview's holds, and on none of the 163 result gold answers.
+HOLD_MAX_WORDS = 16
+
+_HOLD_FILLER = re.compile(r"^(?:ok(?:ay)?|right|sure|yeah|yes|yep|great|good|so|well|hmm+|um+|"
+                          r"uh+|ah|oh|alright|all right|cool|fine)$")
+_HOLD_ACK = re.compile(r"^(?:that'?s an? |what an? |oh )?(?:good|great|fair|interesting|tough|"
+                       r"nice|big|tricky|hard) (?:question|one|point|catch|twist|ask)$")
+_TIME = r"(?:sec|second|moment|minute|tick|bit)"
+_HOLD_WAIT = re.compile(
+    r"^(?:just )?(?:give me|gimme)(?: a| one)? %s$|" % _TIME
+    + r"^(?:just )?(?:one|a) %s$|" % _TIME
+    + r"^(?:bear with me|hold on|hang on)(?: a %s)?$|" % _TIME
+    + r"^(?:just |still )?(?:thinking|i'?m (?:just |still )?thinking)(?: about (?:it|that|this))?$")
+# "spill": the recogniser's "spell" in that interview.
+_HOLD_PROMISE = re.compile(
+    r"^(?:(?:ok(?:ay)?|right|sure|yeah|so|well|great|good|now|and|but|just|actually|first|"
+    r"alright) )*"
+    r"(?:let me|lemme|let'?s|i'?ll|i will|i'?m going to|i am going to|i'?m gonna|i want to|"
+    r"i'?d like to|i need to|allow me to|(?:can|could|may) i|mind if i) (?:just |quickly )?"
+    r"(?:think|see|consider|recall|remember|gather|collect|organi[sz]e|line|lay|set|put|pull|"
+    r"wind|make|spell|spill|walk|talk|explain|clarify|start|frame|unpack|sort|figure|map|"
+    r"sketch|structure|take|get|go|break|tidy|sum|piece|run|answer|work|tell|give|describe|"
+    r"cover|pick|choose|find|try|jump|dig|step|back|have)\b(.*)$")
+_HOLD_TAIL = frozenset("""
+    that this it them those these you me my thoughts thought a an the one moment minute second
+    sec bit little through out up over together down in into on about for with of to by from so
+    then now first again properly carefully precisely quickly briefly clearly clearer more
+    concretely specifically straight right part story answer order example question how where
+    start beginning best way sense step steps quick sure i explain say put describe phrase word
+    think
+""".split())
+
+
+def _hold_clause(clause: str) -> bool:
+    if _HOLD_FILLER.match(clause) or _HOLD_ACK.match(clause) or _HOLD_WAIT.match(clause):
+        return True
+    m = _HOLD_PROMISE.match(clause)
+    return bool(m) and all(w in _HOLD_TAIL for w in re.findall(r"[a-z']+", m.group(1)))
+
+
+def is_holding(utterance: str) -> bool:
+    """Only buying time: "Let me think", "Right, I'll make that clearer", "Give me a second"."""
+    text = (utterance or "").lower().replace("\u2019", "'").replace("\u2018", "'")
+    if not text.split() or len(text.split()) > HOLD_MAX_WORDS:
+        return False
+    clauses = [re.sub(r"\s+", " ", c).strip(" '\"-")
+               for c in re.split(r"[,.;:!?\u2013\u2014]+|\s-\s", text)]
+    clauses = [c for c in clauses if c]
+    # Filler alone ("Sure.", "Okay.") can answer a yes-or-no question.
+    return (bool(clauses) and all(_hold_clause(c) for c in clauses)
+            and not all(_HOLD_FILLER.match(c) for c in clauses))

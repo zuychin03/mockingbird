@@ -88,6 +88,31 @@ def is_measured(text, field=None):
     return False
 
 
+# A measure stated in so many words, which spends the MEASURE follow-up. Narrower than
+# MEASURED, which also credits "checked", "tested", "counted" and "showed": a loose match here
+# would skip a follow-up still owed. Over the stored sessions it fired before 3 of 16 MEASURE
+# follow-ups, each one asked after a measure had been given (27/11/2026).
+_STATED = (r"measur|benchmark|profil(?:ed|ing|er)|monitor(?:ed|ing)?\b|instrument(?:ed|ing)|"
+           r"track(?:ed|ing)|metrics?\b|dashboards?\b|p9\d|percentiles?|a/b test")
+
+
+@functools.cache
+def _stated(field: str | None) -> re.Pattern:
+    f = fields.FIELDS.get(field or fields.SOFTWARE)
+    extra = "".join("|" + re.escape(m) for m in (f.measured if f else ()))
+    return re.compile(r"\b(?:" + _STATED + extra + ")", re.I)
+
+
+def states_measure(text, field=None):
+    """A measure named and not denied in its own clause, as `is_measured` reads one."""
+    t = text or ""
+    for m in _stated(field).finditer(t):
+        clause = re.split(r"[.!?;,]", t[:m.start()])[-1].split()[-4:]
+        if not _DENIAL.search(" ".join(clause)):
+            return True
+    return False
+
+
 def signals(text, field=None):
     """Return {signal_name: count}. Pure function of the text and the field."""
     t = text or ""
