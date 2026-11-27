@@ -69,7 +69,21 @@ compared side by side.
 ### Fixed
 
 - Saying "Let me think" or "I'll make that clearer" and pausing no longer counts as your answer.
-  The interviewer says "Take your time" and waits, and no follow-up is used up.
+  In live mode the interviewer keeps listening for up to 10 s and says nothing over you. After a
+  longer silence it says "Take your time" and waits, and no follow-up is used up.
+- In live mode, a new interview's first answer no longer starts with the last answer of the
+  interview before it.
+- Fixed follow-up lines now say what they ask about ("Why did you choose that approach?" rather
+  than "Why that one?"), and they are needed less often: a follow-up the model wrote as a
+  request without a question mark ("Walk me through what you did") is now kept.
+- When a follow-up has to be written again, the model now rewords the fixed line for your
+  story ("In that clinic research, which parts of the shift from phone to tablet were yours
+  personally?"), and a rewrite that asks three things at once falls back to the fixed line.
+- A follow-up that asks again, in new words, what an earlier follow-up on the same question
+  asked ("How did you determine the inconsistency?" after "How did you identify the
+  inconsistency?") is now replaced by a question about another part of your story.
+- "When you built that dashboard, how big was the team and what held you back?" is no longer
+  mistaken for a three-part question.
 - Once you have said how you measured something ("we started tracking the rate of..."), the
   interviewer no longer asks what you measured.
 - A follow-up that asks three things at once ("what was the situation, what did you do, and how

@@ -188,8 +188,9 @@ def asks_anything(utterance: str) -> bool:
 # question's budget before the design was ever given. Every clause has to be filler, an
 # acknowledgement, a request for a moment, or a promise of the answer. A promise may point back
 # at the question ("that", "this") but never names a thing of its own, so "I'll put a cache in
-# front" is an answer. Over the stored sessions it fired on 4 of 337 distinct answers, all four
-# of them that interview's holds, and on none of the 163 result gold answers.
+# front" is an answer. Over the stored sessions it fires on 10 of 368 distinct answers, all of them
+# holds from the two live interviews of 27/11, and on none of the 163 result gold answers. A
+# hold the recogniser garbled ("Now learn it up carefully") still reads as an answer.
 HOLD_MAX_WORDS = 16
 
 _HOLD_FILLER = re.compile(r"^(?:ok(?:ay)?|right|sure|yeah|yes|yep|great|good|so|well|hmm+|um+|"
@@ -211,14 +212,15 @@ _HOLD_PROMISE = re.compile(
     r"(?:think|see|consider|recall|remember|gather|collect|organi[sz]e|line|lay|set|put|pull|"
     r"wind|make|spell|spill|walk|talk|explain|clarify|start|frame|unpack|sort|figure|map|"
     r"sketch|structure|take|get|go|break|tidy|sum|piece|run|answer|work|tell|give|describe|"
-    r"cover|pick|choose|find|try|jump|dig|step|back|have)\b(.*)$")
+    r"cover|pick|choose|find|try|jump|dig|step|back|have|double|check|recheck|confirm|verify)"
+    r"\b(.*)$")
 _HOLD_TAIL = frozenset("""
     that this it them those these you me my thoughts thought a an the one moment minute second
     sec bit little through out up over together down in into on about for with of to by from so
     then now first again properly carefully precisely quickly briefly clearly clearer more
     concretely specifically straight right part story answer order example question how where
     start beginning best way sense step steps quick sure i explain say put describe phrase word
-    think
+    think i'm im here precise accurate exact exactly correct check twice
 """.split())
 
 

@@ -76,6 +76,16 @@ _REQUEST_OPENER = re.compile(
     r"list|name|think|imagine|consider|let'?s|let us|could you|can you|would you)\b", re.I)
 
 
+def one_request(text: str) -> bool:
+    """One question, or one request without a question mark: "Walk me through what you did."
+    A repair worded that way was refused as two requests and a fixed line spoken instead
+    (27/11/2026)."""
+    if (text or "").count("?") == 1:
+        return True
+    parts = _sentences(text)
+    return len(parts) == 1 and "?" not in parts[0] and bool(_REQUEST_OPENER.match(parts[0]))
+
+
 def lead_in_only(text: str) -> bool:
     """One question, last, after sentences that only state something.
 

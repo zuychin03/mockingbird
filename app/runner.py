@@ -466,6 +466,25 @@ class Runner:
                 return False
         return True
 
+    def _repeats_asked(self, say: str) -> bool:
+        """Does this line mean the same as something already spoken on this question?
+
+        For a line that would otherwise be kept, so the default is the reverse of
+        `_distinct_from_asked`: without the embedding model, or for a pair it cannot score,
+        nothing is a repeat and the line is kept as before.
+
+        Measured on the 84 stored lines that would be kept unnamed with something already said
+        on their question (28/11/2026): 0.33 caught 15 of 17 that asked again, among them "How
+        did you determine the inconsistency between the two services?" after "...how did you
+        identify the inconsistency in its interpretation?", and sent 5 of 57 distinct lines to
+        the repair. Masking the story's own words or comparing each part of a two-part line
+        did no better.
+        """
+        if not self.similarity:
+            return False
+        return any((self.similarity(say, prior) or 0) >= focus.SIMILAR_ENOUGH
+                   for prior in self.said_this_question)
+
     def _repair_grace(self) -> float:
         return REPAIR_GRACE_S if is_local(self.provider) else CLOUD_REPAIR_GRACE_S
 
@@ -531,14 +550,20 @@ class Runner:
         boundary, even if a non-conforming provider returns extra JSON properties.
         """
         cap = self.max_say_words
+        design = self.current.get("observation_shape") == "design"
         system = self.speech_system
         system += ("\n\nRequired focus: %s. The question must ask only about that."
-                   % focus.wording(want, self.current.get("observation_shape") == "design"))
+                   % focus.wording(want, design))
         if cap:
             system += "\nUse at most %d words." % cap
         # Do not quote negative examples here. In the first live run Llama copied the
         # rejected line on two retries and copied a previous session question into an
         # unrelated scenario once. Repetition is cheaper and more reliable to reject below.
+        # The fixed line is a positive example: the model rewords it for this story, and it is
+        # spoken as written only if this call fails. Story questions only, as measured.
+        reference = None if design else focus.template(want, set(self.said_this_session))
+        if reference:
+            system += "\n" + focus.REPAIR_REWORD % reference
 
         q = self.current
         user = contract.render(q["question"], utterance, self.history.render())
@@ -573,7 +598,7 @@ class Runner:
         # A lead-in before the one question is dropped and the question spoken, as on the
         # decision path. Groq opens repairs with "You mentioned X." (16/11, Duy: "Accept
         # lead-in trims"); refusing those spent the call and spoke a template.
-        elif (raw_say.count("?") != 1
+        elif (not guards.one_request(raw_say)
               or ("extra-sentences-dropped" in checked.applied
                   and not guards.lead_in_only(raw_say))):
             rejection = "multi_request"
@@ -581,6 +606,8 @@ class Runner:
             rejection = "repeated"
         elif cap and len(checked.say.split()) > cap:
             rejection = "over_length"
+        elif focus.is_form(checked.say):
+            rejection = "three_part"
         elif want not in got and not (set(got) - self.focus_used):
             # A FRESH request, not obedience -- the same rule the decision path applies four
             # hundred lines below, and this was stricter than the thing it repairs. Requiring
@@ -593,6 +620,7 @@ class Runner:
 
         attempt = {
             "trigger": trigger,
+            "reference": reference,
             "say_raw": raw_say,
             "say": checked.say,
             "focus": got,
@@ -1126,13 +1154,15 @@ class Runner:
                 g.applied.append("three-part->one")
             if over_cap:
                 fresh = set()
+            unnamed = (not classified and not over_cap
+                       and g.say.count("?") == 1
+                       and len(g.say.split()) >= UNNAMED_FOCUS_MIN_WORDS
+                       and g.say not in self.said_this_session)
+            repeats = unnamed and self._repeats_asked(g.say)
             if fresh:
                 got = fresh
                 self.focus_used |= fresh
-            elif (not classified and not over_cap
-                  and g.say.count("?") == 1
-                  and len(g.say.split()) >= UNNAMED_FOCUS_MIN_WORDS
-                  and g.say not in self.said_this_session):
+            elif unnamed and not repeats:
                 # An empty `fresh` has TWO causes and the code treated them alike. A line that
                 # classifies to a SPENT type is the model repeating a request it has already
                 # made, and must not stand. A line that classifies to NOTHING is one the regex
@@ -1140,8 +1170,8 @@ class Runner:
                 # sessions, 16 of the 20 discarded lines were single, in-cap, non-repeating
                 # questions, among them "What was the colleague's reaction when you gave him
                 # feedback?" and a volume-of-alerts question that IS about scale and simply
-                # misses CONTEXT's wording. Their worst similarity to anything already spoken
-                # was 0.59 against guard 3's 0.60 limit, so repetition is separately covered.
+                # misses CONTEXT's wording. Guard 3 only compares letters, so a line that asks
+                # the same thing in new words is caught by `_repeats_asked` instead.
                 #
                 # Keep the model's words and charge the REQUESTED focus, so the ladder still
                 # advances and the turn cannot silently ask the same kind of thing twice.
@@ -1167,11 +1197,13 @@ class Runner:
                 got = classified
                 g.applied.append("spent-focus->kept-distinct")
             else:
+                if repeats:
+                    g.applied.append("unnamed-focus->repeats")
                 say_model = g.say
                 repaired = None
                 if g.act == "probe" and calls == 1:
                     repaired, speech_attempt, repair_guards = await self._repair_speech(
-                        utterance, want, g.say, "off_focus")
+                        utterance, want, g.say, "repeated" if repeats else "off_focus")
                     calls = 2
                     if repaired:
                         g.say = repaired

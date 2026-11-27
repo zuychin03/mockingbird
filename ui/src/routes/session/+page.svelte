@@ -36,7 +36,10 @@
   // transcript being adopted twice, and making them state would re-run the effects that set
   // them.
   let spokenKey = '';
-  let adopted = 0;
+  // `voice` outlives this page, so its last transcript is already here when the page opens.
+  // Taking it again put the previous interview's closing answer in front of the next one's
+  // opening (27/11/2026).
+  let adopted = voice.transcript?.id ?? 0;
   // What the recogniser produced for the answer in the box, before any edit (FR-31). Kept beside
   // the answer so a correction later can be measured against it; empty for typed answers.
   let heard = '';
@@ -102,6 +105,10 @@
 
   async function start(path) {
     if (adopt(await send('/api/session/start', { plan_path: path }))) {
+      // Whatever was in the box belonged to the interview that just ended.
+      answer = '';
+      heard = '';
+      clearRecording();
       queueMicrotask(() => composer?.focus());
     }
   }

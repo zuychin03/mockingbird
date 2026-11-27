@@ -21,7 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import audio  # noqa: E402
+from app import audio, endpoint  # noqa: E402
 
 pytest.importorskip("fastapi", reason="the web extra is optional; app/ never imports it")
 from fastapi.testclient import TestClient  # noqa: E402
@@ -682,3 +682,71 @@ def test_ready_says_whether_live_mode_can_run_and_why_not(engine, fake_vad, tmp_
     assert ready["live_ready"] is (why is None)
     if why:
         assert why in ready["live_why"]
+
+
+# --- a pause that only bought time (27/11/2026) --------------------------------------------------
+class Said(FakeAsr):
+    """Each pass returns the next line it was given."""
+
+    def __init__(self, *lines) -> None:
+        super().__init__()
+        self.lines = list(lines)
+
+    def transcribe(self, samples, rate) -> str:
+        super().transcribe(samples, rate)
+        return self.lines.pop(0) if self.lines else ""
+
+
+def test_words_that_only_buy_time_keep_the_turn_open(engine, fake_vad):
+    """Ended at the pause, "Let me think that through." was answered with "Take your time." and
+    the answer that followed was spoken over it."""
+    rate = audio.MIC_RATE
+    asr = Said("Let me think that through.", "We cached the lookups.")
+    link = voice_mod.Link(FakeWS(), engine, asr, FakeVadEngine(fake_vad))
+
+    async def go():
+        await link.on_control(live(2.5))
+        await speak(link, tone(1.5, rate))
+        await speak(link, quiet(1.0))
+        await until(lambda: sent(link, "partial"))
+        await speak(link, quiet(4.0))
+        assert not sent(link, "utterance"), "still thinking"
+        await speak(link, tone(3.0, rate))
+        await speak(link, quiet(3.0))
+        assert sent(link, "utterance")[-1]["ended"] == "pause"
+        assert sent(link, "transcript")[-1]["text"] == (
+            "Let me think that through. We cached the lookups.")
+
+    asyncio.run(go())
+
+
+def test_an_answer_is_not_held(engine, fake_vad):
+    rate = audio.MIC_RATE
+    link = voice_mod.Link(FakeWS(), engine, Said("I'll put a cache in front of it."),
+                          FakeVadEngine(fake_vad))
+
+    async def go():
+        await link.on_control(live(2.5))
+        await speak(link, tone(1.5, rate))
+        await speak(link, quiet(1.0))
+        await until(lambda: sent(link, "partial"))
+        await speak(link, quiet(2.0))
+        assert sent(link, "utterance")[-1]["ended"] == "pause"
+
+    asyncio.run(go())
+
+
+def test_a_hold_with_nothing_after_it_still_ends(engine, fake_vad):
+    rate = audio.MIC_RATE
+    link = voice_mod.Link(FakeWS(), engine, Said("Give me a second."), FakeVadEngine(fake_vad))
+
+    async def go():
+        await link.on_control(live(2.5))
+        await speak(link, tone(1.0, rate))
+        await speak(link, quiet(1.0))
+        await until(lambda: sent(link, "partial"))
+        await speak(link, quiet(endpoint.HOLD_WAIT))
+        assert sent(link, "utterance")[-1]["ended"] == "pause"
+        assert sent(link, "transcript")[-1]["text"] == "Give me a second."
+
+    asyncio.run(go())

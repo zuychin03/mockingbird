@@ -1194,7 +1194,7 @@ def test_a_repair_on_an_already_spent_focus_is_still_rejected(tmp_path, monkeypa
     # separate string-repetition guard.
     r, state = build([d("probe", "What drove that architectural decision?", ok=False),
                       d("probe", "", ok=False),
-                      speech("Why did you choose Redis?")], tmp_path)
+                      speech("Why Redis rather than Postgres?")], tmp_path)
     run(r.ask())
     run(r.submit("Because it was already running."))
     out = run(r.submit("It took about twenty minutes."))
@@ -2650,6 +2650,43 @@ def test_a_terse_unnameable_probe_still_goes_to_repair(tmp_path, monkeypatch):
     assert "unnamed-focus->kept" not in last_decision(state)["guards"]
 
 
+REACTION = "What was the colleague's reaction when you gave him feedback?"
+REACTION_AGAIN = "How did your colleague respond when you brought that feedback up with him?"
+FIRST_STEP = "What was the first thing you did after he pushed back on that feedback?"
+
+
+def _two_unnamed(tmp_path, monkeypatch, similarity):
+    monkeypatch.setattr(focus, "next_focus",
+                        lambda u, used, *a, **k: "STEPS" if "CONTEXT" in used else "CONTEXT")
+    assert not focus.classify(REACTION_AGAIN)
+    r, state = build([d("probe", REACTION), d("probe", REACTION_AGAIN), speech(FIRST_STEP)],
+                     tmp_path, similarity=similarity)
+    run(r.ask())
+    run(r.submit("I told him the Friday PRs were costing us weekends."))
+    return r, state, run(r.submit("Fine, I guess. He said he would think about it."))
+
+
+def test_an_unnamed_line_that_asks_again_in_new_words_goes_to_the_repair(tmp_path, monkeypatch):
+    """Guard 3 compares letters, so "How did you determine the inconsistency" passed after
+    "how did you identify the inconsistency" in the 27/11 interview."""
+    r, state, out = _two_unnamed(tmp_path, monkeypatch, lambda a, b: 0.6)
+    decision = last_decision(state)
+    assert out.spoken.text == FIRST_STEP
+    assert "unnamed-focus->repeats" in decision["guards"]
+    assert "unnamed-focus->kept" not in decision["guards"]
+    assert decision["speech_attempt"]["trigger"] == "repeated"
+
+
+@pytest.mark.parametrize("similarity", [None, lambda a, b: None, lambda a, b: 0.1],
+                         ids=["no-model", "unscored", "distinct"])
+def test_an_unnamed_line_is_kept_unless_it_is_shown_to_repeat(tmp_path, monkeypatch, similarity):
+    r, state, out = _two_unnamed(tmp_path, monkeypatch, similarity)
+    decision = last_decision(state)
+    assert out.spoken.text == REACTION_AGAIN
+    assert "unnamed-focus->kept" in decision["guards"]
+    assert "unnamed-focus->repeats" not in decision["guards"]
+
+
 def test_repeating_a_spent_request_type_is_still_refused(tmp_path, monkeypatch):
     """The other cause of an empty `fresh`, and it must keep behaving as before: a line that
     classifies to a focus already used is the model asking the same thing twice."""
@@ -3507,7 +3544,8 @@ HOLDS = ["Yeah, I'll think this through carefully.", "Right, I'll make that clea
          "Good question. Let me think.", "Give me a second.", "Hmm, let me think about that.",
          "One sec, let me gather my thoughts.", "Can I take a minute?",
          "Hold on, let me think about the best way to explain this.",
-         "Right, I’ll make that clearer."]
+         "Right, I’ll make that clearer.", "Let me make sure I'm precise here.",
+         "Let me double check that.", "Let me double-check that."]
 NOT_HOLDS = ["Let me line that up precisely. I replayed the same out of order sequences and "
              "confirmed the UI stayed confirmed.",
              "I'll put a cache in front of the database.", "I'd use a queue for it.",
@@ -3515,7 +3553,8 @@ NOT_HOLDS = ["Let me line that up precisely. I replayed the same out of order se
              "Let me see. I think it was the payments retry.", "Sure.", "Okay.", "Yeah.",
              "I can't really think of one, to be honest.", "Let me get back to you on that.",
              "I'll tell you about the time our cache fell over.", "Let's go with a queue.",
-             "Sorry, could you say that again?"]
+             "Sorry, could you say that again?", "I double checked the migration on staging.",
+             "Let me make sure the cache is warm.", "Let me confirm the numbers with the team."]
 
 
 @pytest.mark.parametrize("text", HOLDS)
@@ -3743,3 +3782,83 @@ def test_the_check_is_per_question(tmp_path):
     run(r.submit(ON_KIND))
     assert r.current["question"] == "Tell me about another one." and not r.fit_checked
     assert run(r.submit(OFF_KIND)).act == "reask"
+
+
+# ------------------------------------------- fallback lines (second live interview, 27/11)
+def test_a_repair_worded_as_a_request_is_accepted(tmp_path, monkeypatch):
+    """Refused as two requests for having no question mark, and a fixed line spoken instead."""
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "STEPS")
+    line = "Walk me through exactly what you did to learn the codebase."
+    r, state = build([d("probe", "Tell me about the weather.", ok=False), speech(line)],
+                     tmp_path)
+    run(r.ask())
+    out = run(r.submit("I picked up one endpoint and some tests."))
+    decision = last_decision(state)
+    assert out.spoken.text == line
+    assert decision["speech_attempt"]["accepted"] is True
+
+
+@pytest.mark.parametrize("text,ok", [
+    ("Walk me through what you did.", True),
+    ("Describe the rollback", True),
+    ("What did you change?", True),
+    ("Tell me what you measured. Then tell me why.", False),
+    ("We added a cache.", False),
+    ("What changed? Who noticed?", False),
+])
+def test_one_request_is_one_question_or_one_ask(text, ok):
+    assert guards.one_request(text) is ok
+
+
+def test_no_fixed_line_leans_on_what_came_before_alone():
+    """"Why that one?" after a self-introduction gave the candidate nothing to go on."""
+    for name, variants in focus.TEMPLATE.items():
+        for line in variants:
+            assert len(line.split()) >= 5, (name, line)
+
+
+# ------------------------------------------- the repair rewords the fixed line (Duy, 28/11)
+def test_a_repair_rewords_the_fixed_line_for_the_story(tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "ROLE")
+    line = "Which parts of the queue rollout were yours personally?"
+    r, state = build([d("probe", "Tell me about the weather.", ok=False), speech(line)],
+                     tmp_path)
+    run(r.ask())
+    out = run(r.submit("We moved the notification sending onto a queue."))
+    attempt = last_decision(state)["speech_attempt"]
+    repair = [s for s in r.provider.systems if "Required focus" in s]
+    assert out.spoken.text == line
+    assert attempt["reference"] == focus.TEMPLATE["ROLE"][0]
+    assert repair and "QUESTION TO REWORD: " + focus.TEMPLATE["ROLE"][0] in repair[0]
+
+
+def test_a_design_repair_has_no_story_to_reword_for(tmp_path):
+    runner, _ = stage3_design_runner([d("probe", "")], tmp_path)
+    run(runner.ask())
+    run(runner.submit(WITH_FAILURE))
+    repair = [s for s in runner.provider.systems if "Required focus" in s]
+    assert repair and "QUESTION TO REWORD" not in repair[0]
+
+
+def test_a_three_part_repair_falls_back_to_the_fixed_line(tmp_path, monkeypatch):
+    monkeypatch.setattr(focus, "next_focus", lambda *args: "CONTEXT")
+    form = "How big was the team, what were the constraints, and who else was involved?"
+    r, state = build([d("probe", "Tell me about the weather.", ok=False), speech(form)],
+                     tmp_path)
+    run(r.ask())
+    out = run(r.submit("We moved the notification sending onto a queue."))
+    attempt = last_decision(state)["speech_attempt"]
+    assert attempt["rejection"] == "three_part"
+    assert out.spoken.text in focus.TEMPLATE["CONTEXT"]
+
+
+@pytest.mark.parametrize("text", [
+    "When you built that dashboard, how big was the team and what held you back?",
+    "Where you split the table, which parts were yours and why?",
+])
+def test_a_scene_setting_when_is_not_an_ask(text):
+    assert not focus.is_form(text)
+
+
+def test_a_when_that_asks_still_counts():
+    assert focus.is_form("When did it start, how long did it last, and who noticed?")

@@ -148,3 +148,35 @@ def test_an_unknown_window_size_is_refused_at_load_not_mid_answer():
 def test_a_missing_model_is_explained_not_crashed_on(tmp_path):
     why = endpoint.Silero(model=tmp_path / "absent.onnx").available()
     assert why and "absent.onnx" in why
+
+
+# --- a pause that only bought time (27/11/2026) --------------------------------------------------
+def test_a_held_silence_is_waited_through_for_longer(fake_vad):
+    ep = endpoint.Endpointer(fake_vad(), pause=2.5)
+    assert feed(ep, np.concatenate([tone(1.5), quiet(1.0)])) is None
+    assert ep.hold()
+    ended = feed(ep, quiet(12.0))
+    assert ended == pytest.approx(endpoint.HOLD_WAIT - 1.0, abs=0.1)
+
+
+def test_speaking_again_after_a_hold_restores_the_setting(fake_vad):
+    ep = endpoint.Endpointer(fake_vad(), pause=2.5)
+    feed(ep, np.concatenate([tone(1.5), quiet(1.0)]))
+    ep.hold()
+    assert feed(ep, np.concatenate([quiet(4.0), tone(3.0)])) is None, "still the same answer"
+    ended = feed(ep, quiet(4.0))
+    assert ended == pytest.approx(2.5, abs=0.1)
+
+
+def test_there_is_nothing_to_hold_mid_word_or_before_the_first(fake_vad):
+    ep = endpoint.Endpointer(fake_vad(), pause=2.5)
+    assert not ep.hold(), "nothing said yet"
+    feed(ep, tone(1.0))
+    assert not ep.hold(), "still speaking"
+
+
+def test_a_hold_never_shortens_a_longer_setting(fake_vad):
+    ep = endpoint.Endpointer(fake_vad(), pause=10.0)
+    feed(ep, np.concatenate([tone(1.0), quiet(1.0)]))
+    ep.hold(wait=4.0)
+    assert feed(ep, quiet(6.0)) is None

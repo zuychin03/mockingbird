@@ -40,6 +40,11 @@ MIN_SILENCE = 0.25
 PAUSE_DEFAULT = 2.5
 PAUSE_MIN, PAUSE_MAX = 1.0, 10.0
 
+# How long a silence after words that only buy time ("Let me think that through") is waited
+# through, instead of the setting. Ending the turn there made the interviewer answer the pause
+# and then talk over the answer that followed (27/11/2026). Speaking again restores the setting.
+HOLD_WAIT = 10.0
+
 
 class Vad(Protocol):
     def is_speech(self, window: np.ndarray) -> bool:
@@ -131,6 +136,8 @@ class Endpointer:
         self.speaking = False
         self.spans: list[list[int]] = []
         self.quiet_from: int | None = None
+        self.held_at: int | None = None
+        self.hold_wait = pause
         self._rest = np.zeros(0, dtype=np.float32)
         vad.reset()
 
@@ -164,8 +171,18 @@ class Endpointer:
     def ended(self) -> bool:
         # A pause only has a start once speech has ended, so silence before the first word
         # can never satisfy this.
-        return (not self.speaking and self.quiet_from is not None
-                and self.at - self.quiet_from >= self.pause * self.rate)
+        if self.speaking or self.quiet_from is None:
+            return False
+        pause = self.hold_wait if self.held_at == self.quiet_from else self.pause
+        return self.at - self.quiet_from >= pause * self.rate
+
+    def hold(self, wait: float = HOLD_WAIT) -> bool:
+        """Wait `wait` seconds through the current silence instead of the setting. A new silence,
+        after speaking again, is timed by the setting. False when there is no silence to hold."""
+        if self.speaking or self.quiet_from is None:
+            return False
+        self.held_at, self.hold_wait = self.quiet_from, max(self.pause, wait)
+        return True
 
     def pause_onset(self, least: float) -> int | None:
         """Where the current silence began, once it has lasted `least` seconds."""

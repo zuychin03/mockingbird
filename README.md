@@ -67,14 +67,16 @@ the exact one discarded usable questions in favour of canned lines. The repair a
 deadline; past it the turn stops waiting and speaks the template, which bounds what a candidate
 can be left waiting for on a slow machine.
 
-Two more controls compare meaning rather than spelling, and both are skipped when the optional
-embedding model is absent:
+Three more controls compare meaning rather than spelling, and all three are skipped when the
+optional embedding model is absent:
 
 - a probe that re-asks the previous one in different words is dropped and the question advances,
   because focus rotation compares LABELS and cannot see "how did you know X" and "what made you
   decide X" as one question
 - a line the repetition guard flags is kept anyway when the embedding disagrees, because that
   guard compares characters and short interview questions are mostly shared scaffolding
+- a probe no focus label fits is kept only if it means something different from every line
+  already said on the question; one that asks again in new words goes to the repair
 
 Compound questions are kept rather than trimmed. A two-part question is ordinary interviewer
 behaviour, one of the scripted questions is itself double-barrelled, and trimming to the first
@@ -199,9 +201,9 @@ The language model is started under its exact alias and checked by alias and fil
 interview starts, so a different model cannot quietly take its place. All three fit a 6 GB
 card together.
 
-The embedder is optional and worth having. Two of the speech controls compare what a probe
-MEANS rather than how it is spelled, and without it they fall back to comparing words, which is
-quieter and weaker rather than an error. The model was chosen by measuring five candidates on
+The embedder is optional and worth having. Three of the speech controls compare what a probe
+MEANS rather than how it is spelled, and without it they fall back to comparing words or are
+skipped, which is quieter and weaker rather than an error. The model was chosen by measuring five candidates on
 labelled probe pairs from real sessions rather than by leaderboard: all-MiniLM-L6-v2 at 22M
 parameters beat nomic-embed-v1.5, mxbai-embed-large and embeddinggemma-300m, because those are
 tuned for matching a short query to a long document while this compares two questions of the
@@ -470,6 +472,8 @@ pause between sentences from the end of an answer -- it called 7 of 10 mid-answe
 finished -- while no pause inside any answer reached 2 s. At a 1.5 s setting one answer was cut
 at a pause between sentences; at 2.5 s none were. Any pause long enough to be the end is read
 straight away, so by the time the pause has run out the answer is usually already transcribed.
+If all you have said so far only buys time ("Let me think that through", "Give me a second"),
+live mode keeps listening for up to 10 s instead, and says nothing over you.
 
 Both directions run on [LFM3-Audio-2B](https://huggingface.co/LiquidAI/LFM3-Audio-2B) in one
 resident `llama-server` process on `127.0.0.1:8092`, so nothing reloads between calls. It fits

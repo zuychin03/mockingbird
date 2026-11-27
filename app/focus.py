@@ -220,7 +220,9 @@ _PATTERNS = {
 _COMPILED = {k: re.compile(v, re.I) for k, v in _PATTERNS.items()}
 
 # Spoken when the model returns a line that is not the focus that was asked for. Plain and
-# short by design -- these exist so a mis-targeted turn still asks something useful.
+# short by design -- these exist so a mis-targeted turn still asks something useful. Each one
+# says what it asks about: "Why that one?" was spoken after a self-introduction and gave the
+# candidate nothing to go on (27/11/2026).
 #
 # Several per focus, because one fixed string per focus is spoken verbatim every time that
 # focus fires, and CONTEXT fired four times in one session: "What was the scale of that?" was
@@ -229,12 +231,12 @@ _COMPILED = {k: re.compile(v, re.I) for k, v in _PATTERNS.items()}
 # of it -- substitution happens after the guards run. `template()` below is what stops it.
 TEMPLATE = {
     "STEPS": ("What did you actually do, step by step?",
-              "Walk me through what you did.",
-              "What was the first thing you did?"),
-    "REASON": ("Why that one?",
-               "What made you go that way?",
-               "What was the thinking behind that?"),
-    "MEASURE": ("How did you measure that?",
+              "Walk me through what you did there.",
+              "What was the first thing you did about it?"),
+    "REASON": ("Why did you choose that approach?",
+               "What made you decide to do it that way?",
+               "What was your reasoning behind that decision?"),
+    "MEASURE": ("How did you measure the effect of that?",
                 # Was "How did you know it worked?", which is the only template that made a
                 # CLAIM rather than a request: it asserts the thing worked. Live it was spoken
                 # to "I took the fast option and it cost us a sprint later", and again to a
@@ -245,32 +247,32 @@ TEMPLATE = {
                 # `ASSERTED` signal fires on 0 of those 72 utterances, so the gate would never
                 # open and the filter would be dead machinery. A premise-free line costs
                 # nothing and, unlike its predecessor, classifies as MEASURE.
-                "How did you know that?",
-                "What were you looking at to tell?"),
+                "How did you know whether it was working?",
+                "What numbers or signals were you watching to tell?"),
     "OUTCOME": ("What happened in the end?",
-                "How did that land?",
-                "Where did it end up?"),
-    "ROLE": ("Which parts of that were yours?",
-             "What was your own part in it?",
-             "What did you do yourself there?"),
-    "CHALLENGE": ("What was the hardest part?",
-                  "What gave you the most trouble?",
-                  "Where did that get difficult?"),
-    "ALTERNATIVE": ("What else did you consider?",
-                    "What did you rule out?",
-                    "Was there another way to do it?"),
-    "LESSON": ("What did you take from it?",
+                "How did that turn out for the people involved?",
+                "Where did things end up after that?"),
+    "ROLE": ("Which parts of that work were yours personally?",
+             "What was your own part in that work?",
+             "What did you do yourself, rather than the team?"),
+    "CHALLENGE": ("What was the hardest part of that?",
+                  "What gave you the most trouble there?",
+                  "Where did that work get difficult?"),
+    "ALTERNATIVE": ("What other options did you consider?",
+                    "What options did you rule out along the way?",
+                    "Was there another way you could have done it?"),
+    "LESSON": ("What did you take away from that experience?",
                # The one line where the TEMPLATE moves rather than the regex. LESSON already
                # carries `next time`, and widening it to a bare `differently` would hand every
                # ALTERNATIVE question a LESSON label as well.
                "What would you do differently next time?",
-               "What stayed with you from that?"),
-    "CONTEXT": ("What was the scale of that?",
-                "What was the setup around it?",
-                "Who else was involved?"),
+               "What has stayed with you from that experience?"),
+    "CONTEXT": ("How big was the system or team you were working with?",
+                "What was the setup around that work?",
+                "Who else was involved in that work?"),
     "DURATION": ("How long did that take?",
-                 "Over what sort of timeframe?",
-                 "How long were you on it?"),
+                 "Over what sort of timeframe did that happen?",
+                 "How long were you working on it?"),
 }
 
 # Design questions are hypothetical. They need their own reviewed fallbacks because the
@@ -386,9 +388,12 @@ def classify(say: str) -> set[str]:
     return {k for k, rx in _COMPILED.items() if rx.search(say or "")}
 
 
-# A wh-word that opens a clause: at the start, or after a comma, a dash or "and".
+# A wh-word that opens a clause: at the start, or after a comma, a dash or "and". "When" and
+# "where" ask only before a verb: "When you split the table, how big was the team and what
+# held you back?" sets the scene and asks twice.
 _ASK_OPENS = re.compile(r"(?:^|[,;:\u2013\u2014]\s*|\s-\s*|\band\s+)"
-                        r"(?:what|how|who|when|where|why|which)\b", re.I)
+                        r"(?:(?:what|how|who|why|which)\b|(?:when|where)\s+(?:did|was|were|do|"
+                        r"does|is|are|had|has|have|would|will|could|can|should)\b)", re.I)
 
 
 def is_form(say: str) -> bool:
@@ -597,6 +602,17 @@ FOLLOW-UP: %s"""
 CASE_REWORD_WORDS = 20
 # Local Qwen ran to 22 words naming a five-clinic rollout; past 25 it is a speech, not a line.
 CASE_REWORD_MAX = 25
+
+# Duy 28/11: the repair rewords the fixed line for the story rather than writing a line from the
+# focus alone. Replayed on 169 stored repair cases with local Qwen, counting lines the repair
+# accepts: 149 against 118 (the old prompt wrote 35 three-part lines), naming something the
+# candidate said in 109 against 40, median 718 ms against 600. The cost is length and leading:
+# 43 against 8 run past 25 words, and 34 against 24 suggest answers ("like..."). Asking for a
+# shorter question, a 20-word limit, or no suggested answers each did worse.
+REPAIR_REWORD = ("Reword this question so it fits the story the candidate is telling, naming what "
+                 "they described in a few words. Ask about that same story: never ask for a new "
+                 "example or a different time. Change the wording, not what it asks for, and keep "
+                 "it to one short question.\nQUESTION TO REWORD: %s")
 
 
 # These expressions recognise grammar rather than phase. Runner owns the phase gate; keeping

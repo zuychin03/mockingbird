@@ -46,7 +46,7 @@ from pathlib import Path
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from api import origin
-from app import audio, endpoint, listen, speech
+from app import audio, direction, endpoint, listen, speech
 
 ROOT = Path(__file__).resolve().parent.parent
 LIVE = ROOT / "data" / "live_session.json"
@@ -244,6 +244,12 @@ class Link:
                 self.heard.append(text)
             if self.utterance is not u:
                 return
+            ep = self.endpointer
+            # Read at the pause, so known before the setting runs out: words that only buy time
+            # keep the turn open, and nothing is said over the answer that follows.
+            if (ep is not None and text and not ep.speech_between(self.committed, ep.at)
+                    and direction.is_holding(" ".join(self.heard))):
+                ep.hold()
             if text:
                 await self.send(t="partial", text=" ".join(self.heard))
 
