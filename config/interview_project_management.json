@@ -17,6 +17,17 @@
     "sets_context",
     "measurement_stated"
   ],
+  "advice": {
+    "sets_context": {
+      "fix": "One sentence of setup first -- the project, its size and deadline, who was involved. It is what makes the rest of the answer mean anything."
+    },
+    "states_outcome": {
+      "fix": "Finish with the effect: whether it landed on time and on budget, what the client or team got, what changed afterwards. A plan with no outcome reads as an activity, not a result."
+    },
+    "specific_detail": {
+      "fix": "Put a number on it. 'Six weeks late became two' is checkable; 'it was quite delayed' is not, and the difference is what separates an anecdote from evidence."
+    }
+  },
   "rubric": {
     "sets_context": {
       "label": "Sets the scene",

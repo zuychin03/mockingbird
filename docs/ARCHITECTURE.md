@@ -290,11 +290,12 @@ fixtures and real answers, and the remaining wording differences were near-ties.
 | [`app/observe.py`](../app/observe.py) | Grounded quote extraction and observation cache | Completed answers and shape | `Observation` objects |
 | [`app/embed.py`](../app/embed.py) | OPTIONAL local sentence similarity for probe de-duplication; returns None when the embedding model is absent | Two probe texts | Cosine similarity or None |
 | [`app/score.py`](../app/score.py) | Deterministic criterion arithmetic | Observations and criteria map | `QuestionScore` and `Report` |
-| [`app/report.py`](../app/report.py) | Evidence-led candidate feedback | Scores, observations, close reasons | Plain-text report |
+| [`app/report.py`](../app/report.py) | Evidence-led candidate feedback: `build` makes sections of typed blocks, with the field template's advice, its `advice_priority` order and the case wording; `to_text` prints them, `from_text` reads an old cached text back; `about` reads what the interview was made from (field, questions written from the description, the description) from its snapshot each time it is served | Scores, observations, close reasons, the plan snapshot | The report's structure, its plain text, and `about` |
 | [`app/corrections.py`](../app/corrections.py) | Answers corrected after the interview: `corrections.json` holds only changed answers with their originals, laid over the answers for scoring; a correction whose original moved is skipped | Session record, edits | The answers as scored, and the list of changes |
-| [`app/compare.py`](../app/compare.py) | Two interviews side by side from their reports as scored; questions paired by wording | Two reports and session records | Criteria, questions and delivery for both |
+| [`app/compare.py`](../app/compare.py) | Two interviews side by side from their reports as scored; questions paired by wording, except that a question written from a description pairs only within its own plan; a note when the plans or fields differ | Two reports and session records | Criteria, questions and delivery for both, each side's field |
 | [`app/examples.py`](../app/examples.py) | Example answers for up to three of the weakest scored responses, written by the cloud model under a strict schema; `examples.json` | A report, the cloud provider | Labelled examples, never scored |
-| [`app/export.py`](../app/export.py) | One interview as a self-contained HTML file, a JSON sidecar, or Markdown | Report, session record, transcript | The file |
+| [`app/transcript.py`](../app/transcript.py) | The interview line by line from `transcript.json`: each question once, then its answers (with any correction beside what was heard) and the interviewer's replies; the dialogue only, no decision fields | Session record, transcript turns, corrections | Lines for History's Transcript view and the HTML export's "what was said" |
+| [`app/export.py`](../app/export.py) | One interview as a self-contained HTML file, a JSON sidecar, or Markdown, each naming the field, the questions written from the description with their duties, and the description itself | Report, session record, transcript | The file |
 | [`app/depth_signals.py`](../app/depth_signals.py) | Regex facts used by focus and observations | Answer text | Depth-signal booleans |
 | [`app/resume.py`](../app/resume.py) | Carries a live Runner between processes; `FIELDS` is the guarded list a test compares against the Runner's own attributes | `Runner` | Self-describing snapshot, including the plan |
 | [`app/audio.py`](../app/audio.py) | PCM framing, the voice wire protocol, and where to cut a growing answer so a slice ends in a pause | Wire frames, raw samples | Frames, `Utterance`, `Speech`, the heard/unheard split |
@@ -314,7 +315,7 @@ subprocess rather than trusting the claim.
 
 | Area | Role |
 |---|---|
-| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session, report, answer-audio, progress, storage-disclosure and delete endpoints; settings, key, setup and voices; corrections, compare, examples and the HTML, JSON and Markdown exports; the domain-refusal mapping, and the static host for `ui/build`, which answers an unknown `/api/` path with a JSON 404 rather than the app shell |
+| [`api/main.py`](../api/main.py) | The HTTP layer: plan, review, session, report, answer-audio, progress, storage-disclosure and delete endpoints; settings, key, setup and voices; corrections, the transcript, compare, examples and the HTML, JSON and Markdown exports; the domain-refusal mapping, and the static host for `ui/build`, which answers an unknown `/api/` path with a JSON 404 rather than the app shell |
 | [`api/origin.py`](../api/origin.py) | Refuses a state-changing request, and the voice socket, when its `Origin` is another site's; the key endpoint also requires a custom header |
 | [`api/voice.py`](../api/voice.py) | The voice socket at `/api/voice`. Control is JSON, audio is raw int16. Speech is streamed in a task so the receive loop stays free, because a barge-in that cannot be heard until the agent stops talking is not a barge-in |
 | [`ui/static/worklets/mic-capture.js`](../ui/static/worklets/mic-capture.js) | Captures at the device rate and resamples to the 16 kHz the recogniser wants, with an anti-alias filter, off the main thread |
@@ -327,8 +328,8 @@ subprocess rather than trusting the claim.
 | [`ui/src/lib/live.svelte.js`](../ui/src/lib/live.svelte.js) | Whether a session is on air, shared by the nav strip and the interview so the tally never lags a request behind |
 | [`ui/src/routes/+page.svelte`](../ui/src/routes/+page.svelte) | Plan, as a numbered running order with per-phase durations taken from `planner._per_question` |
 | [`ui/src/routes/session/+page.svelte`](../ui/src/routes/session/+page.svelte) | The interview. Renders dialogue and nothing else; Leave ends it early through `/api/session/leave`, which needs no model, keeps what was answered and unlocks Settings |
-| [`ui/src/routes/history/+page.svelte`](../ui/src/routes/history/+page.svelte) | Past sessions, and the report laid out from `report.render`'s text plus the rubric as data; the review of what was heard, example answers, and the "Compare two" selection |
-| [`ui/src/routes/history/compare/+page.svelte`](../ui/src/routes/history/compare/+page.svelte) | Two interviews side by side |
+| [`ui/src/routes/history/+page.svelte`](../ui/src/routes/history/+page.svelte) | Past sessions with their field, and the report laid out from its structure (sections of typed blocks) plus the rubric as data and `about` (the field, the questions written from the description, the description on request); a Transcript view of every line in order; the review of what was heard, example answers, and the "Compare two" selection |
+| [`ui/src/routes/history/compare/+page.svelte`](../ui/src/routes/history/compare/+page.svelte) | Two interviews side by side, with each side's field and the questions written from a description marked |
 | [`ui/src/routes/settings/+page.svelte`](../ui/src/routes/settings/+page.svelte) | The interviewer (local or cloud, key, acknowledgement, connection test), the voice picker with previews, and speech recognition; locked while an interview runs |
 | [`ui/src/routes/setup/+page.svelte`](../ui/src/routes/setup/+page.svelte) | The first start: what GPU was found, the choice of mode, and download progress |
 | [`tests/test_theme.py`](../tests/test_theme.py) | Parses `theme.css` and fails when any text token drops below 4.5:1 on the ground it is used on |
@@ -631,7 +632,7 @@ score.build()
   - aggregate per criterion
         |
         v
-report.render()
+report.build(), report.to_text()
   - lead with weak habits
   - cite representative answers/quotes
   - recognise strong habits

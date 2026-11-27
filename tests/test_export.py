@@ -144,6 +144,42 @@ def test_the_rubric_is_laid_out_once_not_printed_twice(tmp_path):
     assert "sets_context        6/6" not in page
 
 
+STRUCTURE = {"version": 1, "signoff": ["Every quote above is your own words."], "sections": [
+    {"id": "change", "heading": "WHAT WOULD CHANGE THE MOST", "blocks": [
+        {"kind": "lead", "text": "1. Say what changed  (1 of 2 answers)"},
+        {"kind": "para", "text": "Finish with the effect."},
+        {"kind": "quote", "text": "You said: \"we ran checkout\""}]},
+    {"id": "criteria", "heading": "EVERY CRITERION", "blocks": [{"kind": "rubric", "rows": []}]},
+    {"id": "delivery", "heading": "DELIVERY", "blocks": [{"kind": "delivery", "figures": {},
+                                                         "rows": [
+        {"label": "Speaking rate", "text": "4.2 syllables per second"},
+        {"label": "Where they fell", "text": "2 of 7 were mid-clause",
+         "note": "Pausing between clauses reads as normal."}]}]}]}
+
+
+def test_the_document_is_laid_out_from_the_structure_not_the_text(tmp_path):
+    d = _with_audio(tmp_path)
+    page = export.html_document(_report(text="", structure=STRUCTURE), SESSION, TURNS, d)
+    assert "<h2>what would change the most</h2>" in page
+    assert '<p class="lead">1. Say what changed  (1 of 2 answers)</p>' in page
+    assert "<blockquote>You said: &quot;we ran checkout&quot;</blockquote>" in page
+    assert page.count('class="rubric"') == 1
+    assert "<dt>Where they fell</dt><dd>2 of 7 were mid-clause</dd>" in page
+    assert "Pausing between clauses reads as normal." in page
+    assert "<p>Every quote above is your own words.</p>" in page
+
+
+def test_the_markdown_is_laid_out_from_the_structure_not_the_text():
+    md = export.markdown_document(_report(text="", structure=STRUCTURE), SESSION)
+    assert "## What would change the most" in md
+    assert "1\\. Say what changed (1 of 2 answers)" in md
+    assert "> You said: \"we ran checkout\"" in md
+    assert md.count("| Sets the scene |") == 1
+    assert "- Where they fell: 2 of 7 were mid-clause" in md
+    assert "- Speaking rate: 4.2 syllables per second" in md
+    assert "Every quote above is your own words." in md
+
+
 def test_what_produced_it_travels_with_it(tmp_path):
     """FR-42. A report that cannot say which model and which prompt made it cannot be compared
     to a later one, and "the local model" stops being an answer the first time it is swapped."""
@@ -193,3 +229,37 @@ def test_the_sidecar_carries_no_judgement_fields_from_the_turn():
     # `heard` is the candidate's own words as recognised (FR-31), not a judgement about them.
     assert set(got["turns"][0]) == {"index", "question_id", "question", "utterance", "heard",
                                     "said", "at"}
+
+
+# --- what produced it (P4 step 4) --------------------------------------------------------------
+
+DESCRIBED = dict(SESSION, plan_snapshot={
+    "field": "ux_design",
+    "job_description": {"text": "Design <b>booking</b>.\n\nTalk to patients.", "read_at": "t1"},
+    "generated": [{"text": "Tell me about a time?", "duty": "design how people <i>book</i>"}]},
+    questions=[{"question_id": "b.1", "question": "Tell me about a time?", "answers": ["We"]}],
+    provenance=dict(SESSION["provenance"], generator={"model": "qwen", "prompt_hash": "1a2b3c"}))
+
+
+def test_the_document_names_the_field_the_written_questions_and_the_description(tmp_path):
+    d = _with_audio(tmp_path)
+    page = export.html_document(_report(), DESCRIBED, TURNS, d)
+    assert "UX design interview, planned from a job description." in page
+    assert "<h2>written from the description</h2>" in page
+    assert "<q>design how people &lt;i&gt;book&lt;/i&gt;</q>" in page
+    assert '<div class="jd">Design &lt;b&gt;booking&lt;/b&gt;.\n\nTalk to patients.</div>' in page
+    # An object in provenance reads as its parts, not as a Python dict.
+    assert "model qwen, prompt_hash 1a2b3c" in page and "{'model'" not in page
+    plain = export.html_document(_report(), SESSION, TURNS, d)
+    assert "Software engineering interview." in plain
+    assert "written from the description" not in plain and 'class="jd"' not in plain
+
+
+def test_the_sidecar_carries_the_field_the_written_questions_and_the_description():
+    got = export.sidecar(_report(), DESCRIBED, TURNS)
+    assert got["field"] == "ux_design" and got["measured"] is None
+    assert got["generated"] == [{"question_id": "b.1", "question": "Tell me about a time?",
+                                 "duty": "design how people <i>book</i>"}]
+    assert got["job_description"]["text"].startswith("Design <b>booking</b>")
+    plain = export.sidecar(_report(), SESSION, TURNS)
+    assert plain["field"] == "software" and plain["job_description"] is None

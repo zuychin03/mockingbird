@@ -17,6 +17,17 @@
     "sets_context",
     "measurement_stated"
   ],
+  "advice": {
+    "sets_context": {
+      "fix": "One sentence of setup first -- where you were, who was involved, the pressure or limit you were under. It is what makes the rest of the answer mean anything."
+    },
+    "states_outcome": {
+      "fix": "Finish with the effect: what changed for the people involved, what went better or stopped going wrong. An action with no outcome reads as an activity, not a result."
+    },
+    "specific_detail": {
+      "fix": "Put a number on it. 'Complaints went from ten a week to two' is checkable; 'things got much better' is not, and the difference is what separates an anecdote from evidence."
+    }
+  },
   "rubric": {
     "sets_context": {
       "label": "Sets the scene",

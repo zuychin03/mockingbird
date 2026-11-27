@@ -286,3 +286,100 @@ def test_met_by_question_reads_the_rubric_back():
     assert score.met_by_question(REPORT["rubric"])["p1.2"] == {
         "sets_context": True, "states_outcome": False, "specific_detail": False}
     assert score.met_by_question([{"name": "x", "met": 1, "of": 1}]) == {}
+
+
+# ------------------------------------------------------------------ what produced it (P4 step 4)
+DUTY = "turn our sales data into answers the commercial team can act on"
+WRITTEN = "Tell me about a time you turned raw sales data into a decision someone made."
+JD = ("We want a data analyst.\n- <b>Own</b> the weekly sales report\n"
+      "1. Work with the commercial team")
+
+
+def described(read_at, sid="b", started="2026-02-01T09:00:00", field="data_analytics"):
+    """An interview planned from a description, whose first question the model wrote."""
+    r, s = rs(report={"session_id": sid, "started_at": started},
+              session={"session_id": sid, "started_at": started,
+                       "plan_id": "generated.data_analyst"})
+    s["plan_snapshot"] = {
+        "label": "Data analyst", "field": field, "phases": [],
+        "job_description": {"text": JD, "read_at": read_at},
+        "generated": [{"text": WRITTEN, "duty": DUTY, "phase": "p1"},
+                      {"text": "A question the interview never reached?", "duty": "x",
+                       "phase": "p2"}]}
+    s["questions"][0]["question"] = WRITTEN
+    return r, s
+
+
+def test_about_lists_the_asked_questions_the_model_wrote_with_their_duties():
+    from app import report
+    got = report.about(described("t1")[1])
+    assert got == {"field": "data_analytics", "field_label": "Data analytics", "measured": None,
+                   "job_description": True,
+                   "generated": [{"question_id": "p1.1", "question": WRITTEN, "duty": DUTY}]}
+    plain = report.about(SESSION)
+    assert plain["field"] == "software" and not plain["job_description"]
+    assert plain["generated"] == []
+    assert report.about({"plan_snapshot": {"field": "retired_field"}})["field"] == "software"
+
+
+def test_two_plans_written_questions_never_pair_even_word_for_word():
+    """Two descriptions for the same role share a plan id; when each was read tells them apart."""
+    out = compare.compare(described("t1", sid="a", started="2026-01-01T09:00:00"),
+                          described("t2"))
+    rows = [q for q in out["questions"] if q["question"] == WRITTEN]
+    assert len(rows) == 2 and all(q["duty"] == DUTY for q in rows)
+    assert {(q["a"] is None, q["b"] is None) for q in rows} == {(True, False), (False, True)}
+    assert not out["same_plan"] and out["same_field"]
+    assert "different plans" in out["note"] and "never paired" in out["note"]
+    shared = next(q for q in out["questions"] if q["question"] == Q2)
+    assert shared["a"] and shared["b"] and shared["duty"] is None
+
+
+def test_one_described_plan_sat_twice_pairs_its_written_questions():
+    out = compare.compare(described("t1", sid="a", started="2026-01-01T09:00:00"),
+                          described("t1"))
+    row = next(q for q in out["questions"] if q["question"] == WRITTEN)
+    assert row["a"] and row["b"] and out["same_plan"] and out["note"] is None
+
+
+def test_two_fields_are_named_in_the_note():
+    out = compare.compare(rs(), described("t1", field="ux_design"))
+    assert out["a"]["field_label"] == "Software engineering"
+    assert out["b"]["field_label"] == "UX design" and not out["same_field"]
+    assert out["note"].startswith("These interviews were for different fields (Software "
+                                  "engineering, then UX design)")
+
+
+def test_the_markdown_names_the_field_the_written_questions_and_the_description():
+    md = export.markdown_document(*described("t1"))
+    assert "Data analytics interview, planned from a job description." in md
+    assert "## Written from the description" in md
+    assert "- %s\n\n  From the description: “%s”" % (WRITTEN, DUTY) in md
+    answers = md[md.index("## Answers"):]
+    assert "### 1. %s\n\n*Written by the model from the description.*" % WRITTEN in answers
+    assert "### 2. What did you measure?\n\n>" in answers
+    jd = md[md.index("## Job description"):]
+    # A pasted list stays the words it was, line for line: no markup, no list.
+    assert ("We want a data analyst.\\\n" r"\- \<b\>Own\</b\> the weekly sales report" "\\\n"
+            r"1\. Work with the commercial team" "\n") in jd
+    plain = export.markdown_document(*rs())
+    assert "Software engineering interview." in plain and "description" not in plain.lower()
+
+
+def test_a_measured_note_is_printed_where_the_field_has_one(monkeypatch):
+    import dataclasses
+    from app import fields
+    note = "The interviewer was not measured on this field."
+    monkeypatch.setitem(fields.FIELDS, "data_analytics",
+                        dataclasses.replace(fields.FIELDS["data_analytics"], measured_note=note))
+    assert note in export.markdown_document(*described("t1"))
+
+
+def test_a_report_carries_what_it_was_made_from_without_caching_it(api_env):
+    c, _, root = api_env
+    sid = "20260101-090000-aaaaaa"
+    got = c.get("/api/sessions/%s/report" % sid).json()
+    assert got["about"]["field"] == "software" and got["about"]["generated"] == []
+    assert "about" not in json.loads((root / sid / "report.json").read_text())
+    row = c.get("/api/sessions").json()[0]
+    assert row["field"] == "software" and row["field_label"] == "Software engineering"

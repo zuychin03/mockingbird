@@ -17,6 +17,20 @@
     "specific_detail",
     "sets_context"
   ],
+  "advice": {
+    "sets_context": {
+      "fix": "One sentence of setup first -- the product, who used it, the goal or limit you were working to. It is what makes the rest of the answer mean anything."
+    },
+    "states_outcome": {
+      "fix": "Finish with the effect: what customers did differently, what number moved, what the team started or stopped doing. A launch with no outcome reads as an activity, not a result."
+    },
+    "specific_detail": {
+      "fix": "Put a number on it. 'Sign-ups went from 200 to 350 a week' is checkable; 'adoption grew a lot' is not, and the difference is what separates an anecdote from evidence."
+    },
+    "measurement_stated": {
+      "fix": "Say how you know -- the funnel before and after, a survey, five customer interviews. A number with a method behind it is worth several without."
+    }
+  },
   "rubric": {
     "sets_context": {
       "label": "Sets the scene",

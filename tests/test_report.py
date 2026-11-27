@@ -10,6 +10,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import report as rep  # noqa: E402
@@ -301,3 +303,64 @@ def test_an_older_report_reads_the_way_history_read_it():
                 {"kind": "quote", "text": "You said: \"it went fine\""}]},
             {"id": None, "heading": "THE CRITERIA", "blocks": [{"kind": "rubric", "rows": rows}]}],
         "signoff": ["Every quote above is your own words."]}
+
+
+# ------------------------------------------------ a report for every field (P4 step 3)
+def _template(field):
+    import json
+    from app import fields
+    return json.loads(fields.get(field).template.read_text(encoding="utf-8"))
+
+
+def test_advice_priority_orders_the_weak_criteria_and_never_changes_which():
+    totals = {"sets_context": (1, 5), "states_outcome": (2, 5), "first_person": (3, 5),
+              "describes_action": (5, 5)}
+    assert score.weak_order(totals) == ["sets_context", "states_outcome", "first_person"]
+    assert score.weak_order(totals, ["first_person", "describes_action", "states_outcome"]) == [
+        "first_person", "states_outcome", "sets_context"], "unlisted last, still by rate"
+
+
+def test_a_software_plan_reports_exactly_as_before():
+    r, states, obs, d = _full()
+    plan = _template("software")
+    assert "advice" not in plan and "advice_priority" not in plan
+    assert rep.render(r, 3, 3, obs, states, d, plan) == rep.render(r, 3, 3, obs, states, d)
+
+
+def test_a_field_report_takes_its_template_advice_order_and_case_wording():
+    r, states, obs, d = _full()
+    plan = {"field": "product_management",
+            "advice_priority": _template("product_management")["advice_priority"]}
+    doc = rep.build(r, 3, 3, obs, states, d, plan)
+    change = next(s for s in doc["sections"] if s["id"] == "change")["blocks"]
+    assert change[0]["text"].startswith("1. Several answers stopped at what you did")
+    fix = _template("product_management")["advice"]["states_outcome"]["fix"]
+    assert change[1] == {"kind": "para", "text": fix}
+    case = next(s for s in doc["sections"] if s["id"] == "design")
+    assert case["heading"] == "ON THE CASE QUESTION"
+    assert case["blocks"][0]["text"].startswith("Not scored -- a case question")
+    assert {"kind": "para", "text": "You said what you would do:"} in case["blocks"]
+    back = rep.from_text(rep.to_text(doc), _rubric(r), d)
+    back.pop("from_text")
+    assert back == doc
+
+
+def test_the_plan_s_own_advice_wins_and_keeps_the_rest():
+    r, states, obs, d = _full()
+    plan = {"field": "product_management", "advice": {"states_outcome": {"fix": "Say it."}}}
+    change = next(s for s in rep.build(r, 3, 3, obs, states, d, plan)["sections"]
+                  if s["id"] == "change")["blocks"]
+    assert change[1]["text"] == "Say it."
+    assert change[0]["text"].startswith("1. %s" % rep.ADVICE["states_outcome"][0])
+    assert rep.advice_for(plan)["sets_context"] == rep.ADVICE["sets_context"]
+
+
+@pytest.mark.parametrize("field", ["data_analytics", "general", "product_management",
+                                   "project_management", "ux_design"])
+def test_a_template_advises_only_on_what_it_scores(field):
+    t = _template(field)
+    scored = {c for ph in t["phases"] for c in ph.get("rubric_criteria") or []}
+    assert set(t["advice"]) <= scored
+    for words in t["advice"].values():
+        assert set(words) <= {"problem", "fix"} and all(w.strip() for w in words.values())
+        assert not any("—" in w for w in words.values())

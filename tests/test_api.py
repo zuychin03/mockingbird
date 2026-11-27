@@ -616,7 +616,7 @@ def test_a_design_answer_is_read_as_one_and_its_note_reaches_the_report(client, 
     monkeypatch.setattr(api, "SESSIONS", tmp_path / "s")
     shapes = {}
 
-    async def canned(provider, qid, question, answers, shape="star"):
+    async def canned(provider, qid, question, answers, shape="star", field=None):
         shapes[qid] = shape
         return observe_mod.Observation(
             question_id=qid, question=question, answers=list(answers), shape=shape,
@@ -663,7 +663,7 @@ def scored(client, monkeypatch, tmp_path):
     _scored_session(root)
     monkeypatch.setattr(api, "SESSIONS", root)
 
-    async def canned(provider, qid, question, answers, shape="star"):
+    async def canned(provider, qid, question, answers, shape="star", field=None):
         return observe_mod.Observation(
             question_id=qid, question=question, answers=list(answers),
             situation="We ran checkout on four boxes",

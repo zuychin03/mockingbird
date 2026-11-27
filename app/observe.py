@@ -48,8 +48,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import result_check
-from .depth_signals import ASSERTED, FIRST_SG, MEASURED, NUMBER
+from . import fields, result_check
+from .depth_signals import ASSERTED, FIRST_SG, patterns
 from .provider import Provider
 
 SYSTEM = """You are reading one answer from a job interview and quoting parts of it back.
@@ -137,6 +137,33 @@ Rules:
   sure how I'd stop that." quote the first sentence.
 - A sentence that says nothing about the design, only about the candidate (what they do not
   know, have not built or have left to say), is none of the four."""
+
+# The other fields' case question (V1.2_PLAN P4): the same four parts and schema, in words for a
+# plan, a study or a project rather than a system. Software keeps the prompt above.
+CASE_SYSTEM = """You are reading a candidate's answer to a hypothetical case question and
+quoting parts of it back.
+
+You do NOT judge the answer. You only find and copy text.
+
+Return four fields. Each is a VERBATIM quote from the answer, or an empty string if that part
+is not there:
+
+- "approach"     : where they say what they would actually do -- the method, the steps, or
+                   what they would make.
+- "alternative"  : where they mention a DIFFERENT approach they considered or rejected.
+- "tradeoff"     : where they name a cost, limit or downside of an approach.
+- "failure_mode" : where they name a risk: what could go wrong, mislead them, be missed, or
+                   fail to land.
+
+Rules:
+- Copy the text exactly as they said it. Do not paraphrase, tidy or shorten.
+- One sentence per field. If a part is genuinely absent, return an empty string for it.
+- An empty string is a correct answer. Deciding whether the answer is good is not your job.
+- For "failure_mode", quote the sentence that names what goes wrong, even when it sits next to
+  an admission that they do not know the fix: from "The survey could miss the people who already
+  left. I'm not sure how I'd reach them." quote the first sentence.
+- A sentence that says nothing about the case, only about the candidate (what they do not
+  know, have not done or have left to say), is none of the four."""
 
 DESIGN_SCHEMA = {
     "type": "object",
@@ -242,33 +269,36 @@ def _short_result(quote: str, answer: str) -> bool:
             and not ASSERTED.search(q))
 
 
-def deterministic(text: str) -> dict[str, bool]:
-    """The three criteria that need no model. Regex over what they said."""
+def deterministic(text: str, field: str | None = None) -> dict[str, bool]:
+    """The three criteria that need no model. Regex over what they said, with the field's own
+    units and measurement words."""
+    number, measured = patterns(field)
     return {"first_person": bool(FIRST_SG.search(text)),
-            "specific_detail": bool(NUMBER.search(text)),
-            "measurement_stated": bool(MEASURED.search(text))}
+            "specific_detail": bool(number.search(text)),
+            "measurement_stated": bool(measured.search(text))}
 
 
 async def observe(provider: Provider, question_id: str, question: str,
                   answers: list[str], shape: str = "star",
-                  system: str | None = None) -> Observation:
+                  system: str | None = None, field: str | None = None) -> Observation:
     """One question in, one Observation out. No judgement, no scores.
 
     `shape` comes from the phase (`observation_shape` in the plan). It selects which parts are
     worth looking for, not how hard to look: both shapes quote, and both are grounded the same
-    way.
+    way. `field` picks the case prompt over the design one, and the field's regex words.
     """
     obs = Observation(question_id=question_id, question=question, answers=list(answers),
                       shape=shape)
     joined = obs.text
-    for k, v in deterministic(joined).items():
+    for k, v in deterministic(joined, field).items():
         setattr(obs, k, v)
     if not joined.strip():
         return obs
 
     design = shape == "design"
+    case = (field or fields.SOFTWARE) != fields.SOFTWARE
     out = await provider.complete(
-        DESIGN_SYSTEM if design else (system or SYSTEM),
+        (CASE_SYSTEM if case else DESIGN_SYSTEM) if design else (system or SYSTEM),
         "QUESTION: %s\n\nCANDIDATE: %s" % (question, joined),
         schema=DESIGN_SCHEMA if design else SCHEMA, max_tokens=400)
     raw = out.json() or {}

@@ -25,6 +25,19 @@ from .observe import Observation
 WEAK = 0.6
 STRONG = 0.8
 
+
+def weak_order(totals: dict[str, tuple[int, int]],
+               priority: list[str] | None = None) -> list[str]:
+    """The criteria met at most WEAK of the time, least often first. A template's
+    `advice_priority` reorders them and never changes which they are (D3); criteria it does not
+    list follow, still by rate."""
+    rate = {k: v[0] / v[1] for k, v in totals.items() if v[1]}
+    weak = sorted((k for k, r in rate.items() if r <= WEAK), key=lambda k: rate[k])
+    if priority:
+        rank = {k: i for i, k in enumerate(priority)}
+        weak.sort(key=lambda k: rank.get(k, len(rank)))
+    return weak
+
 # Which observation satisfies which criterion. Every entry is a fact about text, never an
 # opinion -- that is the constraint 7.10 established and every probe design that ignored it
 # failed (1c.10).
@@ -103,11 +116,7 @@ class Report:
     @property
     def weakest(self) -> list[str]:
         """Criteria met least often. What the feedback should lead with."""
-        t = self.totals
-        if not t:
-            return []
-        ranked = sorted(t, key=lambda k: (t[k][0] / t[k][1]) if t[k][1] else 1.0)
-        return [k for k in ranked if t[k][1] and t[k][0] / t[k][1] <= WEAK]
+        return weak_order(self.totals)
 
 
 def met_by_question(rubric: list[dict]) -> dict[str, dict[str, bool]]:

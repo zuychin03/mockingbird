@@ -26,16 +26,13 @@ import html
 import re
 from pathlib import Path
 
+from . import report as report_mod, transcript as transcript_mod
 from .corrections import scored_answers
 from .score import met_by_question
 
 # Past this much audio the document stops being openable, and a browser that hangs on it is a
 # worse outcome than one that says what was left out. Roughly an hour of speech at 16 kHz mono.
 AUDIO_CAP = 96 * 1024 * 1024
-
-# The renderer underlines every heading with a rule of = or -. That is the one structural
-# promise the plain text makes, so it is the only thing parsed.
-_RULE = re.compile(r"^[=-]{10,}$")
 
 
 def _esc(text: str) -> str:
@@ -44,67 +41,6 @@ def _esc(text: str) -> str:
 
 def _dashes(text: str) -> str:
     return (text or "").replace(" -- ", " - ")
-
-
-def _sections(text: str) -> list[dict]:
-    lines = (text or "").split("\n")
-    out: list[dict] = []
-    current: dict = {"heading": None, "lines": []}
-    i = 0
-    while i < len(lines):
-        nxt = lines[i + 1] if i + 1 < len(lines) else ""
-        if lines[i].strip() and _RULE.match(nxt.strip()):
-            out.append(current)
-            current = {"heading": lines[i].strip(), "lines": []}
-            i += 2
-            continue
-        current["lines"].append(lines[i])
-        i += 1
-    out.append(current)
-    return [s for s in out if s["heading"] or any(ln.strip() for ln in s["lines"])]
-
-
-def _blocks(lines: list[str]) -> list[tuple[str, str]]:
-    """Reflow the terminal's 60-column wrapping back into paragraphs.
-
-    One line per element would make every wrap the terminal chose a hard break at whatever
-    width the reader is on. A blank line separates blocks, a bullet starts one, and a line
-    opening on a quotation mark is the candidate's own words rather than ours.
-    """
-    out: list[list[str]] = []
-    kinds: list[str] = []
-    fresh = True
-    for raw in lines:
-        line = raw.strip()
-        if not line:
-            fresh = True
-            continue
-        if line.startswith(("“", '"')) or line.startswith("You said:"):
-            out.append([line])
-            kinds.append("quote")
-            fresh = True
-            continue
-        if line.startswith("- "):
-            out.append([line[2:]])
-            kinds.append("item")
-            fresh = False
-            continue
-        if fresh or kinds[-1] in ("quote",):
-            out.append([line])
-            kinds.append("para")
-            fresh = False
-        else:
-            out[-1].append(line)
-    return list(zip(kinds, (" ".join(b) for b in out)))
-
-
-def _is_rubric_section(section: dict, rubric: list[dict]) -> bool:
-    """The text report prints the criteria aligned with spaces. The payload carries the same
-    numbers as data, so the table replaces it rather than repeating it."""
-    if len(rubric) < 2:
-        return False
-    body = "\n".join(section["lines"])
-    return sum(1 for c in rubric if c.get("name") and c["name"] in body) >= 2
 
 
 def _rubric_table(rubric: list[dict]) -> str:
@@ -183,12 +119,24 @@ def _audio(session_dir: Path, turns: list[dict], embed: bool) -> tuple[dict[str,
     return out, spent, ""
 
 
+def _prov_value(v) -> str:
+    # `provider` and `generator` are objects: "model qwen, prompt_hash 1a2b", not a dict repr.
+    if isinstance(v, dict):
+        return ", ".join("%s %s" % (k, x) for k, x in v.items() if x not in (None, ""))
+    return str(v)
+
+
 def sidecar(report: dict, session: dict, turns: list[dict]) -> dict:
     """The same interview without the presentation. Diffable, re-scorable, and readable by
     something that is not a browser."""
+    info = report_mod.about(session)
     return {
         "session_id": report.get("session_id") or session.get("session_id"),
         "label": report.get("label"),
+        "field": info["field"],
+        "measured": info["measured"],
+        "generated": info["generated"],
+        "job_description": (session.get("plan_snapshot") or {}).get("job_description"),
         "started_at": report.get("started_at") or session.get("started_at"),
         "ended_at": session.get("ended_at"),
         "status": session.get("status"),
@@ -238,6 +186,12 @@ h2 { font-family: ui-sans-serif, system-ui, sans-serif; font-size: .72rem; font-
   margin: 2.5rem 0 .75rem; }
 h3 { font-family: ui-sans-serif, system-ui, sans-serif; font-size: .9rem; margin: 1.5rem 0 .4rem; }
 p { margin: 0 0 .8rem; }
+.lead { font-weight: 600; margin-top: 1.2rem; }
+.measures { display: grid; grid-template-columns: auto 1fr; gap: .3rem 1rem; margin: 0 0 .8rem; }
+.measures div { display: contents; }
+.measures dt { color: var(--faint); text-transform: uppercase; font-size: .7rem;
+  letter-spacing: .04em; font-family: ui-sans-serif, system-ui, sans-serif; padding-top: .2rem; }
+.measures dd { margin: 0; }
 .slug { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: .72rem;
   letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
 .lede { color: var(--quiet); font-size: .95rem; }
@@ -265,6 +219,7 @@ table { width: 100%; border-collapse: collapse; }
 .none { color: var(--quiet); }
 q { quotes: "\\201C" "\\201D"; }
 .answer { border-top: 1px solid var(--rule); padding-top: 1rem; margin-top: 1rem; }
+.jd { white-space: pre-wrap; overflow-wrap: anywhere; }
 audio { width: 100%; margin: .5rem 0; }
 .figures { display: flex; flex-wrap: wrap; gap: 1.2rem; margin: 0; font-size: .8rem; }
 .figures div { display: flex; gap: .4rem; align-items: baseline; }
@@ -275,6 +230,7 @@ audio { width: 100%; margin: .5rem 0; }
 .turn .who { display: block; font-size: .7rem; letter-spacing: .08em; text-transform: uppercase;
   color: var(--faint); font-family: ui-sans-serif, system-ui, sans-serif; }
 .turn.them { color: var(--quiet); }
+.turn.them.q { color: var(--ink); font-weight: 600; }
 footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule);
   font-size: .78rem; color: var(--quiet); }
 footer dl { display: grid; grid-template-columns: auto 1fr; gap: .2rem 1rem; margin: .6rem 0 0; }
@@ -287,6 +243,14 @@ footer dd { margin: 0; font-family: ui-monospace, Consolas, monospace; }
   .evidence ol { margin-top: 0; }
 }
 """
+
+
+def _measures(rows: list[dict]) -> str:
+    """The session's delivery measures, each with the words the text report gives it."""
+    return '<dl class="measures">%s</dl>%s' % (
+        "".join("<div><dt>%s</dt><dd>%s</dd></div>" % (_esc(r["label"]), _esc(r["text"]))
+                for r in rows),
+        "".join('<p class="lede">%s</p>' % _esc(r["note"]) for r in rows if r.get("note")))
 
 
 def _size(n: int) -> str:
@@ -307,26 +271,39 @@ def html_document(report: dict, session: dict, turns: list[dict],
     sid = report.get("session_id") or session.get("session_id") or ""
 
     body: list[str] = []
-    for section in _sections(report.get("text") or ""):
+    doc = report_mod.structure_of(report)
+    for section in doc["sections"]:
         if section["heading"]:
             body.append("<h2>%s</h2>" % _esc(section["heading"].lower()))
-        if _is_rubric_section(section, rubric):
-            body.append(_rubric_table(rubric))
-            continue
         items: list[str] = []
-        for kind, text in _blocks(section["lines"]):
-            if kind == "item":
-                items.append("<li>%s</li>" % _esc(_dashes(text)))
+        for b in section["blocks"]:
+            if b["kind"] == "item":
+                items.append("<li>%s</li>" % _esc(_dashes(b["text"])))
                 continue
             if items:
                 body.append("<ul>%s</ul>" % "".join(items))
                 items = []
-            if kind == "quote":
-                body.append("<blockquote>%s</blockquote>" % _esc(_dashes(text)))
+            if b["kind"] == "rubric":
+                body.append(_rubric_table(rubric))
+            elif b["kind"] == "delivery":
+                body.append(_measures(b.get("rows") or []))
+            elif b["kind"] == "quote":
+                body.append("<blockquote>%s</blockquote>" % _esc(_dashes(b["text"])))
             else:
-                body.append("<p>%s</p>" % _esc(_dashes(text)))
+                body.append("<p%s>%s</p>" % (' class="lead"' if b["kind"] == "lead" else "",
+                                             _esc(_dashes(b["text"]))))
         if items:
             body.append("<ul>%s</ul>" % "".join(items))
+    body += ["<p>%s</p>" % _esc(_dashes(line)) for line in doc["signoff"]]
+
+    info = report_mod.about(session)
+    if info["generated"]:
+        body.append("<h2>written from the description</h2>")
+        body.append('<p class="lede">%s</p>' % _esc(report_mod.GENERATED_INTRO))
+        for g in info["generated"]:
+            body.append('<div class="answer"><h3>%s</h3><p><span class="asked">From the '
+                        'description</span><q>%s</q></p></div>'
+                        % (_esc(g["question"]), _esc(g["duty"])))
 
     spoken = [a for a in (delivery.get("answers") or []) if not a.get("why") and a.get("audio")]
     if spoken or missing:
@@ -362,17 +339,26 @@ def html_document(report: dict, session: dict, turns: list[dict],
                         % (_esc(c.get("question") or c.get("question_id") or ""),
                            _esc(c.get("original") or ""), _esc(c.get("corrected") or "")))
 
+    # History's Transcript view reads the same lines. Answers stay as heard here: the
+    # corrections are listed above.
     body.append("<h2>what was said</h2>")
-    for turn in turns:
-        if turn.get("utterance"):
-            body.append('<p class="turn"><span class="who">You</span>%s</p>'
-                        % _esc(turn["utterance"]))
-        if turn.get("say"):
-            body.append('<p class="turn them"><span class="who">Interviewer</span>%s</p>'
-                        % _esc(turn["say"]))
+    for line in transcript_mod.lines(session, turns):
+        if line["who"] == "candidate":
+            body.append('<p class="turn"><span class="who">You</span>%s</p>' % _esc(line["text"]))
+        else:
+            body.append('<p class="turn them%s"><span class="who">Interviewer%s</span>%s</p>'
+                        % (" q" if line["kind"] == "question" else "",
+                           ", written from the description" if line.get("duty") else "",
+                           _esc(line["text"])))
+
+    jd = ((session.get("plan_snapshot") or {}).get("job_description") or {}).get("text")
+    if jd:
+        body += ["<h2>job description</h2>",
+                 '<p class="lede">%s</p>' % _esc(report_mod.JD_INTRO),
+                 '<div class="jd">%s</div>' % _esc(jd)]
 
     prov = session.get("provenance") or {}
-    rows = "".join("<dt>%s</dt><dd>%s</dd>" % (_esc(k.replace("_", " ")), _esc(str(v)))
+    rows = "".join("<dt>%s</dt><dd>%s</dd>" % (_esc(k.replace("_", " ")), _esc(_prov_value(v)))
                    for k, v in prov.items() if v not in (None, ""))
 
     return (
@@ -380,12 +366,14 @@ def html_document(report: dict, session: dict, turns: list[dict],
         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n"
         "<title>%s - %s</title>\n<style>%s</style>\n</head>\n<body>\n<main>\n"
         "<span class=\"slug\">Mockingbird / %s</span>\n"
-        "<h1>%s</h1>\n<p class=\"lede\">%s. Produced on the machine it was recorded on. "
+        "<h1>%s</h1>\n<p class=\"lede\">%s. %s. Produced on the machine it was recorded on. "
         "Everything it claims is in this file, including the words each judgement rests on.</p>\n"
-        "%s\n<footer><p>Scored by reading the answers back: which words counted as evidence was "
+        "%s%s\n<footer><p>Scored by reading the answers back: which words counted as evidence was "
         "decided by a model, and the arithmetic over them was not. %s</p>"
         "<dl>%s</dl></footer>\n</main>\n</body>\n</html>\n"
         % (_esc(label), _esc(started or sid), STYLE, _esc(sid), _esc(label), _esc(started),
+           _esc(report_mod.kind_of(info)),
+           '<p class="lede">%s</p>\n' % _esc(info["measured"]) if info["measured"] else "",
            "\n".join(body),
            _esc("Recordings embedded: %s." % _size(spent) if spent else (missing or "")),
            rows))
@@ -431,35 +419,53 @@ def markdown_document(report: dict, session: dict) -> str:
     sid = report.get("session_id") or session.get("session_id") or ""
     labels = {c.get("name"): c.get("label") or (c.get("name") or "").replace("_", " ")
               for c in rubric}
+    info = report_mod.about(session)
 
     out = ["# %s" % _md(label), "",
            "%s · %s asked, %s answered, %s scored · session %s" % (
                started or "unknown", report.get("asked", 0), report.get("answered", 0),
                report.get("scored", 0), _md(sid)), "",
-           "Scored by reading the answers back: which words counted as evidence was decided by "
-           "a model, and the arithmetic over them was not.", ""]
+           "%s." % _md(report_mod.kind_of(info)), ""]
+    if info["measured"]:
+        out += [_md(info["measured"]), ""]
+    out += ["Scored by reading the answers back: which words counted as evidence was decided by "
+            "a model, and the arithmetic over them was not.", ""]
 
     tabled = False
-    for section in _sections(report.get("text") or ""):
+    doc = report_mod.structure_of(report)
+    for section in doc["sections"]:
         if section["heading"]:
             out += ["## %s" % _md(_md_heading(section["heading"])), ""]
-        if _is_rubric_section(section, rubric):
-            out += _md_rubric(rubric) + [""]
-            tabled = True
-            continue
         last = None
-        for kind, text in _blocks(section["lines"]):
-            if last == "item" and kind != "item":
+        for b in section["blocks"]:
+            if last == "item" and b["kind"] != "item":
                 out.append("")
-            if kind == "item":
-                out.append("- %s" % _md(text))
+            if b["kind"] == "rubric":
+                out += _md_rubric(rubric) + [""]
+                tabled = True
+            elif b["kind"] == "delivery":
+                rows = b.get("rows") or []
+                # Escaped whole: "4.2 syllables" escaped alone reads as a list number.
+                out += ["- %s" % _md("%s: %s" % (r["label"], r["text"])) for r in rows] + [""]
+                out += [line for r in rows if r.get("note") for line in (_md(r["note"]), "")]
+            elif b["kind"] == "item":
+                out.append("- %s" % _md(b["text"]))
             else:
-                out += ["%s%s" % ("> " if kind == "quote" else "", _md(text)), ""]
-            last = kind
+                out += ["%s%s" % ("> " if b["kind"] == "quote" else "", _md(b["text"])), ""]
+            last = b["kind"]
         if last == "item":
             out.append("")
+    for line in doc["signoff"]:
+        out += [_md(line), ""]
     if rubric and not tabled:
         out += ["## Every criterion", ""] + _md_rubric(rubric) + [""]
+
+    if info["generated"]:
+        out += ["## Written from the description", "", _md(report_mod.GENERATED_INTRO), ""]
+        for g in info["generated"]:
+            out += ["- %s" % _md(g["question"]), "",
+                    "  From the description: %s" % _md("“%s”" % g["duty"]), ""]
+    duty = {g["question_id"]: g["duty"] for g in info["generated"]}
 
     fixes = {(c.get("question_id"), c.get("index")): c.get("original")
              for c in report.get("corrections") or []}
@@ -470,6 +476,8 @@ def markdown_document(report: dict, session: dict) -> str:
         out += ["## Answers", ""]
         for n, (qid, question, answers) in enumerate(answered, 1):
             out += ["### %d. %s" % (n, _md(question or qid)), ""]
+            if qid in duty:
+                out += ["*Written by the model from the description.*", ""]
             for i, text in enumerate(answers):
                 out += ["> %s" % _md(text), ""]
                 if (qid, i) in fixes:
@@ -494,15 +502,24 @@ def markdown_document(report: dict, session: dict) -> str:
                 a.get("mid_clause_pauses", "")))
         out.append("")
 
+    jd = ((session.get("plan_snapshot") or {}).get("job_description") or {}).get("text")
+    if jd:
+        out += ["## Job description", "", _md(report_mod.JD_INTRO), ""]
+        # Its paragraphs, each pasted line kept by a hard break ("\" at the end) and escaped,
+        # so a pasted "- duty" or "1. duty" stays the words it was.
+        for para in re.split(r"\n\s*\n", jd):
+            lines = [_md(line) for line in para.splitlines() if line.strip()]
+            if lines:
+                out += ["\\\n".join(lines), ""]
+
     prov = dict(session.get("provenance") or {})
     if report.get("scored_by"):
         prov["scored_by"] = report["scored_by"]
     if prov:
         out += ["## What produced it", ""]
         for k, v in prov.items():
-            if isinstance(v, dict):
-                v = ", ".join("%s %s" % (kk, vv) for kk, vv in v.items() if vv not in (None, ""))
-            if v not in (None, ""):
-                out.append("- %s: %s" % (_md(k.replace("_", " ")), _md(str(v))))
+            v = "" if v is None else _prov_value(v)
+            if v:
+                out.append("- %s: %s" % (_md(k.replace("_", " ")), _md(v)))
         out.append("")
     return "\n".join(out).rstrip("\n") + "\n"

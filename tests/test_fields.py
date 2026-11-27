@@ -225,3 +225,53 @@ def test_the_onet_ranks_are_recorded():
     assert by_id["general"]["onet_mean_of"] == list(ROUNDS)
     for fid in fields.IDS:
         assert by_id[fid]["onet_importance"], fid
+
+
+# ------------------------------------------------ the field's words for figures and measurement
+from app import depth_signals, observe  # noqa: E402
+
+# NUMBER and MEASURED as they were before fields had words of their own (P4 step 3). A software
+# report scores `specific_detail` and `measurement_stated` with exactly these.
+SOFTWARE_PATTERNS_HASH = "05985b11aec1"
+ROSTER = ("We rolled the new rostering system out to three sites over the quarter and I ran the "
+          "training for every team myself.")
+
+
+def test_software_figures_and_measurement_words_are_pinned():
+    number, measured = depth_signals.patterns(fields.SOFTWARE)
+    assert number is depth_signals.NUMBER and measured is depth_signals.MEASURED
+    assert depth_signals.patterns(None) == (number, measured)
+    assert _sha(number.pattern + "\n" + measured.pattern) == SOFTWARE_PATTERNS_HASH
+
+
+@pytest.mark.parametrize("field", [f for f in fields.IDS if f != fields.SOFTWARE])
+def test_every_field_has_words_of_its_own(field):
+    number, measured = depth_signals.patterns(field)
+    assert number is not depth_signals.NUMBER and measured is not depth_signals.MEASURED
+
+
+def test_a_field_unit_makes_a_spelled_out_count_a_figure():
+    shift = "On a morning shift I had five patients, and two of them were due in theatre."
+    assert observe.deterministic(shift, "general")["specific_detail"]
+    assert not observe.deterministic(shift)["specific_detail"]
+
+
+def test_one_before_a_field_unit_names_rather_than_counts():
+    """3 of the 5 general answers the lists first changed were "one patient", 26/11."""
+    changed = "When one patient's rhythm changed, I recognised it and called the registrar."
+    assert not observe.deterministic(changed, "general")["specific_detail"]
+
+
+def test_interviews_are_how_a_ux_designer_knows():
+    ran = "I did eight interviews with patients and watched people fill in the paper forms."
+    got = observe.deterministic(ran, "ux_design")
+    assert got["specific_detail"] and got["measurement_stated"]
+    assert depth_signals.signals(ran, "ux_design")["unverified"] == 0
+
+
+def test_the_follow_up_selector_reads_the_field():
+    pm = focus.next_focus(ROSTER, set(), ["sets_context"], field="project_management")
+    assert pm == "MEASURE"
+    assert focus.next_focus(ROSTER, set(), ["sets_context"]) != "MEASURE"
+    assert focus.floor(ROSTER, ["measurement_stated"], field="project_management") == ["MEASURE"]
+    assert focus.floor(ROSTER, ["measurement_stated"]) == []

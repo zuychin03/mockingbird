@@ -26,11 +26,13 @@ the structure is read back from its text by `from_text`.
 
 from __future__ import annotations
 
+import functools
+import json
 import re
 import textwrap
 
-from . import guards
-from .score import CRITERIA, Report
+from . import fields, guards
+from .score import CRITERIA, Report, weak_order
 
 # What to say when a criterion is weak, and what to ask them to do instead. Written as
 # second-person coaching rather than as a rubric label, because the rubric label is what the
@@ -209,6 +211,18 @@ HEADINGS = {
 DESIGN_INTRO = ("Not scored -- a hypothetical has no outcome to check an answer against, and "
                 "the parts below are reported rather than marked. Read them as a checklist of "
                 "what a design answer usually covers.")
+# The other fields' case question, in the slot where software asks its design question.
+# General asks neither (V1.2_PLAN P4).
+CASE_HEADING = "ON THE CASE QUESTION"
+CASE_INTRO = ("Not scored -- a case question has no outcome to check an answer against, and the "
+              "parts below are reported rather than marked. Read them as a checklist of what a "
+              "case answer usually covers.")
+CASE_PARTS = (
+    ("approach", "said what you would do"),
+    ("alternative", "mentioned another approach"),
+    ("tradeoff", "named a cost or limit"),
+    ("failure_mode", "raised something that could go wrong"),
+)
 DELIVERY_INTRO = ("Observations, not scores. These measures are the ones most affected by "
                   "recognition error and by accent, so they sit beside the result, not in it.")
 CUT_SHORT_INTRO = ("These questions ended before the conversation was finished with them, so "
@@ -235,22 +249,80 @@ def _section(sid: str, blocks: list[dict]) -> dict:
     return {"id": sid, "heading": HEADINGS[sid], "blocks": blocks}
 
 
-def _design_section(observations) -> dict | None:
-    """A description of the design answer. No score, no contribution to any total."""
+def _design_section(observations, case: bool = False) -> dict | None:
+    """A description of the design or case answer. No score, no contribution to any total."""
     d = next((o for o in observations if o.shape == "design" and o.text.strip()), None)
     if d is None:
         return None
-    blocks = [_block("para", DESIGN_INTRO)]
+    parts = CASE_PARTS if case else DESIGN_PARTS
+    blocks = [_block("para", CASE_INTRO if case else DESIGN_INTRO)]
     # "covered" would be a verdict, and a verdict is the thing that inverted the ranking.
     # These say what was FOUND and let the candidate judge it -- which they can, since the
     # words are their own.
-    for k, label in DESIGN_PARTS:
+    for k, label in parts:
         if getattr(d, k):
             blocks += [_block("para", "You %s:" % label),
                        _block("quote", "\"%s\"" % _clip(getattr(d, k), 88))]
     blocks += [_block("item", "Nothing in the answer %s." % label)
-               for k, label in DESIGN_PARTS if not getattr(d, k)]
-    return _section("design", blocks)
+               for k, label in parts if not getattr(d, k)]
+    s = _section("design", blocks)
+    if case:
+        s["heading"] = CASE_HEADING
+    return s
+
+
+@functools.cache
+def _template_advice(field_id: str) -> dict:
+    try:
+        raw = json.loads(fields.get(field_id).template.read_text(encoding="utf-8"))
+    except (KeyError, OSError, ValueError):
+        return {}
+    return raw.get("advice") or {}
+
+
+def advice_for(plan: dict | None) -> dict[str, tuple[str, str]]:
+    """`ADVICE` with the field template's overrides, where software's examples do not fit.
+    The plan's own copy wins; a plan recorded before templates carried advice uses its field's
+    template as it is now."""
+    plan = plan or {}
+    over = (plan["advice"] if "advice" in plan
+            else _template_advice(plan.get("field", fields.SOFTWARE)))
+    out = dict(ADVICE)
+    for name, words in (over or {}).items():
+        problem, fix = ADVICE.get(name, (name, ""))
+        out[name] = (words.get("problem") or problem, words.get("fix") or fix)
+    return out
+
+
+GENERATED_INTRO = ("The model wrote these questions from your job description, and they were on "
+                   "the plan you approved before the interview. Each shows the duty it was "
+                   "written from.")
+JD_INTRO = "The description as you pasted it, kept with this interview."
+
+
+def kind_of(info: dict) -> str:
+    """The line the exports and History name the interview with, such as "Data analytics
+    interview, planned from a job description"."""
+    return "%s interview%s" % (info["field_label"], ", planned from a job description"
+                               if info["job_description"] else "")
+
+
+def about(session: dict) -> dict:
+    """What the interview was made from, read from its own snapshot whenever a report or an
+    export is made, so one cached before this existed still carries it. `generated` lists the
+    asked questions the model wrote from the description, each with its duty."""
+    plan = session.get("plan_snapshot") or {}
+    f = fields.FIELDS.get(plan.get("field") or fields.SOFTWARE) or fields.get(fields.SOFTWARE)
+    duty = {r.get("text"): r.get("duty") or "" for r in plan.get("generated") or []}
+    return {
+        "field": f.id,
+        "field_label": f.label,
+        "measured": f.measured_note,
+        "job_description": bool((plan.get("job_description") or {}).get("text")),
+        "generated": [{"question_id": q.get("question_id"), "question": q.get("question"),
+                       "duty": duty[q.get("question")]}
+                      for q in session.get("questions") or [] if q.get("question") in duty],
+    }
 
 
 def design_note(observations) -> list[str]:
@@ -285,6 +357,36 @@ def _figures(d: dict) -> dict:
     return {k: v for k, v in d.items() if k != "answers"}
 
 
+PAUSE_NOTE = ("Pausing between clauses reads as normal; pausing inside one reads as hunting "
+              "for the word.")
+
+
+def _figure_rows(d: dict) -> list[dict]:
+    """The delivery measures in words, so the text and every page say them the same way."""
+    rows = []
+    if d.get("articulation_rate"):
+        rows.append({"label": "Speaking rate", "text": "%.1f syllables per second while "
+                     "actually speaking" % d["articulation_rate"]})
+    if d.get("wpm"):
+        # 11.5's band, given as context rather than a verdict: it is coaching guidance, not a
+        # measurement of anything about this candidate.
+        rows.append({"label": "Words per minute",
+                     "text": "%.0f   (coaching guidance is usually 120-150)" % d["wpm"]})
+    if d.get("pause_count"):
+        rows.append({"label": "Pauses", "text": "%d of 200ms or longer" % d["pause_count"]})
+        if d.get("mid_clause_share") is not None:
+            rows.append({"label": "Where they fell", "note": PAUSE_NOTE,
+                         "text": "%d of %d were mid-clause"
+                                 % (d["mid_clause_pauses"], d["pause_count"])})
+    elif d.get("spoken"):
+        rows.append({"label": "Pauses", "text": "none of 200ms or longer"})
+    return rows
+
+
+def _delivery_block(d: dict) -> dict:
+    return {"kind": "delivery", "figures": _figures(d), "rows": _figure_rows(d)}
+
+
 def _delivery_section(d: dict) -> dict | None:
     """How the answers were said. Plain numbers in -- this module is on the text path and may
     not import what measured them.
@@ -298,7 +400,7 @@ def _delivery_section(d: dict) -> dict | None:
     measured = ("Measured on %d spoken answer%s, %.0fs of speech."
                 % (d["spoken"], "" if d["spoken"] == 1 else "s", d.get("speaking_seconds") or 0))
     return _section("delivery", [_block("para", DELIVERY_INTRO), _block("para", measured),
-                                 {"kind": "delivery", "figures": _figures(d)}])
+                                 _delivery_block(d)])
 
 
 def _delivery_lines(d: dict) -> list[str]:
@@ -307,13 +409,16 @@ def _delivery_lines(d: dict) -> list[str]:
 
 
 def build(report: Report, questions_asked: int, questions_answered: int,
-          observations=None, question_states=None, delivery=None) -> dict:
+          observations=None, question_states=None, delivery=None,
+          plan: dict | None = None) -> dict:
     """The report as sections of typed blocks, for each reader to lay out its own way.
 
     A block is a `para` of our prose, a numbered `lead`, an `item`, a `quote` of the
     candidate's words (marks included), the `rubric` counts or the `delivery` figures. Text is
-    whole: wrapping belongs to whatever lays it out.
+    whole: wrapping belongs to whatever lays it out. `plan` is the session's snapshot: its
+    field, `advice_priority` and advice.
     """
+    plan = plan or {}
     totals = report.totals
     if not totals:
         # Delivery is explicitly not a score (FR-36), so it does not belong behind
@@ -326,8 +431,9 @@ def build(report: Report, questions_asked: int, questions_answered: int,
                 "signoff": []}
 
     rate = {k: v[0] / v[1] for k, v in totals.items() if v[1]}
-    weak = sorted((k for k, r in rate.items() if r <= WEAK), key=lambda k: rate[k])
+    weak = weak_order(totals, plan.get("advice_priority"))
     strong = sorted((k for k, r in rate.items() if r >= STRONG), key=lambda k: -rate[k])
+    advice = advice_for(plan)
 
     sections = [_section("summary", [_block(
         "para", "%d questions, %d answered. Scored on %d of them; the opening and closing "
@@ -338,7 +444,7 @@ def build(report: Report, questions_asked: int, questions_answered: int,
         blocks = []
         cited: set[str] = set()
         for i, name in enumerate(weak[:3], 1):
-            problem, fix = ADVICE.get(name, (name, ""))
+            problem, fix = advice.get(name, (name, ""))
             got, n = totals[name]
             blocks += [_block("lead", "%d. %s  (%d of %d answers)" % (i, problem, got, n)),
                        _block("para", fix)]
@@ -402,7 +508,8 @@ def build(report: Report, questions_asked: int, questions_answered: int,
                                  % (len(asked) - 6)))
         sections.append(_section("asked", blocks))
 
-    design = _design_section(observations or [])
+    design = _design_section(observations or [],
+                             case=plan.get("field", fields.SOFTWARE) != fields.SOFTWARE)
     if design:
         sections.append(design)
     return {"version": 1, "sections": sections, "signoff": list(SIGNOFF)}
@@ -456,25 +563,13 @@ def _lay_criteria(s: dict) -> list[str]:
             + [""])
 
 
-def _figure_lines(d: dict) -> list[str]:
+def _figure_lines(rows: list[dict]) -> list[str]:
     out = []
-    if d.get("articulation_rate"):
-        out.append("  Speaking rate      %.1f syllables per second while actually speaking"
-                   % d["articulation_rate"])
-    if d.get("wpm"):
-        # 11.5's band, given as context rather than a verdict: it is coaching guidance, not a
-        # measurement of anything about this candidate.
-        out.append("  Words per minute   %.0f   (coaching guidance is usually 120-150)"
-                   % d["wpm"])
-    if d.get("pause_count"):
-        out.append("  Pauses             %d of 200ms or longer" % d["pause_count"])
-        if d.get("mid_clause_share") is not None:
-            out.append("  Where they fell    %d of %d were mid-clause"
-                       % (d["mid_clause_pauses"], d["pause_count"]))
-            out.append("                     Pausing between clauses reads as normal;")
-            out.append("                     pausing inside one reads as hunting for the word.")
-    elif d.get("spoken"):
-        out.append("  Pauses             none of 200ms or longer")
+    for r in rows:
+        out.append("  %-19s%s" % (r["label"], r["text"]))
+        # One clause a line, as the note always printed.
+        note = r.get("note", "").replace("; ", ";\n")
+        out += ["  %19s%s" % ("", part) for part in note.split("\n") if part]
     return out
 
 
@@ -482,7 +577,7 @@ def _lay_delivery(s: dict) -> list[str]:
     out = [s["heading"], "-" * 60, ""]
     for b in s["blocks"]:
         out += (_wrap(b["text"], "  ", _WIDE) if b["kind"] == "para"
-                else _figure_lines(b["figures"])) + [""]
+                else _figure_lines(b["rows"])) + [""]
     return out
 
 
@@ -532,15 +627,16 @@ def to_text(doc: dict) -> str:
 
 
 def render(report: Report, questions_asked: int, questions_answered: int,
-           observations=None, question_states=None, delivery=None) -> str:
+           observations=None, question_states=None, delivery=None,
+           plan: dict | None = None) -> str:
     return to_text(build(report, questions_asked, questions_answered,
-                         observations, question_states, delivery))
+                         observations, question_states, delivery, plan))
 
 
 _RULE = re.compile(r"^[=-]{10,}$")
 _QUOTED = re.compile(r"^(You said:\s*)?[“\"]")
 _NUMBERED = re.compile(r"^\d+\.")
-_IDS = {heading: sid for sid, heading in HEADINGS.items()}
+_IDS = {heading: sid for sid, heading in HEADINGS.items()} | {CASE_HEADING: "design"}
 
 
 def _text_blocks(lines: list[str]) -> list[dict]:
@@ -630,6 +726,12 @@ def from_text(text: str, rubric: list[dict] | None = None,
             at = next((n for n, b in enumerate(blocks)
                        if b["kind"] == "para" and b["text"].startswith("Measured on")), None)
             if at is not None:
-                blocks = blocks[:at + 1] + [{"kind": "delivery", "figures": _figures(delivery)}]
+                blocks = blocks[:at + 1] + [_delivery_block(delivery)]
         sections.append({"id": sid, "heading": s["heading"], "blocks": blocks})
     return {"version": 1, "sections": sections, "signoff": signoff, "from_text": True}
+
+
+def structure_of(payload: dict) -> dict:
+    """A report payload's structure, read from its text if it was cached without one."""
+    return payload.get("structure") or from_text(
+        payload.get("text") or "", payload.get("rubric"), payload.get("delivery"))

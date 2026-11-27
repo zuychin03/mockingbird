@@ -11,25 +11,50 @@ rule is built on top.
 
 from __future__ import annotations
 
+import functools
 import re
 
+from . import fields
+
 # A figure is "verified" when the candidate says how they know it.
-MEASURED = re.compile(
-    r"\b(measur|benchmark|profil|trac(e|ed|ing)|logg|logs|monitor|instrument|"
-    r"test(ed|ing)?|count(ed)?|track(ed)?|showed|verif|check(ed)?|explain analyze|"
-    r"p9\d|percentile|dashboard|metric|a/b|experiment)\w*", re.I)
+_MEASURED = (r"measur|benchmark|profil|trac(e|ed|ing)|logg|logs|monitor|instrument|"
+             r"test(ed|ing)?|count(ed)?|track(ed)?|showed|verif|check(ed)?|explain analyze|"
+             r"p9\d|percentile|dashboard|metric|a/b|experiment")
+MEASURED = re.compile(r"\b(" + _MEASURED + r")\w*", re.I)
 
 # A spelled-out number is only a FIGURE when a unit follows it. Without that, "one layer up",
 # "no one else" and "seven years" of service all read as unverified claims, and the focus
 # selector asks a candidate how they measured their own job title (log 8.19). Digits count
 # alone -- nobody writes "42" incidentally.
-_UNIT = (r"(?:%|percent|ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|"
-         r"years?|k|m|x|thousand|million|billion|times|requests?|users?|people|engineers?|"
-         r"services?|rows?|queries|deploys?|jobs?|gb|mb|kb|tb|a day|an hour|a week)")
+_UNITS = (r"%|percent|ms|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|"
+          r"years?|k|m|x|thousand|million|billion|times|requests?|users?|people|engineers?|"
+          r"services?|rows?|queries|deploys?|jobs?|gb|mb|kb|tb|a day|an hour|a week")
 _SPELLED = (r"one|two|three|four|five|six|seven|eight|nine|ten|twenty|thirty|forty|fifty|"
             r"sixty|seventy|eighty|ninety|hundred|thousand|million")
-NUMBER = re.compile(
-    r"\b(\d+(?:[.,]\d+)?\s*" + _UNIT + r"?|(?:" + _SPELLED + r")\s+" + _UNIT + r")\b", re.I)
+
+
+def _number(units: str, more: str = "") -> re.Pattern:
+    unit = "(?:" + units + ")"
+    # A field's own units take no "one": "one patient's rhythm changed" names a person.
+    extra = (r"|(?:" + _SPELLED.replace("one|", "", 1) + r")\s+(?:" + more + ")") if more else ""
+    return re.compile(r"\b(\d+(?:[.,]\d+)?\s*" + unit + r"?|(?:" + _SPELLED + r")\s+" + unit
+                      + extra + r")\b", re.I)
+
+
+NUMBER = _number(_UNITS)
+
+
+@functools.cache
+def patterns(field: str | None = None) -> tuple[re.Pattern, re.Pattern]:
+    """NUMBER and MEASURED for a field: software's, with the field's own words added. Software
+    and an unknown field get the two above unchanged."""
+    f = fields.FIELDS.get(field or fields.SOFTWARE)
+    if f is None or not (f.units or f.measured):
+        return NUMBER, MEASURED
+    return (_number(_UNITS, "|".join(f.units)),
+            re.compile(r"\b(" + _MEASURED + "".join("|" + m for m in f.measured) + r")\w*",
+                       re.I))
+
 
 VAGUE = re.compile(
     r"\b(a lot|lots|loads|plenty|quite a few|quite a bit|several|many|most|a bit|a while|"
@@ -51,23 +76,23 @@ FIRST_PL = re.compile(r"\b(we|our|us|ours)\b", re.I)
 _DENIAL = re.compile(r"\b(?:never|not|no|without|nobody|none|nothing)\b|n['’]t\b", re.I)
 
 
-def is_measured(text):
+def is_measured(text, field=None):
     """MEASURED, less a match denied in its own clause ("there's no measurement", "our analytics
     didn't track it"): 4 of 466 stored answers (25/11). Pacing only: `observe.deterministic`
     still scores `measurement_stated` with MEASURED, so reports and their cache do not move."""
     t = text or ""
-    for m in MEASURED.finditer(t):
+    for m in patterns(field)[1].finditer(t):
         clause = re.split(r"[.!?;,]", t[:m.start()])[-1].split()[-4:]
         if not _DENIAL.search(" ".join(clause)):
             return True
     return False
 
 
-def signals(text):
-    """Return {signal_name: count}. Pure function of the text."""
+def signals(text, field=None):
+    """Return {signal_name: count}. Pure function of the text and the field."""
     t = text or ""
-    numbers = NUMBER.findall(t)
-    measured = is_measured(t)
+    numbers = patterns(field)[0].findall(t)
+    measured = is_measured(t, field)
     sg, pl = len(FIRST_SG.findall(t)), len(FIRST_PL.findall(t))
     return {
         # a figure stated with no account of how it was established

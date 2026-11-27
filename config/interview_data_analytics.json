@@ -17,6 +17,20 @@
     "first_person",
     "sets_context"
   ],
+  "advice": {
+    "sets_context": {
+      "fix": "One sentence of setup first -- the question you were asked, the data you had, the deadline or limit you were under. It is what makes the rest of the answer mean anything."
+    },
+    "states_outcome": {
+      "fix": "Finish with the effect: what someone decided because of your analysis, what changed after it, what number moved. An analysis nobody acted on reads as an activity, not a result."
+    },
+    "specific_detail": {
+      "fix": "Put a number on it. 'Churn fell from 6% to 4% in a quarter' is checkable; 'it improved a lot' is not, and the difference is what separates an anecdote from evidence."
+    },
+    "measurement_stated": {
+      "fix": "Say how you know -- checked it against the source system, compared it with the same month last year, held out a control group. A number with a method behind it is worth several without."
+    }
+  },
   "rubric": {
     "sets_context": {
       "label": "Sets the scene",

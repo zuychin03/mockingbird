@@ -170,7 +170,7 @@ def test_a_correction_is_scored_and_shown_in_the_report(client, monkeypatch):
     c, api, s = client
     read = []
 
-    async def fake_observe(provider, qid, question, answers, shape="star"):
+    async def fake_observe(provider, qid, question, answers, shape="star", field=None):
         read.append(list(answers))
         from app import observe
         return observe.Observation(question_id=qid, question=question, answers=answers)

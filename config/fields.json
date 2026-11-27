@@ -107,6 +107,31 @@
       "template": "config/interview_data_analytics.json",
       "prompt_arm": "A",
       "measured_note": null,
+      "lexicon": {
+        "units": [
+          "records?",
+          "tables?",
+          "dashboards?",
+          "reports?",
+          "customers?",
+          "transactions?",
+          "accounts?",
+          "stores?",
+          "dollars?"
+        ],
+        "measured": [
+          "reconcil",
+          "validat",
+          "holdout",
+          "baseline",
+          "cohort",
+          "significan",
+          "control group",
+          "backtest",
+          "sampl",
+          "survey"
+        ]
+      },
       "case_follow_up": {
         "line": "What could make that analysis give you the wrong answer?",
         "covered": [
@@ -237,6 +262,31 @@
       "template": "config/interview_product_management.json",
       "prompt_arm": "A",
       "measured_note": null,
+      "lexicon": {
+        "units": [
+          "customers?",
+          "sign-?ups?",
+          "subscribers?",
+          "downloads?",
+          "interviews?",
+          "dollars?",
+          "sprints?",
+          "features?"
+        ],
+        "measured": [
+          "survey",
+          "interview",
+          "usability",
+          "funnel",
+          "cohort",
+          "retention",
+          "analytics",
+          "conversion",
+          "churn",
+          "nps",
+          "baseline"
+        ]
+      },
       "case_follow_up": {
         "line": "How would you know if that turned out to be the wrong thing to build?",
         "covered": [
@@ -364,6 +414,29 @@
       "template": "config/interview_ux_design.json",
       "prompt_arm": "A",
       "measured_note": null,
+      "lexicon": {
+        "units": [
+          "participants?",
+          "interviews?",
+          "sessions?",
+          "screens?",
+          "customers?",
+          "testers?"
+        ],
+        "measured": [
+          "usability",
+          "interview",
+          "survey",
+          "heatmap",
+          "analytics",
+          "task success",
+          "session recording",
+          "card sort",
+          "tree test",
+          "funnel",
+          "baseline"
+        ]
+      },
       "case_follow_up": {
         "line": "Where are people most likely to get stuck with that design?",
         "covered": [
@@ -486,6 +559,29 @@
       "template": "config/interview_project_management.json",
       "prompt_arm": "A",
       "measured_note": null,
+      "lexicon": {
+        "units": [
+          "stakeholders?",
+          "sprints?",
+          "milestones?",
+          "dollars?",
+          "teams?",
+          "vendors?",
+          "contractors?",
+          "sites?",
+          "staff"
+        ],
+        "measured": [
+          "baseline",
+          "burndown",
+          "budget report",
+          "status report",
+          "variance",
+          "audit",
+          "timesheet",
+          "earned value"
+        ]
+      },
       "case_follow_up": {
         "line": "What's most likely to go wrong with that plan?",
         "covered": [
@@ -606,6 +702,26 @@
       "template": "config/interview_general.json",
       "prompt_arm": "A",
       "measured_note": null,
+      "lexicon": {
+        "units": [
+          "customers?",
+          "patients?",
+          "clients?",
+          "staff",
+          "students?",
+          "complaints?",
+          "calls?",
+          "dollars?",
+          "shifts?"
+        ],
+        "measured": [
+          "survey",
+          "audit",
+          "feedback form",
+          "baseline",
+          "spreadsheet"
+        ]
+      },
       "onet_occupations": [],
       "onet_mean_of": [
         "data_analytics",

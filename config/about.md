@@ -14,8 +14,9 @@ follow up on the answer, put the question another way, or move on.
 
 Anything about a real job. Salary, team size, the office, the hiring process, who you would
 report to - there is no company here to have an answer, so it will say so rather than make one
-up. If the interview was built from a job description you pasted in, it can read that
-description back to you, and that is the whole of what it knows about the role.
+up. If the interview was built from a job description you pasted in, the plan was made from
+that description, and it is the whole of what this knows about the role. The interviewer cannot
+read it back to you, but the history page keeps it with the interview.
 
 # How answers are scored
 

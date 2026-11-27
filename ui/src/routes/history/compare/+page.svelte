@@ -91,6 +91,7 @@
             {when(data[k].started_at)} · {data[k].asked} asked · {data[k].answered} answered ·
             {data[k].scored} scored
           </p>
+          {#if data[k].field_label}<p class="meta">{data[k].field_label}</p>{/if}
           {#if data[k].scored_by?.mode === 'cloud'}
             <p class="meta">Scored by {data[k].scored_by.model} on {data[k].scored_by.label}</p>
           {/if}
@@ -136,7 +137,8 @@
       <h3 id="q-head">question by question</h3>
       {#each data.questions as q, n (n)}
         <div class="question">
-          <p class="asked">{q.question}</p>
+          <p class="asked">{q.question}{#if q.duty}<span class="mark gen" title="Written by the model from the description"></span>{/if}</p>
+          {#if q.duty}<p class="from">From the description: <span class="duty">{q.duty}</span></p>{/if}
           <div class="pair">
             {#each SIDES as [k, name]}
               <div class="side">
@@ -369,6 +371,35 @@
     font-weight: 600;
     margin-bottom: var(--s-3);
     max-width: var(--measure);
+  }
+  .question .asked:has(+ .from) {
+    margin-bottom: var(--s-1);
+  }
+  /* The plan page's "written by the model" mark and its duty caption. */
+  .mark.gen {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--pending);
+    margin-left: var(--s-2);
+    vertical-align: 0.12em;
+  }
+  .question .from {
+    margin: 0 0 var(--s-3);
+    max-width: var(--measure);
+    color: var(--fg-faint);
+    font-size: var(--step--1);
+  }
+  .duty {
+    font-style: italic;
+    color: var(--fg-quiet);
+  }
+  .duty::before {
+    content: '“';
+  }
+  .duty::after {
+    content: '”';
   }
   .side .slug {
     margin-bottom: var(--s-1);

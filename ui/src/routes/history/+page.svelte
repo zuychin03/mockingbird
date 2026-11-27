@@ -82,6 +82,7 @@
     building = id;
     opened = id;
     report = null;
+    view = 'report';
     // Criteria are per report. Left set, opening a second interview shows an expanded row
     // whose evidence belongs to the first one read.
     expanded = null;
@@ -223,6 +224,7 @@
 
   function close() {
     report = null;
+    view = 'report';
     review = null;
     examplesView = null;
     opened = '';
@@ -251,53 +253,38 @@
     return out;
   });
 
-  /* The renderer underlines every heading with a rule of = or -. That is the one structural
-   * promise the text makes, so it is the only thing parsed here; the words inside a section
-   * are printed as written. `EVERY CRITERION` is the exception, replaced by the same numbers
-   * as data so the rubric can be laid out instead of aligned with spaces. */
-  const parsed = $derived.by(() => {
-    if (!report?.text) return { sections: [], signoff: [] };
-    const lines = report.text.split('\n');
-    const out = [];
-    let current = { heading: null, lines: [] };
-    for (let i = 0; i < lines.length; i++) {
-      const next = lines[i + 1] ?? '';
-      if (lines[i].trim() && /^[=-]{10,}$/.test(next.trim())) {
-        out.push(current);
-        current = { heading: lines[i].trim(), lines: [] };
-        i++;
-        continue;
-      }
-      current.lines.push(lines[i]);
-    }
-    out.push(current);
+  // The report as the server built it, sections of typed blocks (`report.build`). A report
+  // cached before that has its structure read from its text on the server.
+  const shown = $derived(report?.structure?.sections ?? []);
+  const signoff = $derived(report?.structure?.signoff ?? []);
 
-    // The report signs off with unindented lines under no heading of their own, so they land
-    // inside whatever section came last. Left there they drag that section's dedent to zero,
-    // indenting every line that should sit flush, and the sign-off itself never renders.
-    const last = out.at(-1);
-    let signoff = [];
-    if (last) {
-      let end = last.lines.length;
-      while (end > 0 && !last.lines[end - 1].trim()) end--;
-      let from = end;
-      while (from > 0 && last.lines[from - 1].trim() && !/^[ \t]/.test(last.lines[from - 1])) {
-        from--;
-      }
-      if (from < end && (last.heading || from > 0)) {
-        signoff = last.lines.slice(from, end).map((l) => l.trim());
-        last.lines = last.lines.slice(0, from);
-      }
-    }
+  // What the interview was made from (`report.about`): its field, and the questions the model
+  // wrote from the description. The same words as the exports' `report.GENERATED_INTRO`.
+  const GENERATED_INTRO =
+    'The model wrote these questions from your job description, and they were on the plan you ' +
+    'approved before the interview. Each shows the duty it was written from.';
+  const written = $derived(new Set((report?.about?.generated ?? []).map((g) => g.question_id)));
 
-    const sections = out
-      .map((s) => ({ ...s, body: s.lines }))
-      .filter((s) => s.heading || s.body.some((l) => l.trim()));
-    return { sections, signoff };
-  });
+  // D7: the description from the interview's own snapshot, read when first opened.
+  let jd = $state(null);
+  async function readJd(e) {
+    if (!e.currentTarget.open || jd?.id === opened) return;
+    const id = opened;
+    const got = await call(`/api/sessions/${id}/job-description`);
+    if (got) jd = { id, text: got.text };
+  }
 
-  const shown = $derived(parsed.sections);
-  const signoff = $derived(parsed.signoff);
+  // The interview line by line (`GET /api/sessions/{id}/transcript`), read when first shown.
+  let view = $state('report');
+  let transcript = $state(null);
+  async function showTranscript() {
+    view = 'transcript';
+    if (transcript?.session_id === opened) return;
+    const got = await call(`/api/sessions/${opened}/transcript`);
+    if (got) transcript = got;
+  }
+  // As stored (UTC), like the rows' times.
+  const clock = (iso) => (iso ? iso.slice(11, 19) : '--:--:--');
 
   // Weakest first. Alphabetical buried the only two shortfalls in the document between four
   // full rows, in a report whose whole claim is checkable arithmetic.
@@ -335,55 +322,8 @@
                  : 'Not found in this answer.';
   }
 
-  /** Does this section just print the numbers the rubric already carries as data? */
-  function isRubric(s) {
-    if (!rubric.length) return false;
-    const body = s.body.join('\n');
-    return rubric.filter((c) => body.includes(c.name)).length >= 2;
-  }
-
-  /* The renderer wraps for a 60-column terminal, so one paragraph arrives as several lines.
-   * Rendered one-line-per-element the report cannot reflow, and every wrap the terminal chose
-   * becomes a hard break at whatever width the reader is on. Blank lines separate blocks; a
-   * bullet or a number starts one; everything else joins the block it is inside. */
-  function blocks(body) {
-    const out = [];
-    let cur = null;
-    for (const raw of body) {
-      const line = raw.trim();
-      if (!line) {
-        cur = null;
-        continue;
-      }
-      if (/^(You said:\s*)?[“"]/.test(line)) {
-        out.push({ kind: 'quote', text: line });
-        cur = null;
-        continue;
-      }
-      if (line.startsWith('- ')) {
-        cur = { kind: 'item', text: line.slice(2) };
-        out.push(cur);
-        continue;
-      }
-      if (/^\d+\./.test(line)) {
-        out.push({ kind: 'lead', text: line });
-        cur = null;
-        continue;
-      }
-      if (line.startsWith('[')) {
-        out.push({ kind: 'item', text: line });
-        cur = null;
-        continue;
-      }
-      if (cur) {
-        cur.text += ' ' + line;
-        continue;
-      }
-      cur = { kind: 'p', text: line };
-      out.push(cur);
-    }
-    return out;
-  }
+  /** The criteria section, laid out from the rubric data the payload carries. */
+  const isRubric = (s) => rubric.length > 0 && s.blocks.some((b) => b.kind === 'rubric');
 
   $effect(() => {
     load();
@@ -439,6 +379,10 @@
             <code class="where">{storage.path}</code>. Delete any of them below.
           </p>
         {/if}
+        <p>
+          An interview planned from a job description keeps its own copy of it, and deleting
+          the interview deletes that copy.
+        </p>
         {#if storage.answers_leave}
           <p>
             Every question and every answer is sent to <b>{storage.provider.host}</b>
@@ -552,6 +496,7 @@
             <span class="label">
               {s.label}
               {#if !finished(s)}<span class="tag">unfinished</span>{/if}
+              {#if s.field_label}<span class="field">{s.field_label}</span>{/if}
             </span>
             <span class="counts num">
               {s.questions} questions <span class="dot">·</span> {s.turns} turns
@@ -613,6 +558,12 @@
           <span class="sep">·</span>{report.answered} answered
           <span class="sep">·</span>{report.scored} scored
         </p>
+        {#if report.about}
+          <p class="meta">
+            {report.about.field_label} interview{report.about.job_description ? ', planned from a job description' : ''}.
+          </p>
+          {#if report.about.measured}<p class="meta">{report.about.measured}</p>{/if}
+        {/if}
         {#if report.provider?.mode === 'cloud' || report.scored_by?.mode === 'cloud'}
           <p class="meta reader">
             Interviewed by {report.provider?.mode === 'cloud' ? `${report.provider.model} on ${report.provider.label}` : 'the model on this computer'}{#if report.scored_by && report.scored_by.model !== report.provider?.model}, scored by {report.scored_by.mode === 'cloud' ? `${report.scored_by.model} on ${report.scored_by.label}` : 'the model on this computer'}{/if}{#if report.usage?.calls}; {((report.usage.prompt_tokens || 0) + (report.usage.completion_tokens || 0)).toLocaleString()} tokens{report.usage.cost_usd === 0 ? ', free' : report.usage.cost_usd ? `, US$${report.usage.cost_usd.toFixed(4)}` : ''}{/if}.
@@ -643,7 +594,61 @@
             </ul>
           </details>
         {/if}
+        {#if report.about?.job_description}
+          <details class="fixes" ontoggle={readJd}>
+            <summary>Job description</summary>
+            {#if jd?.id === opened}
+              <p class="jd">{jd.text}</p>
+            {:else}
+              <p class="note">Reading…</p>
+            {/if}
+          </details>
+        {/if}
+        <div class="views" role="group" aria-label="What to read">
+          <button class="toggle" aria-pressed={view === 'report'} onclick={() => (view = 'report')}>Report</button>
+          <button class="toggle" aria-pressed={view === 'transcript'} onclick={showTranscript}>Transcript</button>
+        </div>
       </header>
+
+      {#if view === 'transcript'}
+        <!-- Every line in order, from the interview's own transcript.json. -->
+        <section class="transcript" aria-label="Transcript">
+          {#if transcript?.session_id !== opened}
+            <p class="note">Reading the transcript…</p>
+          {:else if !transcript.lines.length}
+            <p class="note">Nothing was said in this interview.</p>
+          {:else}
+            {#each transcript.lines as line, n (n)}
+              {#if line.kind === 'question'}
+                <div class="line q">
+                  <span class="who">Interviewer · {(line.phase || '').replace(/_/g, ' ')}</span>
+                  <p>{line.text}{#if line.duty}<span class="mark gen" title="Written by the model from the description"></span>{/if}</p>
+                  {#if line.duty}<p class="from">From the description: <span class="duty">{line.duty}</span></p>{/if}
+                </div>
+              {:else if line.kind === 'answer'}
+                <div class="line you">
+                  <span class="who">You · <span class="num">{clock(line.at)}</span></span>
+                  {#if line.audio}
+                    <audio controls preload="none" src="/api/sessions/{opened}/audio/{line.audio}"></audio>
+                  {/if}
+                  <p>{line.corrected ?? line.text}</p>
+                  {#if line.corrected}
+                    <details class="heard">
+                      <summary>Corrected after the interview</summary>
+                      <p>Heard: {line.text}</p>
+                    </details>
+                  {/if}
+                </div>
+              {:else}
+                <div class="line them">
+                  <span class="who">Interviewer</span>
+                  <p>{line.text}</p>
+                </div>
+              {/if}
+            {/each}
+          {/if}
+        </section>
+      {:else}
 
       {#each shown as s}
         <section>
@@ -699,7 +704,7 @@
                         <ol>
                           {#each c.evidence as e (e.question_id)}
                             <li class:met={e.met}>
-                              <span class="asked">{e.question}</span>
+                              <span class="asked">{e.question}{#if written.has(e.question_id)}<span class="mark gen" title="Written by the model from the description"></span>{/if}</span>
                               {#if e.quote}
                                 <q>{dashes(e.quote)}</q>
                               {:else}
@@ -716,8 +721,19 @@
             </table>
           {:else}
             <div class="prose">
-              {#each blocks(s.body) as b}
-                <p class={b.kind}>{dashes(b.text)}</p>
+              {#each s.blocks as b}
+                {#if b.kind === 'delivery'}
+                  <dl class="measures">
+                    {#each b.rows ?? [] as r}
+                      <div>
+                        <dt>{r.label}</dt>
+                        <dd>{r.text}{#if r.note}<span class="note">{r.note}</span>{/if}</dd>
+                      </div>
+                    {/each}
+                  </dl>
+                {:else}
+                  <p class={b.kind}>{dashes(b.text)}</p>
+                {/if}
               {/each}
             </div>
           {/if}
@@ -725,11 +741,24 @@
           <!-- 12.9's playback sits under the delivery figures rather than in a
                section of its own: the marks on each track ARE those numbers, and
                hearing a pause is what makes the count mean anything. -->
-          {#if s.heading === 'DELIVERY'}
+          {#if s.id === 'delivery'}
             <Playback sessionId={opened} delivery={report.delivery} />
           {/if}
         </section>
       {/each}
+
+      {#if report.about?.generated?.length}
+        <section aria-labelledby="written-head">
+          <h3 id="written-head">written from the description</h3>
+          <div class="prose">
+            <p class="para">{GENERATED_INTRO}</p>
+            {#each report.about.generated as g (g.question_id)}
+              <p class="item">{g.question}<span class="mark gen" title="Written by the model from the description"></span></p>
+              <p class="from">From the description: <span class="duty">{g.duty}</span></p>
+            {/each}
+          </div>
+        </section>
+      {/if}
 
       {#if examplesView && (examplesView.offer || examplesView.examples)}
         <section class="examples" aria-labelledby="examples-head">
@@ -793,6 +822,7 @@
             {/each}
           </div>
         </footer>
+      {/if}
       {/if}
     </article>
   {/if}
@@ -963,6 +993,11 @@
   .label {
     font-size: var(--step-0);
   }
+  .label .field {
+    display: block;
+    font-size: var(--step--1);
+    color: var(--fg-faint);
+  }
   .counts {
     font-size: var(--step--1);
     color: var(--fg-faint);
@@ -1117,6 +1152,94 @@
   }
   .fixes .asked {
     color: var(--fg-faint);
+  }
+  .views {
+    display: flex;
+    gap: var(--s-2);
+  }
+  .views .toggle[aria-pressed='true'] {
+    color: var(--fg);
+    border-color: var(--fg);
+  }
+  .transcript {
+    max-width: var(--measure);
+    margin-top: var(--s-5);
+    display: grid;
+    gap: var(--s-4);
+  }
+  .line p {
+    margin: 0;
+  }
+  .line .who {
+    display: block;
+    font-family: var(--font-structure);
+    font-size: var(--step--2);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    margin-bottom: var(--s-1);
+  }
+  .line.q {
+    padding-top: var(--s-4);
+    border-top: 1px solid var(--rule);
+  }
+  .line.q > p:first-of-type {
+    font-family: var(--font-structure);
+    font-weight: 600;
+  }
+  .line.q .from {
+    margin-top: var(--s-1);
+    color: var(--fg-faint);
+    font-size: var(--step--1);
+  }
+  .line.them p {
+    color: var(--fg-quiet);
+  }
+  .line audio {
+    width: 100%;
+    margin-bottom: var(--s-2);
+  }
+  .line .heard {
+    margin-top: var(--s-1);
+    font-size: var(--step--1);
+    color: var(--fg-faint);
+  }
+  .line .heard summary {
+    cursor: pointer;
+  }
+  .jd {
+    margin: var(--s-2) 0 0;
+    max-width: var(--measure);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--fg-quiet);
+  }
+
+  /* The plan page's "written by the model" mark and its duty caption. */
+  .mark.gen {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--pending);
+    margin-left: var(--s-2);
+    vertical-align: 0.12em;
+  }
+  .prose .from {
+    margin-top: var(--s-1);
+    padding-left: var(--s-4);
+    color: var(--fg-faint);
+    font-size: var(--step--1);
+  }
+  .duty {
+    font-style: italic;
+    color: var(--fg-quiet);
+  }
+  .duty::before {
+    content: '“';
+  }
+  .duty::after {
+    content: '”';
   }
 
   .pickbar {
@@ -1324,6 +1447,31 @@
     height: 5px;
     border-radius: 50%;
     background: var(--fg-faint);
+  }
+  .prose .measures {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: var(--s-2) var(--s-4);
+    margin: var(--s-3) 0 0;
+  }
+  .prose .measures div {
+    display: contents;
+  }
+  .prose .measures dt {
+    font-family: var(--font-structure);
+    font-size: var(--step--2);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--fg-faint);
+    padding-top: 0.2em;
+  }
+  .prose .measures dd {
+    margin: 0;
+  }
+  .prose .measures .note {
+    display: block;
+    color: var(--fg-quiet);
+    font-size: var(--step--1);
   }
   .prose .quote {
     font-family: var(--font-data);

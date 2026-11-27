@@ -318,6 +318,7 @@ app/
   examples.py      example answers for the weakest responses, cloud only
   detour.py        the candidate's own questions, answered from documents or declined
   export.py        one interview as a single file, recordings inside it; Markdown and JSON
+  transcript.py    the interview line by line, for History and the HTML export
   session.py       plan validation and persistence
   provenance.py    what produced a session: runtime, quantisation, context, prompt, revision
   bank.py          the curated question bank and its closed competency vocabulary
@@ -544,6 +545,14 @@ answer, and dressing a detection as a quotation would attribute it to the person
 The criteria are also shown **before** the interview, on the plan sheet, with the sections each
 applies to. Being told how you will be judged is ordinary assessment practice, and it is what
 makes the report afterwards something you can argue with rather than something to accept.
+
+## The transcript
+
+Every report has a Transcript view beside it: each question, your answers and the interviewer's
+replies in the order they were said, with each answer's time, its recording where one was kept,
+and any correction with what was heard a click away. It reads the interview's own
+`transcript.json`, the same lines the HTML export copies, so the two cannot disagree. Nothing new
+is recorded for it, and the interviewer's decisions behind each reply are left out.
 
 ## Correcting what was heard
 

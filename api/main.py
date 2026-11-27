@@ -40,7 +40,7 @@ from app import (contract, detour as detour_mod, embed, fields, hardware,  # noq
                  export as export_mod, observe, planner, provenance,
                  provider as prov, report as report_mod, resume, review,
                  score as score_mod, secret, session as sess, settings as settings_mod,
-                 speech)
+                 speech, transcript as transcript_mod)
 
 BANK = ROOT / "config" / "question_bank.json"
 DRAFT = ROOT / "data" / "plan_draft.json"
@@ -1004,12 +1004,14 @@ def sessions(limit: int = SESSIONS_SHOWN) -> list[dict]:
         except (OSError, ValueError):
             continue
         snap = raw.get("plan_snapshot") or {}
+        field = fields.FIELDS.get(snap.get("field") or fields.SOFTWARE)
         out.append({
             "session_id": raw.get("session_id"),
             "started_at": raw.get("started_at"),
             "status": raw.get("status"),
             "label": snap.get("label") or raw.get("plan_id"),
             "field": snap.get("field", fields.SOFTWARE),
+            "field_label": field.label if field else snap.get("field"),
             "questions": len(raw.get("questions") or []),
             "turns": raw.get("turn_count") or 0,
         })
@@ -1174,15 +1176,14 @@ async def session_report(session_id: str, refresh: bool = False, provider: str =
     d = SESSIONS / session_id
     if not (d / "session.json").exists():
         raise HTTPException(404, "no session %r" % session_id)
+    raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
     if not refresh:
         hit = _report_is_fresh(d)
         if hit is not None:
             # Cached before reports carried their structure: read from the text, never rebuilt.
-            if "structure" not in hit:
-                hit["structure"] = report_mod.from_text(hit.get("text") or "", hit.get("rubric"),
-                                                        hit.get("delivery"))
+            hit["structure"] = report_mod.structure_of(hit)
+            hit["about"] = report_mod.about(raw)
             return hit
-    raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
     plan = raw.get("plan_snapshot") or {}
 
     states = [sess.QuestionState(**q) for q in raw.get("questions", [])]
@@ -1228,15 +1229,15 @@ async def session_report(session_id: str, refresh: bool = False, provider: str =
         # host it tried and how to start it.
         observations.append(await _guard_async(
             observe.observe, p, qs.question_id, qs.question, qs.answers,
-            shape="design" if qs.phase in design else "star"))
+            shape="design" if qs.phase in design else "star", field=plan.get("field")))
 
     rep = score_mod.build(raw.get("session_id", session_id), observations, criteria_for)
     spoken = _delivery(d)
     doc = report_mod.build(rep, questions_asked=len(states),
                            questions_answered=sum(1 for q in states if q.answers),
                            observations=observations, question_states=states,
-                           delivery=spoken)
-    return _cache_report(d, {
+                           delivery=spoken, plan=plan)
+    payload = _cache_report(d, {
         "session_id": session_id,
         "label": plan.get("label") or raw.get("plan_id"),
         "started_at": raw.get("started_at"),
@@ -1260,6 +1261,9 @@ async def session_report(session_id: str, refresh: bool = False, provider: str =
         # Each correction with the original beside it, so a report never hides what was heard.
         "corrections": corrected,
     })
+    # Added after caching: read from the snapshot on every serve, cached or not.
+    payload["about"] = report_mod.about(raw)
+    return payload
 
 
 @app.get("/api/sessions/{session_id}/corrections")
@@ -1299,6 +1303,17 @@ def _recorded_turns(d: Path) -> list[dict]:
         return json.loads((d / "transcript.json").read_text(encoding="utf-8")).get("turns") or []
     except (OSError, ValueError, KeyError):
         return []
+
+
+@app.get("/api/sessions/{session_id}/transcript")
+def session_transcript(session_id: str) -> dict:
+    """Every line of the interview in order, read through `_recorded_turns` as the exports
+    read it. No model runs, so it opens at once."""
+    d = _session_dir(session_id)
+    raw = json.loads((d / "session.json").read_text(encoding="utf-8"))
+    turns = _recorded_turns(d)
+    return {"session_id": session_id, "turns": len(turns),
+            "lines": transcript_mod.lines(raw, turns, corrections_mod.load(d), d)}
 
 
 def _export_name(session_id: str, report: dict, suffix: str) -> str:

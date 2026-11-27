@@ -50,6 +50,10 @@ class Field:
     measured_note: str | None = None
     # None keeps software's line and failure words in `focus`.
     case_follow_up: CaseFollowUp | None = None
+    # Added to software's in `depth_signals`: units a spelled-out number can count, and stems
+    # that say how a figure was known. Regex fragments, as `case_follow_up.covered`.
+    units: tuple[str, ...] = ()
+    measured: tuple[str, ...] = ()
 
     def kind(self, kind_id: str) -> Kind:
         for k in self.kinds:
@@ -66,11 +70,14 @@ def _load(path: Path) -> dict[str, Field]:
         kinds = tuple(Kind(k["id"], k["label"], k["note"], tuple(k["ranked"]), dict(k["shape"]))
                       for k in f["kinds"])
         case = f.get("case_follow_up")
+        lexicon = f.get("lexicon") or {}
         out[f["id"]] = Field(f["id"], f["label"], f["interview"], ROOT / f["template"],
                              f["prompt_arm"], kinds, f.get("measured_note"),
                              CaseFollowUp(case["line"], re.compile(
                                  r"\b(?:%s)\b" % "|".join(case["covered"]), re.I))
-                             if case else None)
+                             if case else None,
+                             tuple(lexicon.get("units") or ()),
+                             tuple(lexicon.get("measured") or ()))
     return out
 
 

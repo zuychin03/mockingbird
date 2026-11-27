@@ -478,3 +478,20 @@ def test_the_live_wording_cannot_move_a_cached_report():
         assert observe.fingerprint(items) == before
     finally:
         observe.LIVE_SYSTEM = original
+
+
+class _Prompted(Quoter):
+    async def complete(self, system, user, schema=None, max_tokens=400,
+                       enum_field=None, enum_values=None):
+        self.system = system
+        return await super().complete(system, user, schema, max_tokens)
+
+
+@pytest.mark.parametrize("field, prompt", [(None, "DESIGN_SYSTEM"), ("software", "DESIGN_SYSTEM"),
+                                           ("ux_design", "CASE_SYSTEM"),
+                                           ("general", "CASE_SYSTEM")])
+def test_a_case_answer_is_read_with_the_case_prompt(field, prompt):
+    q = _Prompted()
+    run(observe.observe(q, "case.1", "How would you decide what to build first?",
+                        ["I'd talk to five housemates first."], shape="design", field=field))
+    assert q.system == getattr(observe, prompt)

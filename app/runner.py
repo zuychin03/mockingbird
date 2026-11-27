@@ -296,7 +296,8 @@ class Runner:
         self.provider = provider
         self.plan = plan
         self.system, self.speech_system = contract.for_plan(plan)
-        case = fields.get(plan.get("field", fields.SOFTWARE)).case_follow_up
+        self.field = plan.get("field", fields.SOFTWARE)
+        case = fields.get(self.field).case_follow_up
         self.case_line = case.line if case else focus.DESIGN_FOLLOW_UP
         self.case_covered = case.covered if case else None
         self.state = state
@@ -779,7 +780,7 @@ class Runner:
         want = focus.next_focus(utterance, self.focus_used,
                                 (self.current or {}).get("rubric_criteria") or [],
                                 (self.current or {}).get("focus_ladder") or [],
-                                self.seen, self.answers_this_question)
+                                self.seen, self.answers_this_question, self.field)
         t0 = time.perf_counter()
         out, raw = await self._decide(utterance, [], want)
         say_raw = _raw_say(raw)
@@ -978,7 +979,7 @@ class Runner:
                 and self.follow_ups_used < allow.cap and self._star_paced(q)
                 and not any(a.endswith("->advance") for a in g.applied)):
             floor = focus.floor(utterance, q.get("rubric_criteria") or [],
-                                self.answers_this_question, self.seen)
+                                self.answers_this_question, self.seen, self.field)
             arm = next((a for a in floor if a in focus.FLOOR_LIVE), None)
             if arm:
                 say_model, want, g.act = g.say, arm, "probe"

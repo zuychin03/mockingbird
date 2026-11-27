@@ -47,6 +47,9 @@ compared side by side.
 - A Settings page for the interviewer, the voice and speech recognition.
 - A release workflow that builds the installer from a version tag and attaches it to a draft
   release.
+- Each interview in the history page has a Transcript view: every question, answer and reply in
+  order, with each answer's time, its recording where one was kept, and any correction with
+  what was heard a click away.
 
 ### Changed
 
@@ -57,6 +60,11 @@ compared side by side.
   no number to show it, the interviewer now asks once about your own part, or how it ended or
   how you knew it worked, where before it could move straight on. It counts as one of that
   question's follow-ups.
+- The report's delivery figures are laid out as a list of measures in the history page and the
+  HTML and Markdown exports, where before they ran together as one paragraph. The exports also
+  set each piece of advice apart from the advice under it.
+- The HTML export's transcript shows each question before its answers. Before, it held only
+  your answers and the interviewer's replies.
 
 ### Fixed
 
@@ -101,6 +109,14 @@ compared side by side.
 - A follow-up that asks which part was "personally yours", or "how did you know for sure that
   ...", is now read as asking about your own part or how you knew. Before, it could be swapped
   for a stock question.
+- A question you asked the interviewer that ran onto a line starting "2." or a quotation mark is
+  now shown whole in the report. Before, the history page split it in two.
+- A report scored on a single criterion now shows it in the criteria table. Before, it was
+  printed as a line of plain text.
+- Asked about the role, the interviewer no longer says it can read your job description back to
+  you, which it never could.
+- The HTML export lists the model that read the interview by its parts (mode, host, model).
+  Before, it printed them as raw data.
 
 ## 1.0.1 - 2026-11-08
 

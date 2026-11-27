@@ -17,6 +17,17 @@
     "sets_context",
     "measurement_stated"
   ],
+  "advice": {
+    "sets_context": {
+      "fix": "One sentence of setup first -- the product, who the users were, the problem or limit you were designing for. It is what makes the rest of the answer mean anything."
+    },
+    "states_outcome": {
+      "fix": "Finish with the effect: what users could do afterwards, what number moved, what the team built differently because of your work. A design with no outcome reads as an activity, not a result."
+    },
+    "specific_detail": {
+      "fix": "Put a number on it. 'Five of eight participants finished the task before, eight of eight after' is checkable; 'it tested much better' is not, and the difference is what separates an anecdote from evidence."
+    }
+  },
   "rubric": {
     "sets_context": {
       "label": "Sets the scene",

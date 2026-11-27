@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 
-from .depth_signals import FIRST_SG, NUMBER, signals
+from .depth_signals import FIRST_SG, patterns, signals
 
 # The closed set. Each is a distinct thing an interviewer wants, phrased as the instruction
 # that goes into the prompt.
@@ -421,7 +421,7 @@ def answered(text: str, seen: set[str] | None = None) -> set[str]:
 def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None,
                ladder: list[str] | None = None,
                seen: set[str] | None = None,
-               earlier: list[str] | None = None) -> str | None:
+               earlier: list[str] | None = None, field: str | None = None) -> str | None:
     """The request type to ask for next. Never returns one already used on this question.
 
     `ladder` comes from the phase (`focus_ladder` in the plan), because a generic order does
@@ -445,7 +445,7 @@ def next_focus(utterance: str, used: set[str], criteria: list[str] | None = None
     used = used | answered(" ".join(earlier + [utterance]), seen)
     if criteria:
         for name, focus in FROM_SIGNAL:
-            if signals(utterance).get(name) and focus not in used:
+            if signals(utterance, field).get(name) and focus not in used:
                 return focus
         # The criteria say WHAT the answer is scored on; the ladder says what an interviewer
         # asks FIRST. Both already existed and the criteria loop returned in ITS order, so
@@ -488,7 +488,7 @@ FLOOR_KEEPS = {"ROLE": {"ROLE"}, "OUTCOME": {"OUTCOME", "MEASURE"}}
 
 
 def floor(utterance: str, criteria: list[str], earlier: list[str] | None = None,
-          seen: set[str] | None = None) -> list[str]:
+          seen: set[str] | None = None, field: str | None = None) -> list[str]:
     """The follow-up floor (review Stage 2, Tier A): what a first answer leaves owed in its own
     words, in the order it would be asked; the runner asks the first of `FLOOR_LIVE`. ROLE for
     "we" with no "I"; OUTCOME for an outcome only claimed ("it went fine") with no figure
@@ -502,9 +502,9 @@ def floor(utterance: str, criteria: list[str], earlier: list[str] | None = None,
     outcomes. Both halves: 5 of 14 claimed, 1 of 73 checkable, 2 of 76 with none (25/11)."""
     if is_contentless(utterance) or len(utterance.split()) < FLOOR_MIN_WORDS:
         return []
-    s = signals(utterance)
+    s = signals(utterance, field)
     spent = answered(" ".join((earlier or []) + [utterance]), seen)
-    figure = NUMBER.search(utterance)
+    figure = patterns(field)[0].search(utterance)
     arms = []
     if "first_person" in criteria and s["attribution"] and "ROLE" not in spent:
         arms.append("ROLE")
